@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>xgoose</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="head">
+        <div class="title"><span class="dot"></span>xgoose</div>
+        <div class="ver">v0.1</div>
+      </div>
+      <div class="status"></div>
+      <div class="account" id="account"></div>
+      <div class="actions">
+        <button class="btn primary" data-action="toggle">
+          Open chat panel
+        </button>
+        <button class="btn" data-action="options">Settings</button>
+      </div>
+      <div class="hint">
+        The floating chat lives inside the page itself. If you can't see it,
+        this button toggles it.
+      </div>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

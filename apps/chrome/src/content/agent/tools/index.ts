@@ -1,0 +1,573 @@
+/// <reference types="chrome" />
+
+// `todo_write`, `remember`, and `forget` come from `@xgoose/core`.
+// `page_info`, `read_page`, `js_exec`, `console_logs`, `network_*` come
+// from `@xgoose/page-controller`. This file owns ONLY the host-specific
+// skill registry tools (list_skills, search_skills, help, read_skill,
+// edit_skill, create_skill, skill_help) — they bridge to the background
+// SW for the skill registry. Skill *invocation* is via `js_exec` only:
+// `await xgoose.skills.<ns>.<fn>(args)`.
+
+import { z } from "zod";
+import { parseSkillFile, SkillHeaderError } from "@xgoose/skill-runtime";
+import { send } from "@/shared/messages";
+import { getSettings } from "@/shared/storage";
+import { originForUrl } from "@/shared/patterns";
+import { callBridge } from "@/content/pageRpc";
+import { getActiveSkills } from "@/content/state";
+import {
+  injectSkills,
+  invalidateInjectedSkills,
+} from "@/content/skillInjector";
+import {
+  defineTool,
+  type XgooseBuiltTool,
+  type XgooseToolMeta,
+} from "./buildTool";
+import { getTodos, type TodoItem } from "@xgoose/core";
+import { buildPageControllerTools as buildPageControllerCoreTools } from "@xgoose/page-controller";
+
+const MAX_RESULT_BYTES = 30_000;
+
+// ---------- list_skills / read_skill / search_skills / help / edit_skill / create_skill / skill_help ----------
+//
+// All of these share one assumption: the heavy per-function detail (Zod-
+// derived JSON Schema, examples, full signatures) is NOT pumped into every
+// turn's reminder. Instead the agent gets a tiny `name + namespace +
+// description` row per skill plus the ★ primary function's signature +
+// invocation snippet, then calls `help` on demand for anything deeper.
+// This keeps the system reminder cache-warm across turns and saves
+// ~3-10 KB per skill per turn.
+//
+// There is NO `skill_call` tool — to invoke a skill function the agent
+// writes a `js_exec` snippet (`return await xgoose.skills.<ns>.<fn>(args);`).
+// The schemas authored with `defineSkill`/`fn` are documentation only; the
+// runtime does not validate. `help` is how the agent discovers the input
+// shape before writing the call.
+
+function findSkillSummary(
+  all: Array<Awaited<ReturnType<typeof send<"sw:list_skills">>>[number]>,
+  name: string,
+): Awaited<ReturnType<typeof send<"sw:list_skills">>>[number] | undefined {
+  return all.find((s) => s.name === name || s.namespace === name);
+}
+
+const listSkillsTool = defineTool({
+  name: "list_skills",
+  description:
+    "Compact list of every installed skill. Returns name, namespace, description, matches (URL patterns), keywords, enabled, activeOnThisPage, primary function (signature + ready-to-paste `js_exec` invocation snippet), and a name-only list of other functions. For full per-function input/output JSON Schema + examples, call `help({ skill, function? })`. Invoke any function via `js_exec`: `return await xgoose.skills.<ns>.<fn>(args);`.",
+  inputSchema: z.object({
+    scope: z
+      .enum(["all", "page"])
+      .optional()
+      .describe(
+        '"all" (default) lists everything installed; "page" only skills active on the current URL.',
+      ),
+  }),
+  isReadOnly: true,
+  isConcurrencySafe: () => true,
+  label: (i) =>
+    i?.scope === "page" ? "Listed page skills" : "Listed all skills",
+  execute: async ({ scope }) => {
+    const all = await send("sw:list_skills", undefined);
+    const activeNames = new Set(getActiveSkills().map((s) => s.name));
+    const filtered =
+      scope === "page" ? all.filter((s) => activeNames.has(s.name)) : all;
+    return filtered.map((s) => {
+      const primary =
+        (s.primary && s.functions?.find((f) => f.name === s.primary)) ||
+        s.functions?.find((f) => f.primary);
+      const others = (s.functions ?? [])
+        .filter((f) => !primary || f.name !== primary.name)
+        .map((f) => f.name);
+      return {
+        name: s.name,
+        namespace: s.namespace,
+        description: s.description,
+        matches: s.matches,
+        keywords: s.keywords,
+        enabled: s.enabled,
+        activeOnThisPage: activeNames.has(s.name),
+        userAuthored: s.userAuthored,
+        primary: primary
+          ? {
+              name: primary.name,
+              summary: primary.summary,
+              signature: primary.signature,
+              invocation:
+                primary.invocation ||
+                `await xgoose.skills.${s.namespace}.${primary.name}({...})`,
+            }
+          : null,
+        otherFunctions: others,
+      };
+    });
+  },
+});
+
+const readSkillTool = defineTool({
+  name: "read_skill",
+  description:
+    "Return the raw `.xgs.js` source of a skill (header + JS body) so you can edit it. The source is what `edit_skill` round-trips through; `help` is what you want for runtime schema/examples instead.",
+  inputSchema: z.object({
+    name: z.string().describe("Skill name from `list_skills`."),
+  }),
+  isReadOnly: true,
+  isConcurrencySafe: () => true,
+  label: (i) => `Read skill ${i?.name ?? ""}`.trim(),
+  execute: async ({ name }) => {
+    const res = await send("sw:get_skill_source", { name });
+    if (!res.ok) return res;
+    return { ok: true, name, origin: res.origin, source: res.source };
+  },
+});
+
+const searchSkillsTool = defineTool({
+  name: "search_skills",
+  description:
+    "Keyword search across every installed skill. Matches against name, namespace, description, @keyword directives, @match host patterns, function names, and the primary function summary. Returns the same compact shape as `list_skills`, ranked by match score.",
+  inputSchema: z.object({
+    query: z
+      .string()
+      .min(1)
+      .describe('Free-text query, e.g. "hotel award" or "reddit"'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .optional()
+      .describe("Max results. Default 10."),
+  }),
+  isReadOnly: true,
+  isConcurrencySafe: () => true,
+  label: (i) => `Searched skills "${truncate(String(i?.query ?? ""), 40)}"`,
+  execute: async ({ query, limit }) => {
+    const q = query.toLowerCase().trim();
+    const tokens = q.split(/\s+/).filter(Boolean);
+    if (!tokens.length) return [];
+    const all = await send("sw:list_skills", undefined);
+    const activeNames = new Set(getActiveSkills().map((s) => s.name));
+    const scored = all
+      .map((s) => {
+        const haystack = [
+          s.name,
+          s.namespace,
+          s.description ?? "",
+          ...(s.matches ?? []),
+          ...(s.keywords ?? []),
+          ...(s.functions ?? []).map((f) => `${f.name} ${f.summary}`),
+        ]
+          .join(" ")
+          .toLowerCase();
+        let score = 0;
+        for (const t of tokens) {
+          if (!t) continue;
+          if (s.name.toLowerCase() === t || s.namespace.toLowerCase() === t)
+            score += 5;
+          else if (
+            s.name.toLowerCase().includes(t) ||
+            s.namespace.toLowerCase().includes(t)
+          )
+            score += 3;
+          if ((s.keywords ?? []).some((k) => k.toLowerCase() === t)) score += 3;
+          if (haystack.includes(t)) score += 1;
+        }
+        return { s, score };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.max(1, limit ?? 10));
+
+    return scored.map(({ s, score }) => {
+      const primary =
+        (s.primary && s.functions?.find((f) => f.name === s.primary)) ||
+        s.functions?.find((f) => f.primary);
+      return {
+        name: s.name,
+        namespace: s.namespace,
+        description: s.description,
+        matches: s.matches,
+        activeOnThisPage: activeNames.has(s.name),
+        score,
+        primary: primary
+          ? {
+              name: primary.name,
+              summary: primary.summary,
+              signature: primary.signature,
+              invocation:
+                primary.invocation ||
+                `await xgoose.skills.${s.namespace}.${primary.name}({...})`,
+            }
+          : null,
+        otherFunctions: (s.functions ?? [])
+          .filter((f) => !primary || f.name !== primary.name)
+          .map((f) => f.name),
+      };
+    });
+  },
+});
+
+const helpTool = defineTool({
+  name: "help",
+  description:
+    "CLI-style `help` for a skill or a single skill function. Pass `{ skill }` for a one-line summary of every function (name + summary + signature + ready-to-paste `js_exec` invocation snippet). Pass `{ skill, function }` for full input JSON Schema, output schema (if declared), invocation snippet, and verbatim examples for that function. Call this BEFORE writing your first `js_exec` against an unfamiliar skill function — the JSON Schema is the only source of truth for the input shape (the runtime does not validate). Requires the skill to be ACTIVE on the current page; otherwise falls back to the static build-time summary stored in the registry.",
+  inputSchema: z.object({
+    skill: z
+      .string()
+      .describe(
+        'Skill name OR namespace (e.g. "discourse-forum" or "discourse").',
+      ),
+    function: z
+      .string()
+      .optional()
+      .describe("Exported function name. Omit for a per-function summary map."),
+  }),
+  isReadOnly: true,
+  isConcurrencySafe: () => true,
+  label: (i) => `Help ${i?.skill ?? ""}${i?.function ? `.${i.function}` : ""}`,
+  execute: async ({ skill, function: fnName }) => {
+    const all = await send("sw:list_skills", undefined);
+    const meta = findSkillSummary(all, skill);
+    if (!meta) return { ok: false, error: `Unknown skill: ${skill}` };
+    const ns = meta.namespace;
+
+    // First try the live bundle: `__describe__` carries the full Zod-derived
+    // JSON Schema and examples authored in the `.xgs.js` file. This is the
+    // gold path — same answer the agent would get from a hand-rolled
+    // `js_exec` against `xgoose.skills.<ns>.__describe__(fn?)`.
+    try {
+      const code = fnName
+        ? `return typeof xgoose !== 'undefined' && xgoose.skills && xgoose.skills[${JSON.stringify(
+            ns,
+          )}] && typeof xgoose.skills[${JSON.stringify(ns)}].__describe__ === 'function' ? xgoose.skills[${JSON.stringify(
+            ns,
+          )}].__describe__(${JSON.stringify(fnName)}) : { __notLoaded: true };`
+        : `return typeof xgoose !== 'undefined' && xgoose.skills && xgoose.skills[${JSON.stringify(
+            ns,
+          )}] && typeof xgoose.skills[${JSON.stringify(ns)}].__describe__ === 'function' ? xgoose.skills[${JSON.stringify(
+            ns,
+          )}].__describe__() : { __notLoaded: true };`;
+      const res = (await callBridge("exec", {
+        code,
+        args: [],
+        timeoutMs: 5000,
+        execId: Math.random().toString(36).slice(2, 12),
+      })) as { ok: boolean; result?: any; error?: string };
+      if (res.ok && res.result && !res.result.__notLoaded) {
+        return {
+          ok: true,
+          skill: meta.name,
+          namespace: ns,
+          function: fnName ?? null,
+          source: "live",
+          help: res.result,
+        };
+      }
+    } catch {
+      /* fall through to static fallback below */
+    }
+
+    // Static fallback: the registry-recorded function summaries the build
+    // pipeline emits via `__describe__()` at build time. Has signature +
+    // invocation snippet + summary but no JSON Schema / examples.
+    const invocationFor = (fnName: string): string =>
+      `await xgoose.skills.${ns}.${fnName}({...})`;
+    const fns = meta.functions ?? [];
+    if (fnName) {
+      const f = fns.find((x) => x.name === fnName);
+      if (!f) {
+        return {
+          ok: false,
+          error: `Function not found: ${ns}.${fnName} (available: ${fns
+            .map((x) => x.name)
+            .join(", ")})`,
+        };
+      }
+      return {
+        ok: true,
+        skill: meta.name,
+        namespace: ns,
+        function: fnName,
+        source: "static",
+        warning:
+          "Skill is not currently injected on this page; returning compact build-time summary (no JSON Schema or examples). Navigate to a matching URL or call this from the right tab to get live help.",
+        help: {
+          name: f.name,
+          summary: f.summary,
+          signature: f.signature,
+          invocation: f.invocation || invocationFor(f.name),
+          primary: f.primary,
+        },
+      };
+    }
+    return {
+      ok: true,
+      skill: meta.name,
+      namespace: ns,
+      function: null,
+      source: "static",
+      warning:
+        "Skill is not currently injected on this page; returning compact build-time summary.",
+      help: Object.fromEntries(
+        fns.map((f) => [
+          f.name,
+          {
+            summary: f.summary,
+            signature: f.signature,
+            invocation: f.invocation || invocationFor(f.name),
+            primary: f.primary,
+          },
+        ]),
+      ),
+    };
+  },
+});
+
+// Skill invocation is `js_exec`-only. The agent writes a snippet like
+// `return await xgoose.skills.<ns>.<fn>(args);` and the same page bridge
+// executes it. Use `help({ skill, function })` to discover the input
+// shape before writing the snippet; the runtime does not validate args.
+
+/**
+ * Re-inject the named skill into the current tab so its newly-bundled
+ * IIFE replaces the running one without a page reload. Called from
+ * `edit_skill` / `create_skill` right after the SW saves the new bundle.
+ *
+ * Returns `{ active: true }` when the skill's `@match` patterns cover
+ * the current URL (and the IIFE was actually injected), `{ active: false }`
+ * when it doesn't (the agent can still invoke the skill the next time
+ * the user navigates somewhere it matches). The storage watcher will
+ * fire shortly after with the same payload — the fingerprint cache
+ * makes the second call a no-op, so the dedup is automatic.
+ */
+async function hotReloadCurrentTab(
+  name: string,
+): Promise<{ active: boolean; namespace?: string }> {
+  const active = await send("sw:active_skills_for_url", {
+    url: typeof location !== "undefined" ? location.href : "",
+  });
+  const match = active.find((s) => s.name === name);
+  if (!match) return { active: false };
+  invalidateInjectedSkills([name]);
+  try {
+    await injectSkills([match]);
+  } catch (err) {
+    console.warn(`[xgoose] hot-reload failed for ${name}:`, err);
+    return { active: false, namespace: match.namespace };
+  }
+  return { active: true, namespace: match.namespace };
+}
+
+const editSkillTool = defineTool({
+  name: "edit_skill",
+  description:
+    "Replace the canonical `.xgs.js` source of an EXISTING skill (header + JS body). Used to add a new `@match` host to an existing skill, bump `@version`, or rewrite the body. Built-in skills are cloned into a user-skill override on first edit; subsequent edits update the override in place. **Dynamic load: the SW re-bundles the body immediately and the new IIFE hot-reloads into the current tab (and every other matching tab) — no page reload required.** Body-only edits are invocable from your very next `js_exec` if the skill matches this page (`activeOnThisPage: true` in the response). For a brand-new skill use `create_skill` instead. If you don't know the `.xgs.js` format, call `skill_help()` FIRST — it returns the authoring spec.",
+  inputSchema: z.object({
+    name: z.string().describe("Skill name from `list_skills` / `read_skill`."),
+    source: z
+      .string()
+      .min(1)
+      .describe(
+        "Full `.xgs.js` source. Must include a valid `// ==XGooseSkill== … // ==/XGooseSkill==` header whose `@name` matches `name`.",
+      ),
+  }),
+  isReadOnly: false,
+  isConcurrencySafe: () => false,
+  label: (i) => `Edited skill ${i?.name ?? ""}`.trim(),
+  execute: async ({ name, source }) => {
+    const res = await send("sw:edit_skill", { name, source });
+    if (!res.ok) return res;
+    const reload = await hotReloadCurrentTab(name);
+    return {
+      ...res,
+      activeOnThisPage: reload.active,
+      hint: reload.active
+        ? `Hot-reloaded into this tab. Invoke via \`js_exec\`: \`await xgoose.skills.${reload.namespace ?? res.namespace}.<fn>(args)\` — \`help({ skill: "${res.name}" })\` for the function list.`
+        : `Saved. Skill's \`@match\` patterns don't cover this page, so it isn't injected here. Other open tabs whose URLs match will hot-reload via the storage watcher; navigate this tab to a matching URL to use it locally.`,
+    };
+  },
+});
+
+// `skill_help` returns the full SKILL_AUTHORING.md doc on demand. The
+// doc itself (~18 KB) is shipped as a web-accessible resource by the
+// build pipeline (`scripts/build-skills.mjs` copies it into
+// `dist/skills/SKILL_AUTHORING.md`), so a fetch through
+// `chrome.runtime.getURL` returns the canonical authoring spec without
+// hardcoding any of it into the JS bundle. The agent should call this
+// before writing its first skill, or any time it's unsure of header
+// directive syntax / `defineSkill` shape / `fn(...)` API.
+const skillHelpTool = defineTool({
+  name: "skill_help",
+  description:
+    "Return the canonical xgoose skill authoring spec — header directives, `defineSkill` / `fn(...)` API, Zod usage, the eight rules. Call this BEFORE creating or substantially editing a skill so the source you write parses cleanly and follows convention. Returns the full SKILL_AUTHORING.md as a string.",
+  inputSchema: z.object({}),
+  isReadOnly: true,
+  isConcurrencySafe: () => true,
+  label: () => "Read skill authoring spec",
+  execute: async () => {
+    try {
+      const url = chrome.runtime.getURL("skills/SKILL_AUTHORING.md");
+      const res = await fetch(url);
+      if (!res.ok) {
+        return {
+          ok: false,
+          error: `Failed to load authoring spec (HTTP ${res.status}). Skill creation may still work; see the README or xgoose.org/docs/skills for reference.`,
+        };
+      }
+      const text = await res.text();
+      return { ok: true, url, length: text.length, doc: text };
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? String(e) };
+    }
+  },
+});
+
+// `create_skill` is a thin wrapper over `sw:edit_skill` with two
+// agent-friendly affordances: (1) the input schema is just `{ source }`
+// — the `@name` is extracted from the header client-side so the agent
+// doesn't have to pass it twice, and (2) we explicitly refuse to
+// overwrite an existing skill (use `edit_skill` for that) so a bad
+// header doesn't silently clobber a built-in. The SW bundles the body
+// immediately (`bundleUserSkill` in background/skillBundler.ts) and the
+// new IIFE hot-reloads into the current tab if the skill's `@match`
+// patterns cover it — see `hotReloadCurrentTab` above.
+const createSkillTool = defineTool({
+  name: "create_skill",
+  description:
+    "Create a brand-new `.xgs.js` skill from a full source string (header + JS body). The `@name` is parsed from the header — do not pass it separately. If the name already exists (built-in or user-installed), this returns an error: use `edit_skill` to modify an existing skill. If you have not yet read the authoring spec this session, call `skill_help()` FIRST — the spec covers required header directives (`@name`, `@namespace`, `@match`, `@detect`, `@primary`), the `defineSkill({ … })` + `fn({ input, output?, examples, handler })` API, and the eight rules that decide whether the agent succeeds first try. **Dynamic load: the SW bundles the body and injects the IIFE into the current tab right away if its `@match` patterns cover this URL — your very next `js_exec` can invoke `xgoose.skills.<namespace>.<fn>(args)`.** No page reload or xgoose-web republish required to use the skill locally. Publishing to xgoose-web is only needed to share it with other users.",
+  inputSchema: z.object({
+    source: z
+      .string()
+      .min(1)
+      .describe(
+        "Full `.xgs.js` source. MUST start with a `// ==XGooseSkill== … // ==/XGooseSkill==` header block containing at least `@name`, `@namespace`, and one `@match`. Followed by an ES module body that `export default defineSkill({ … })`.",
+      ),
+  }),
+  isReadOnly: false,
+  isConcurrencySafe: () => false,
+  label: (i) => {
+    if (typeof i?.source === "string") {
+      const m = /@name\s+(\S+)/.exec(i.source);
+      if (m) return `Created skill ${m[1]}`;
+    }
+    return "Created skill";
+  },
+  execute: async ({ source }) => {
+    let parsed;
+    try {
+      parsed = parseSkillFile(source);
+    } catch (err) {
+      if (err instanceof SkillHeaderError) {
+        return {
+          ok: false,
+          error: `Header parse failed: ${err.message}. Call \`skill_help()\` to see the required directive set.`,
+        };
+      }
+      return { ok: false, error: String((err as Error)?.message ?? err) };
+    }
+    const name = parsed.header.name;
+    const existing = await send("sw:list_skills", undefined);
+    if (existing.some((s) => s.name === name)) {
+      return {
+        ok: false,
+        error: `A skill named "${name}" already exists. Use \`edit_skill({ name: "${name}", source })\` to modify it, or pick a different \`@name\` in the header.`,
+      };
+    }
+    const res = await send("sw:edit_skill", { name, source });
+    if (!res.ok) return res;
+    const reload = await hotReloadCurrentTab(name);
+    return {
+      ok: true,
+      name: res.name,
+      namespace: res.namespace,
+      version: res.version,
+      activeOnThisPage: reload.active,
+      hint: reload.active
+        ? `Skill installed and hot-loaded into this tab. Invoke via \`js_exec\`: \`await xgoose.skills.${res.namespace}.<fn>(args)\`. Publish via xgoose-web only when you want to share it with other users.`
+        : `Skill installed but its \`@match\` patterns don't cover this page, so it isn't injected here. The skill is recognised by \`list_skills\`; navigate to a matching URL (or open one in a new tab) to use it.`,
+    };
+  },
+});
+
+// ---------- registry ----------
+//
+// The browser-agnostic tools (`todo_write`, `remember`, `forget`) are
+// composed in by `createAgent` via `buildCoreTools(...)` from `@xgoose/core`.
+// The DOM tools (`page_info`, `read_page`, `js_exec`, `console_logs`,
+// `network_*`) come from `@xgoose/page-controller`. This file owns ONLY the
+// Safari-specific skill-registry tools that bounce through the background
+// SW.
+
+/** Page-controller DOM tools, instantiated against the host settings shim.
+ *  `js_exec` picks up the user's per-tab timeout; `network_request` always
+ *  redacts sensitive headers (no user-facing opt-out — see options.html).
+ *  Legacy stored settings with `redactSensitiveHeaders: false` are ignored
+ *  so the protection can never silently regress. */
+export function buildPageControllerTools(): XgooseBuiltTool[] {
+  return buildPageControllerCoreTools({
+    getDefaultTimeoutMs: () => getSettings().jsExecTimeoutMs,
+    getRedactionConfig: () => {
+      const s = getSettings();
+      return {
+        redactSensitiveHeaders: true,
+        redactSensitiveHeaderKeys: s.redactSensitiveHeaderKeys,
+      };
+    },
+  });
+}
+
+const SKILL_TOOLS: XgooseBuiltTool[] = [
+  listSkillsTool,
+  readSkillTool,
+  searchSkillsTool,
+  helpTool,
+  skillHelpTool,
+  createSkillTool,
+  editSkillTool,
+];
+
+/** Host-side skill-registry tools that talk to the background SW. */
+export function buildSkillTools(): XgooseBuiltTool[] {
+  return SKILL_TOOLS;
+}
+
+/** Combined page-controller + skill tools — used by `createAgent`
+ *  alongside the core tools from `@xgoose/core`. */
+export function buildLegacyTools(): XgooseBuiltTool[] {
+  return [...buildPageControllerTools(), ...SKILL_TOOLS];
+}
+
+export const TOOL_META: Record<string, XgooseToolMeta> = Object.fromEntries(
+  buildLegacyTools().map((t) => [t.name, t.meta]),
+);
+
+export function getCurrentTodos(): TodoItem[] {
+  return getTodos();
+}
+
+// ---------- helpers ----------
+
+function truncate(s: string, n: number): string {
+  if (s.length <= n) return s;
+  return s.slice(0, n - 1) + "…";
+}
+
+function safeJson(value: unknown): string {
+  try {
+    // `JSON.stringify(undefined)` returns `undefined` (NOT the string
+    // "undefined"), and the same is true for raw functions or symbols at
+    // the top level. Coalesce to "null" so callers can always safely read
+    // `.length` / `.slice()` on the result — this was the root cause of
+    // the "undefined is not an object (evaluating 'json3.length')" crash
+    // that `js_exec` was hitting for any user code that didn't explicitly
+    // `return` something (e.g. `window.location.href = "…"`).
+    const s = JSON.stringify(value);
+    return typeof s === "string" ? s : "null";
+  } catch {
+    return String(value);
+  }
+}
+
+// Re-export for the orchestrator.
+export { originForUrl };

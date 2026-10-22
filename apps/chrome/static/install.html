@@ -1,0 +1,92 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>xgoose · Install skill</title>
+    <link rel="stylesheet" href="options.css" />
+    <link rel="stylesheet" href="install.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <h1><span class="dot"></span>Install xgoose skill</h1>
+        <p class="subtitle">
+          Review the header below, then confirm to install. You can also paste
+          source or upload an
+          <code>.xgs.js</code> file from your machine.
+        </p>
+      </header>
+
+      <section id="sourceSection">
+        <h2>Source</h2>
+        <p class="hint" id="sourceHint">
+          Drop in or paste a complete <code>.xgs.js</code> skill file. The
+          <code>// ==XGooseSkill== … // ==/XGooseSkill==</code> header is parsed
+          and validated as you type.
+        </p>
+
+        <div class="install-source-actions">
+          <label class="btn secondary install-file-btn">
+            <input
+              id="fileInput"
+              type="file"
+              accept=".xgs.js,.js,.txt"
+              hidden
+            />
+            Choose file…
+          </label>
+          <span id="fileLabel" class="hint install-file-label"></span>
+        </div>
+
+        <div class="row">
+          <label class="col">
+            <textarea
+              id="sourceInput"
+              rows="18"
+              class="mono install-source-input"
+              placeholder="// ==XGooseSkill==&#10;// @name         my-skill&#10;// @namespace    mySkill&#10;// @version      0.1.0&#10;// @description  What this skill does&#10;// @match        *://example.com/*&#10;// @primary      doSomething&#10;// ==/XGooseSkill==&#10;&#10;import { defineSkill, fn } from '@xgoose/skill';&#10;import { z } from 'zod';&#10;&#10;export default defineSkill({&#10;  doSomething: fn({&#10;    summary: 'Do the thing.',&#10;    input: z.object({ x: z.string() }),&#10;    handler: async ({ x }) => ({ ok: true, x }),&#10;  }),&#10;});"
+            ></textarea>
+          </label>
+        </div>
+      </section>
+
+      <section id="previewSection" hidden>
+        <h2>Header preview</h2>
+        <div id="previewBody" class="install-preview"></div>
+      </section>
+
+      <section id="errorSection" hidden>
+        <h2>Header error</h2>
+        <p id="errorBody" class="install-error"></p>
+      </section>
+
+      <section id="resultSection" hidden>
+        <h2>Result</h2>
+        <p id="resultBody" class="install-result"></p>
+        <div class="row install-result-actions">
+          <button id="openOptionsBtn" class="btn secondary" type="button">
+            Open Settings
+          </button>
+          <button id="closeTabBtn" class="btn secondary" type="button">
+            Close tab
+          </button>
+        </div>
+      </section>
+
+      <div class="footer install-footer">
+        <span id="installStatus" class="save-status"></span>
+        <button id="cancelBtn" class="btn secondary" type="button">
+          Cancel
+        </button>
+        <button id="installBtn" class="btn primary" type="button" disabled>
+          Install
+        </button>
+      </div>
+    </div>
+    <script src="installPage.js"></script>
+  </body>
+</html>

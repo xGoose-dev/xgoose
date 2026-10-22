@@ -1,0 +1,35 @@
+{
+  "name": "@xgoose/core",
+  "version": "0.2.0",
+  "description": "Headless xgoose agent: ToolLoopAgent factory, system prompt, tool registry contract, and host ports. Browser-agnostic.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts",
+    "./ports": "./src/ports/index.ts",
+    "./tools": "./src/tools/index.ts"
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "peerDependencies": {
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "zod": "^3.24.0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.3.0",
+    "@earendil-works/pi-ai": "1.3.0",
+    "zod-to-json-schema": "3.25.2",
+    "typebox": "1.3.27"
+  }
+}

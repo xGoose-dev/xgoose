@@ -1,0 +1,30 @@
+{
+  "name": "@xgoose/page-controller",
+  "version": "0.2.0",
+  "description": "xgoose DOM operations: MAIN-world pageBridge, isolated-world RPC, and the read_page / js_exec / console / network tools. Browser-only, extension-agnostic.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./pageBridge": "./src/pageBridge/pageBridge.ts",
+    "./tools": "./src/tools/index.ts"
+  },
+  "files": [
+    "src",
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "peerDependencies": {
+    "@xgoose/core": "0.2.0",
+    "@xgoose/dom-snapshot": "0.2.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "zod": "^3.24.0"
+  },
+  "license": "MIT"
+}

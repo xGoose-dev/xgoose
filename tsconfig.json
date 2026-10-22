@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/skill-runtime" },
+    { "path": "packages/core" },
+    { "path": "packages/dom-snapshot" },
+    { "path": "packages/page-controller" },
+    { "path": "packages/ui" }
+  ]
+}

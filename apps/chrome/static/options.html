@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>xgoose · Settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="page-header">
+        <p class="eyebrow">Settings</p>
+        <h1><span class="dot" aria-hidden="true"></span>xgoose</h1>
+        <p class="subtitle">
+          Floating AI chat panel for the active page, with site-specific
+          skills. Connect your provider, sync your account, and pick which
+          skills auto-attach.
+        </p>
+      </header>
+
+      <div class="layout">
+        <nav class="settings-nav" aria-label="Settings sections">
+          <a class="nav-link" href="#section-account"><span>Account</span></a>
+          <a class="nav-link" href="#section-connection"
+            ><span>Connection</span></a
+          >
+          <a class="nav-link" href="#section-skills"><span>Skills</span></a>
+          <a class="nav-link" href="#section-personalization"
+            ><span>Personalization</span></a
+          >
+          <a class="nav-link" href="#section-advanced"
+            ><span>Advanced</span></a
+          >
+          <a class="nav-link" href="#section-about"><span>About</span></a>
+        </nav>
+
+        <main class="settings-main">
+          <section id="section-account" aria-labelledby="account-heading">
+            <div class="section-head">
+              <h2 id="account-heading">Account</h2>
+            </div>
+            <p class="hint">
+              Sign in to sync saved skills, claim your free daily AI quota,
+              and route through the hosted xgoose AI gateway instead of your
+              own provider key.
+            </p>
+            <div
+              id="accountState"
+              class="account-state account-state-loading"
+            >
+              <div class="account-state-body">Loading…</div>
+            </div>
+          </section>
+
+          <section
+            id="section-connection"
+            aria-labelledby="connection-heading"
+          >
+            <div class="section-head">
+              <h2 id="connection-heading">Connection</h2>
+            </div>
+            <p class="hint">
+              Pick a provider and model. xgoose runs your prompts against
+              whichever endpoint you choose — your key, your bill, your
+              control.
+            </p>
+
+            <div class="field">
+              <label for="provider" class="field-label">Provider</label>
+              <select id="provider">
+                <option value="xgoose-hosted">
+                  xgoose Hosted AI — uses your account quota
+                </option>
+                <option value="gemini">
+                  Gemini API (Google) — bring your own key
+                </option>
+                <option value="gemini-litellm">
+                  Gemini via LiteLLM proxy
+                </option>
+                <option value="openai-compat">OpenAI-compatible</option>
+              </select>
+            </div>
+
+            <div class="field-grid two">
+              <div class="field">
+                <label for="model" class="field-label">Model</label>
+                <select id="model"></select>
+              </div>
+              <label class="toggle-card">
+                <input id="modelCustomToggle" type="checkbox" />
+                <span class="toggle-card-body">
+                  <span class="toggle-card-title">Custom model</span>
+                  <span class="toggle-card-hint">
+                    Type any model name your endpoint supports.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div class="field" id="modelCustomRow" hidden>
+              <label for="modelCustom" class="field-label">
+                Custom model name
+              </label>
+              <input
+                id="modelCustom"
+                type="text"
+                autocomplete="off"
+                placeholder="e.g. gemini-2.5-pro-exp"
+              />
+            </div>
+
+            <div class="field" id="hostedStatusRow" hidden>
+              <div class="callout">
+                <span class="hint" id="hostedStatusHint"></span>
+              </div>
+            </div>
+
+            <div class="field" id="apiKeyRow">
+              <label for="apiKey" class="field-label">API key</label>
+              <div class="input-with-action">
+                <input
+                  id="apiKey"
+                  type="password"
+                  autocomplete="off"
+                  placeholder="sk-…"
+                />
+                <span id="apiKeyTestRow" class="inline-test">
+                  <button
+                    id="testApiKeyBtn"
+                    class="btn secondary compact"
+                    type="button"
+                  >
+                    Test
+                  </button>
+                  <span
+                    id="testApiKeyStatus"
+                    class="save-status compact"
+                  ></span>
+                </span>
+              </div>
+            </div>
+
+            <div class="field" id="baseUrlOuterRow">
+              <label for="baseUrl" class="field-label" id="baseUrlRow">
+                Base URL
+              </label>
+              <input
+                id="baseUrl"
+                type="text"
+                autocomplete="off"
+                placeholder="https://your-litellm-proxy.example/v1"
+              />
+              <span class="hint" id="baseUrlHint"></span>
+            </div>
+          </section>
+
+          <section id="section-skills" aria-labelledby="skills-heading">
+            <div class="section-head">
+              <h2 id="skills-heading">Skills</h2>
+              <button id="addSkillBtn" class="btn primary compact" type="button">
+                + Add custom skill
+              </button>
+            </div>
+            <p class="hint">
+              Bundled skills ship with the extension.
+              <strong>Custom skills</strong> are yours — they live in
+              extension storage and inject into the page MAIN world from a
+              Blob URL. Disable any skill you don't want to auto-attach when
+              its URL pattern matches. Visit a raw
+              <code>.xgs.js</code> URL and the install page opens
+              automatically.
+            </p>
+            <div id="skillList" class="skill-list"></div>
+          </section>
+
+          <section
+            id="skillEditor"
+            class="skill-editor"
+            aria-labelledby="skillEditorTitle"
+            hidden
+          >
+            <div class="section-head">
+              <h2><span id="skillEditorTitle">Edit skill</span></h2>
+            </div>
+            <p class="hint">
+              Skills are a single <code>.xgs.js</code> file (Tampermonkey-style
+              header + JS body). Edit the source below — the header is parsed
+              and validated on save, the body is bundled at install time. See
+              <a
+                href="https://github.com/xGoose-dev/xgoose-extension-chrome/blob/main/skills/SKILL_AUTHORING.md"
+                target="_blank"
+                rel="noopener"
+                >SKILL_AUTHORING.md</a
+              >
+              for the format.
+            </p>
+            <div class="field">
+              <label for="skillSource" class="field-label">
+                <code>.xgs.js</code> source
+              </label>
+              <textarea
+                id="skillSource"
+                rows="22"
+                class="mono"
+                placeholder="// ==XGooseSkill==&#10;// @name         my-skill&#10;// @namespace    myskill&#10;// @version      0.0.1&#10;// @description  What this does&#10;// @match        *://example.com/*&#10;// @primary      foo&#10;// ==/XGooseSkill==&#10;&#10;import { defineSkill, fn } from '@xgoose/skill';&#10;import { z } from 'zod';&#10;&#10;export default defineSkill({&#10;  foo: fn({&#10;    summary: 'Do the thing.',&#10;    input: z.object({ x: z.string() }),&#10;    handler: async ({ x }) => ({ ok: true, x }),&#10;  }),&#10;});"
+              ></textarea>
+              <span class="hint">
+                The
+                <code>// ==XGooseSkill== … // ==/XGooseSkill==</code>
+                header drives matches / namespace / version. After save,
+                navigate to a matching URL (or reload) for the skill to
+                activate.
+              </span>
+            </div>
+            <div class="skill-editor-actions">
+              <span id="skillEditorStatus" class="save-status"></span>
+              <button id="skillCancelBtn" class="btn secondary" type="button">
+                Cancel
+              </button>
+              <button
+                id="skillDeleteBtn"
+                class="btn danger"
+                type="button"
+                hidden
+              >
+                Delete
+              </button>
+              <button id="skillSaveBtn" class="btn primary" type="button">
+                Save skill
+              </button>
+            </div>
+          </section>
+
+          <section
+            id="section-personalization"
+            aria-labelledby="personalization-heading"
+          >
+            <div class="section-head">
+              <h2 id="personalization-heading">Personalization</h2>
+            </div>
+            <div class="field-grid two">
+              <div class="field">
+                <label for="theme" class="field-label">Theme</label>
+                <select id="theme">
+                  <option value="system">Follow system</option>
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                </select>
+                <span class="hint">
+                  System mirrors your OS preference automatically.
+                </span>
+              </div>
+              <div class="field">
+                <label for="launcherVisibility" class="field-label"
+                  >Floating button</label
+                >
+                <select id="launcherVisibility">
+                  <option value="always">Show on every page</option>
+                  <option value="skill-sites">
+                    Only on sites with a matching skill
+                  </option>
+                </select>
+                <span class="hint">
+                  When limited to skill sites, the <code>✦</code> launcher
+                  stays hidden where no skill matches. An open chat is never
+                  hidden.
+                </span>
+              </div>
+              <div class="field">
+                <span class="field-label">Panel layout</span>
+                <div id="layoutInfo" class="hint"></div>
+                <button
+                  id="resetLayoutBtn"
+                  class="btn secondary compact"
+                  type="button"
+                >
+                  Reset position & size
+                </button>
+                <span class="hint">
+                  Drag the floating <code>✦</code> button to any corner and
+                  drag the panel's edge handles to resize. Saved per device.
+                </span>
+              </div>
+              <div class="field">
+                <label class="toggle-card">
+                  <input id="analyticsEnabled" type="checkbox" />
+                  <span class="toggle-card-body">
+                    <span class="toggle-card-title">
+                      Share anonymous usage analytics
+                    </span>
+                    <span class="toggle-card-hint">
+                      Helps us find where the product is confusing. Anonymous,
+                      no ad identifiers, no page content. Turn off anytime.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section id="section-advanced" aria-labelledby="advanced-heading">
+            <div class="section-head">
+              <h2 id="advanced-heading">Advanced</h2>
+            </div>
+            <p class="hint">
+              Sensitive header values (<code>Authorization</code>,
+              <code>Cookie</code>, …) are always redacted before being shown
+              to the model — this protection is on by default and cannot be
+              turned off.
+            </p>
+            <div class="field">
+              <label for="jsExecTimeoutMs" class="field-label">
+                <code>js_exec</code> timeout (ms)
+              </label>
+              <input
+                id="jsExecTimeoutMs"
+                type="number"
+                min="1000"
+                max="600000"
+                step="1000"
+              />
+              <input id="jsExecTimeoutMsToggle" type="hidden" />
+              <span class="hint">
+                Currently
+                <strong id="jsExecTimeoutMsLabel">30s</strong>. Increase if a
+                skill needs longer to scrape (e.g. large award calendars).
+              </span>
+            </div>
+          </section>
+
+          <section id="section-about" aria-labelledby="about-heading">
+            <div class="section-head">
+              <h2 id="about-heading">About</h2>
+            </div>
+            <p class="hint">
+              xgoose-extension-chrome is the Chrome MV3 host for the xgoose
+              agent. Built on
+              <a
+                href="https://github.com/xGoose-dev/xgoose-agent-core"
+                target="_blank"
+                rel="noopener"
+                >@xgoose/core</a
+              >
+              +
+              <a
+                href="https://github.com/xGoose-dev/xgoose-agent-core"
+                target="_blank"
+                rel="noopener"
+                >@xgoose/page-controller</a
+              >
+              +
+              <a
+                href="https://github.com/xGoose-dev/xgoose-agent-core"
+                target="_blank"
+                rel="noopener"
+                >@xgoose/ui</a
+              >.
+            </p>
+            <p class="hint">
+              On strict-CSP sites the <code>js_exec</code> tool may fail to
+              inject the page bridge. Tools that don't need DOM access still
+              work.
+            </p>
+          </section>
+        </main>
+      </div>
+
+      <div class="footer">
+        <span id="saveStatus" class="save-status"></span>
+        <button id="resetBtn" class="btn secondary" type="button">
+          Reset to defaults
+        </button>
+        <button id="saveBtn" class="btn primary" type="button">Save</button>
+      </div>
+    </div>
+    <script src="options.js"></script>
+  </body>
+</html>

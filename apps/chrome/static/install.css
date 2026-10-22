@@ -1,0 +1,176 @@
+/* ============================================================
+ * xgoose · install page
+ *
+ * Layered on top of options.css for visual consistency. This
+ * file only adds the install-specific bits: source textarea
+ * tuning, header preview grid, result state colours, and the
+ * action row pinned to the bottom of the page.
+ * ============================================================ */
+
+.install-source-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 14px;
+  flex-wrap: wrap;
+}
+
+.install-file-btn {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.install-file-btn:hover {
+  /* Inherits .btn.secondary hover styles. */
+}
+
+.install-file-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-family:
+    "JetBrains Mono", "SF Mono", ui-monospace, SFMono-Regular, Menlo,
+    Consolas, monospace;
+  word-break: break-all;
+}
+
+.install-source-input {
+  width: 100%;
+  font-family:
+    "JetBrains Mono", "SF Mono", ui-monospace, SFMono-Regular, Menlo,
+    Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-input);
+  background: var(--bg-input);
+  color: var(--text-strong);
+  resize: vertical;
+  min-height: 260px;
+  tab-size: 2;
+  -moz-tab-size: 2;
+  -webkit-appearance: none;
+  appearance: none;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease;
+}
+.install-source-input:hover {
+  border-color: var(--border-strong);
+}
+.install-source-input:focus {
+  border-color: transparent;
+  outline: none;
+  background: var(--bg);
+  box-shadow:
+    0 0 0 1px var(--gradient-via),
+    0 0 0 4px rgba(168, 85, 247, 0.18);
+}
+
+.install-preview {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: 8px 16px;
+  font-size: 13.5px;
+  padding: 14px 16px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.install-preview .label {
+  color: var(--text-muted);
+  text-align: right;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  font-weight: 700;
+  padding-top: 2px;
+}
+
+.install-preview .value {
+  word-break: break-word;
+  color: var(--text-strong);
+}
+
+.install-preview .value code {
+  font-family:
+    "JetBrains Mono", "SF Mono", ui-monospace, SFMono-Regular, Menlo,
+    Consolas, monospace;
+  font-size: 12.5px;
+  background: var(--code-inline-bg);
+  color: var(--code-text);
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(168, 85, 247, 0.16);
+}
+
+.install-error {
+  color: #fda4af;
+  font-size: 13.5px;
+  white-space: pre-wrap;
+  padding: 12px 14px;
+  background: rgba(239, 68, 68, 0.10);
+  border: 1px solid rgba(239, 68, 68, 0.30);
+  border-radius: 10px;
+  font-family:
+    "JetBrains Mono", "SF Mono", ui-monospace, SFMono-Regular, Menlo,
+    Consolas, monospace;
+}
+
+.install-result {
+  font-size: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+}
+.install-result.success {
+  color: #4ade80;
+  background: rgba(16, 185, 129, 0.10);
+  border-color: rgba(16, 185, 129, 0.30);
+}
+.install-result.error {
+  color: #fda4af;
+  background: rgba(239, 68, 68, 0.10);
+  border-color: rgba(239, 68, 68, 0.30);
+}
+
+.install-result-actions {
+  margin-top: 14px;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.install-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 600px) {
+  .install-source-input {
+    font-size: 15px !important;
+    min-height: 240px;
+  }
+  .install-preview {
+    grid-template-columns: 1fr;
+    gap: 4px 0;
+  }
+  .install-preview .label {
+    text-align: left;
+    padding-top: 8px;
+  }
+  .install-preview .label:first-child {
+    padding-top: 0;
+  }
+  .install-result-actions .btn,
+  .install-footer .btn {
+    flex: 1 1 0;
+  }
+}
