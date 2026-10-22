@@ -244,6 +244,13 @@ async function bootstrap(): Promise<void> {
   let currentConvoTitle = "";
   let abortController: AbortController | null = null;
   let running = false;
+  let runSettled: Promise<void> = Promise.resolve();
+  let resolveRunSettled: (() => void) | undefined;
+  async function stopBeforeConversationSwitch() {
+    queuedMessages.length = 0;
+    panel.setQueuedMessages([]);
+    if (running) { abortController?.abort(new Error("user_abort")); await runSettled; }
+  }
   // Claude-Code-style prompt queue. Anything the user types while a turn is
   // in flight is parked here and drained automatically once the current
   // turn finishes. `agentLoopActive` covers the gap *between* turns in the
@@ -419,7 +426,7 @@ async function bootstrap(): Promise<void> {
   }, { once: true });
 
   panel.onNew(async () => {
-    if (running) abortController?.abort(new Error("user_abort"));
+    await stopBeforeConversationSwitch();
     snapshotInFlightToMessages();
     persistCurrentConvo();
     currentConvoId = null;
@@ -512,7 +519,7 @@ async function bootstrap(): Promise<void> {
     void refreshHistory();
   });
   panel.onLoadConversation(async (id) => {
-    if (running) abortController?.abort(new Error("user_abort"));
+    await stopBeforeConversationSwitch();
     snapshotInFlightToMessages();
     persistCurrentConvo();
     const convo = await getConversation(id);
@@ -531,6 +538,7 @@ async function bootstrap(): Promise<void> {
     void setLastConvoIdGlobal(convo.id);
   });
   panel.onDeleteConversation(async (id) => {
+    if (id === currentConvoId) await stopBeforeConversationSwitch();
     await deleteConversation(id);
     if (id === currentConvoId) {
       currentConvoId = null;
@@ -648,6 +656,7 @@ async function bootstrap(): Promise<void> {
     );
     panel.showThinking(opts.hidden ? "Continuing on new page…" : "Thinking…");
     running = true;
+    runSettled = new Promise<void>(resolve => { resolveRunSettled = resolve; });
     abortController = new AbortController();
 
     const journalRunId = crypto.randomUUID();
@@ -690,6 +699,18 @@ async function bootstrap(): Promise<void> {
       const skillsForReminder = (
         await send("sw:active_skills_for_url", { url: getCurrentPageUrl() })
       ).map((s) => ({ ...s, enabled: true }));
+
+      // Read documentation only from installed, enabled skills in this document.
+      // Static parsing cannot recover computed schemas or defineSkill options.
+      await injectSkills(skillsForReminder);
+      if (skillsForReminder.length) {
+        const described = await callBridge("exec", {code: `return Object.fromEntries(args[0].map(ns => { const s=window.xgoose?.skills?.[ns]; return [ns,s ? {functions:s.__describe__?.(),instructions:s.__meta__?.instructions} : null]; }));`,args:[skillsForReminder.map(s=>s.namespace)],timeoutMs:5000,execId:crypto.randomUUID()},7000) as any;
+        if(described.ok)for(const skill of skillsForReminder){
+          const info=described.result?.[skill.namespace];
+          if(info?.functions&&typeof info.functions==="object")skill.functions=Object.entries(info.functions).map(([name,details])=>({name,...details as any}));
+          if(typeof info?.instructions==="string")skill.instructions=info.instructions;
+        }
+      }
 
       const baseReminder = buildSystemReminder({
         pageUrl: getCurrentPageUrl(),
@@ -734,7 +755,7 @@ async function bootstrap(): Promise<void> {
       // Reminder content changes (navigation, new todos, new memory) DO
       // invalidate the whole prefix — but that was already true before, and
       // those events are rare relative to "user types another question".
-      const bundle = await createAgent({ settings, reminder });
+      const bundle = await createAgent({ settings, reminder, onProviderResponse: record });
       bundle.agent.subscribe(async event => {
         if (event.type === "text-delta" || event.type === "reasoning-delta") return;
         await record(event);
@@ -994,6 +1015,8 @@ async function bootstrap(): Promise<void> {
       panel.setSending(false);
       panel.setGenerating(false);
       panel.setLoadingStatus(null);
+      resolveRunSettled?.();
+      resolveRunSettled = undefined;
     }
   }
 

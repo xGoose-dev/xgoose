@@ -41,6 +41,7 @@ import {
   pollOnce,
   refreshTokens,
   startLogin,
+  cancelLogin,
 } from "./account";
 import { apiFetch } from "@/shared/account";
 import { installConfigSyncListeners } from "./configSync";
@@ -283,7 +284,7 @@ registerRouter({
       const source = await res.text();
       const key = newStashKey();
       await chrome.storage.session.set({
-        [key]: { source, originUrl: originUrl ?? url.toString(), at: Date.now() },
+        [key]: { source, originUrl: res.url, at: Date.now() },
       });
       const installUrl = chrome.runtime.getURL(
         `install.html?stash=${encodeURIComponent(key)}`,
@@ -303,7 +304,8 @@ registerRouter({
   // ── xgoose cloud account (device-flow login) ────────────────────────
   "sw:account_get": async () => getFreshAccount(),
   "sw:account_login_state": async () => getLoginState(),
-  "sw:account_start_login": async () => startLogin(),
+  "sw:account_cancel_login": async () => cancelLogin(),
+  "sw:account_start_login": async (payload) => startLogin(payload?.email),
   "sw:account_poll_now": async () => pollOnce(),
   "sw:account_logout": async () => {
     await accountLogout();

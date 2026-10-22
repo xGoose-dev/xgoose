@@ -49,6 +49,7 @@ function getFetchImpl(): ReturnType<typeof createChromeProviderFetch> {
 export async function createAgent(opts: {
   settings: Settings;
   reminder?: string | null;
+  onProviderResponse?: (event: {type:"model-response";requestId:string|null;status:number;firstResponseMs:number}) => Promise<unknown>;
 }): Promise<AgentBundle> {
   const tools = [
     ...buildCoreTools({ memory: chromeMemoryPort, origin: chromeOriginPort }),
@@ -57,7 +58,13 @@ export async function createAgent(opts: {
   const coreSettings = await projectToCoreSettings(opts.settings);
   return coreCreateAgent({
     settings: coreSettings,
-    fetchImpl: getFetchImpl(),
+    fetchImpl: async (input, init) => {
+      const started=Date.now();
+      const response=await getFetchImpl()(input,init);
+      // Record correlation metadata, never request headers or credentials.
+      await opts.onProviderResponse?.({type:"model-response",requestId:response.headers.get("x-request-id"),status:response.status,firstResponseMs:Date.now()-started});
+      return response;
+    },
     tools,
     reminder: opts.reminder,
   });

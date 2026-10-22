@@ -52,3 +52,15 @@ test("compaction preserves full output while persisting a separate model context
   assert.ok(!JSON.stringify(saved.modelContext).includes('x'.repeat(1000)));
   assert.equal(history[0].content,'Original question '+ 'x'.repeat(1000));
 });
+test("full tool transcript is separate from bounded model context",async()=>{
+ const large={body:'x'.repeat(200000),last:'complete-evidence'};let requests=0;
+ const bundle=createAgent({settings,fetchImpl:fetch,contextBudgetChars:10000,tools:[defineTool({name:'large',description:'large fixture',inputSchema:z.object({}),execute:()=>large,toModelOutput:()=>[{type:'text',text:'bounded evidence preview'}]})],streamFn:(_m,ctx)=>{
+  requests++;if(requests===1)return stream(answer([{type:'toolCall',id:'large-1',name:'large',arguments:{}}],'toolUse'));
+  assert.equal(ctx.messages.at(-1)?.content[0].text,'bounded evidence preview');return stream(answer([{type:'text',text:'done'}]));
+ }});
+ const result=await bundle.agent.stream({messages:[{role:'user',content:'Read large evidence'}]});for await(const _ of result.fullStream){}
+ const saved=await result.response;
+ assert.equal(requests,2);
+ assert.deepEqual(saved.messages.find(m=>m.role==='tool')?.content[0].output.value,large);
+ assert.equal(saved.modelContext.find(m=>m.role==='tool')?.content[0].output.value,'bounded evidence preview');
+});

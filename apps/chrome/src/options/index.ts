@@ -64,15 +64,21 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
 }
 
 (async function init() {
-  await mountAccountSection();
+  void mountAccountSection().catch(err => console.error("[xgoose] account init failed", err));
   const privacy = document.createElement("section");
   privacy.className = "card";
-  privacy.innerHTML = `<h2>Conversation privacy</h2><p>Hosted Luna saves full messages, actual tool inputs and outputs, errors and summaries for 90 days. Credentials are redacted. Staff can read a conversation only after you authorize that specific conversation. View, export and delete at <a href="https://xgoose.org/account/" target="_blank">Your account</a>.</p><p><label><input id="hostedConsent" type="checkbox"> I agree to conversation storage when using Hosted Luna.</label></p><p><label><input id="byokConsent" type="checkbox"> Also upload my BYOK conversations (optional; off by default).</label></p><button id="saveConsent">Save conversation preferences</button><p id="consentStatus"></p><h2>Allow User Scripts</h2><p>Open chrome://extensions → xgoose → Details and enable Allow User Scripts. Disabling skills stops future calls; existing requests and page changes may require a refresh to clear.</p>`;
+  privacy.style.marginBottom = "100px";
+  privacy.style.scrollMarginBottom = "100px";
+  privacy.innerHTML = `<h2>Conversation privacy</h2><p>Hosted Luna saves full messages, actual tool inputs and outputs, errors and summaries for 90 days. Credentials are redacted. Staff can read a conversation only after you authorize that specific conversation. View, export and delete at <a href="https://xgoose.org/account/" target="_blank">Your account</a>.</p><p><label><input id="hostedConsent" type="checkbox" disabled> I agree to conversation storage when using Hosted Luna.</label></p><p><label><input id="byokConsent" type="checkbox" disabled> Also upload my BYOK conversations (optional; off by default).</label></p><button id="saveConsent" disabled>Save conversation preferences</button><p id="consentStatus"></p><h2>Allow User Scripts</h2><p>Open chrome://extensions → xgoose → Details and enable Allow User Scripts. Disabling skills stops future calls; existing requests and page changes may require a refresh to clear.</p>`;
   document.querySelector(".page")!.append(privacy);
   const hosted = privacy.querySelector<HTMLInputElement>("#hostedConsent")!;
   const byok = privacy.querySelector<HTMLInputElement>("#byokConsent")!;
   const status = privacy.querySelector<HTMLElement>("#consentStatus")!;
-  try { const c = await send("sw:consent_get", undefined); hosted.checked=c.hosted;byok.checked=c.byok; } catch { status.textContent="Sign in to manage server preferences. BYOK upload is off by default."; }
+  void (async () => {
+    try { const c = await send("sw:consent_get", undefined); hosted.checked=c.hosted;byok.checked=c.byok; } catch { status.textContent="Sign in to manage server preferences. BYOK upload is off by default."; }
+    hosted.disabled=false; byok.disabled=false;
+    privacy.querySelector<HTMLButtonElement>("#saveConsent")!.disabled=false;
+  })();
   privacy.querySelector("#saveConsent")!.addEventListener("click",async()=>{
     try { await send("sw:consent_set",{hosted:hosted.checked,byok:byok.checked});status.textContent="Saved. Withdrawing stops future uploads and clears pending uploads. Existing records can be deleted on your account page."; }
     catch(error) { status.textContent=String(error); }
@@ -415,6 +421,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
     hostedStatusHintEl.textContent = "Loading available models…";
     hostedStatusHintEl.style.color = "";
     const res = await send("sw:list_xgoose_models", {});
+    if (providerEl.value !== "xgoose-hosted") return; // Ignore results after switching providers.
     if (!res.ok) {
       if (!res.signedIn) {
         hostedStatusHintEl.innerHTML =
@@ -550,6 +557,14 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
     await persistSettings({ ...DEFAULT_SETTINGS });
     location.reload();
   });
+
+  // Local settings are usable independently of account, consent and catalog requests.
+  for (const section of document.querySelectorAll<HTMLElement>("[data-settings-loading]")) {
+    section.inert = false;
+    section.removeAttribute("data-settings-loading");
+  }
+  saveBtn.disabled = false;
+  resetBtn.disabled = false;
 
   // ── Skills rendering ──
 
@@ -733,7 +748,7 @@ function escHtml(s: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Account section: sign-in via xgoose.org device flow + signed-in profile.
+// Account section: email confirmation sign-in + signed-in profile.
 // All login state lives in the service worker (`background/account.ts`); we
 // just render whatever the SW reports, and refresh on storage.onChanged.
 // ---------------------------------------------------------------------------
@@ -742,6 +757,7 @@ type LoginPhase = "idle" | "pending" | "denied" | "expired" | "error";
 interface LoginState {
   phase: LoginPhase;
   userCode: string | null;
+  email: string | null;
   verificationUri: string | null;
   expiresAt: number | null;
   intervalMs: number;
@@ -758,6 +774,7 @@ async function mountAccountSection(): Promise<void> {
   // Local UI poll handle — we tick a re-render while a login is pending so the
   // countdown stays fresh and we pick up the SW's polling result.
   let pendingTicker: ReturnType<typeof setInterval> | null = null;
+  let emailDraft="";
 
   async function refresh(): Promise<void> {
     const [account, loginState] = await Promise.all([
@@ -814,24 +831,10 @@ async function mountAccountSection(): Promise<void> {
     const displayName = account.user.name || account.user.email;
     body.innerHTML =
       `<div class="name">${escHtml(displayName)}${badges.join("")}</div>` +
-      `<div class="meta">${escHtml(account.user.email)} · token expires <code>${escHtml(
-        formatExpiry(account.accessTokenExpiresAt),
-      )}</code></div>`;
+      `<div class="meta">${escHtml(account.user.email)} · Connected</div>`;
 
     const actions = document.createElement("div");
     actions.className = "actions";
-    const refreshBtn = document.createElement("button");
-    refreshBtn.className = "btn secondary";
-    refreshBtn.textContent = "Refresh token";
-    refreshBtn.addEventListener("click", async () => {
-      refreshBtn.disabled = true;
-      refreshBtn.textContent = "Refreshing…";
-      const next = await send("sw:account_refresh", undefined);
-      refreshBtn.disabled = false;
-      refreshBtn.textContent = "Refresh token";
-      if (!next) alert("Refresh failed — please sign in again.");
-      await refresh();
-    });
     const logoutBtn = document.createElement("button");
     logoutBtn.className = "btn danger";
     logoutBtn.textContent = "Sign out";
@@ -842,52 +845,38 @@ async function mountAccountSection(): Promise<void> {
       logoutBtn.disabled = false;
       await refresh();
     });
-    actions.append(refreshBtn, logoutBtn);
+    actions.append(logoutBtn);
     host.append(avatar, body, actions);
   }
 
   function renderSignedOut(host: HTMLElement, login: LoginState): void {
     const body = document.createElement("div");
     body.className = "account-state-body";
-    body.innerHTML =
-      '<div class="name">Not signed in</div>' +
-      '<div class="meta">Click sign in to link this plugin to your xgoose account.</div>';
-    const actions = document.createElement("div");
-    actions.className = "actions";
-    const signInBtn = document.createElement("button");
-    signInBtn.className = "btn primary";
-    signInBtn.textContent =
-      login.phase === "pending"
-        ? "Waiting for approval…"
-        : "Sign in via xgoose.org";
-    signInBtn.disabled = login.phase === "pending";
-    signInBtn.addEventListener("click", async () => {
-      signInBtn.disabled = true;
-      signInBtn.textContent = "Opening browser…";
-      await send("sw:account_start_login", undefined);
-      await refresh();
-    });
-    actions.append(signInBtn);
-    host.append(body, actions);
-
-    if (login.phase === "pending" && login.userCode && login.verificationUri) {
-      const card = document.createElement("div");
-      card.className = "device-code-card";
-      const secs = Math.max(
-        0,
-        Math.floor(((login.expiresAt ?? 0) - Date.now()) / 1000),
-      );
-      const min = Math.floor(secs / 60);
-      const rem = String(secs % 60).padStart(2, "0");
-      card.innerHTML =
-        `<div>Approval code: <span class="code">${escHtml(login.userCode)}</span></div>` +
-        `<div class="meta">A new tab should have opened with this code pre-filled. ` +
-        `If not, visit <a href="${escAttr(login.verificationUri)}" target="_blank" rel="noopener">${escHtml(
-          login.verificationUri,
-        )}</a> and enter the code above. ` +
-        `Expires in ${min}m ${rem}s.</div>`;
+    body.innerHTML = '<div class="name">Sign in with email</div>' +
+      '<div class="meta">New here? Your account is created when you confirm your email. No password or website registration needed.</div>';
+    const form=document.createElement("form");form.className="actions";
+    form.style.cssText="display:flex;gap:10px;flex-wrap:wrap;align-items:center";
+    const email=document.createElement("input");email.type="email";email.id="loginEmail";email.placeholder="you@example.com";email.autocomplete="email";email.required=true;email.setAttribute("aria-label","Email address");email.value=login.email??emailDraft;email.disabled=login.phase==="pending";
+    email.addEventListener("input",()=>{emailDraft=email.value;});
+    const signIn=document.createElement("button");signIn.type="submit";signIn.className="btn primary";signIn.textContent=login.phase==="pending"?"Check your email":"Send sign-in email";signIn.disabled=login.phase==="pending";
+    form.addEventListener("submit",async event=>{event.preventDefault();if(!email.reportValidity())return;emailDraft=email.value;signIn.disabled=true;signIn.textContent="Sending…";await send("sw:account_start_login",{email:email.value});await refresh();});
+    form.append(email,signIn);body.append(form);host.append(body);
+    if(login.phase==="pending"){
+      const card=document.createElement("div");card.className="device-code-card";
+      const remaining=Math.max(0,Math.ceil(((login.expiresAt??0)-Date.now())/60000));
+      card.textContent=`Email sent to ${login.email??"your inbox"}. Click the confirmation link and this extension will sign in automatically. The link expires in ${remaining} minutes. You can close this settings page.`;
+      const change = document.createElement("button");
+      change.type = "button"; change.className = "btn secondary";
+      change.textContent = "Change email or request another link";
+      change.addEventListener("click", async () => {
+        change.disabled = true;
+        await send("sw:account_cancel_login", undefined);
+        await refresh();
+      });
+      card.append(document.createElement("br"), change);
       host.parentElement?.appendChild(card);
     }
+
     if (
       (login.phase === "denied" ||
         login.phase === "expired" ||
@@ -911,17 +900,6 @@ async function mountAccountSection(): Promise<void> {
   // via the same storage key namespace (we listen to ACCOUNT_KEY since that's
   // the only one that flips when polling resolves).
   void ACCOUNT_KEY;
-}
-
-function formatExpiry(iso: string): string {
-  const ms = new Date(iso).getTime() - Date.now();
-  if (Number.isNaN(ms)) return iso;
-  if (ms <= 0) return "expired";
-  const min = Math.floor(ms / 60_000);
-  if (min < 60) return `in ${min}m`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `in ${hr}h`;
-  return `in ${Math.floor(hr / 24)}d`;
 }
 
 function humanPhase(p: LoginPhase): string {

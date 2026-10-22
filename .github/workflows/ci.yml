@@ -15,3 +15,4 @@ jobs:
       - run: npm run check
       - run: npx playwright install --with-deps chromium
       - run: node tests/browser/acceptance.mjs
+      - run: node tests/browser/email-login.mjs

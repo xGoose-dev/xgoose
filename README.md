@@ -26,6 +26,19 @@ The agent runs in the current document. Navigation, refresh and closing the tab
 end the run. History is available explicitly; opening history starts a separate
 local session so tabs cannot overwrite one another.
 
+## Sign in
+
+Open the extension settings, enter your email and select **Send sign-in email**.
+Click the confirmation link in your inbox; the extension signs in automatically.
+New accounts are created on confirmation, with no password or separate website
+registration. You can close settings while waiting, including restarting Chrome.
+Links expire after ten minutes; settings lets you change the email or request
+another link. Hosted Luna still requires explicit conversation-storage consent.
+
+`npm run e2e` exercises the built extension in Chromium using synthetic provider
+and email responses, including recovery of pending login after a browser restart.
+It does not replace real email delivery or the live forum release gate.
+
 ## Providers and skills
 
 BYOK supports OpenAI-compatible endpoints (including LiteLLM) and Gemini.

@@ -74,6 +74,7 @@ export function createJsExecTool(deps: JsExecToolDeps): XgooseBuiltTool {
           "Optional JSON array bound to `args` inside `code`. Defaults to [].",
         ),
     }),
+    toModelOutput: jsExecModelOutput,
     isReadOnly: false,
     isConcurrencySafe: (i) => !!i?.parallel_safe,
     label: (i) => (i?.purpose ? truncate(String(i.purpose), 60) : "Ran JS"),
@@ -135,23 +136,16 @@ export function createJsExecTool(deps: JsExecToolDeps): XgooseBuiltTool {
           })
         : await execPromise;
 
-      if (!res.ok) return res;
-      // Defensive: `safeJson` is guaranteed to return a string, but if a
-      // future refactor breaks that invariant we still don't want to crash
-      // the AI SDK turn with a `json.length` TypeError (which is exactly
-      // what caused the `'undefined is not an object (evaluating
-      // 'json3.length')'` error users were seeing for navigation `js_exec`
-      // calls like `window.location.href = "…"`).
-      const json = safeJson(res.result) || "null";
-      if (json.length <= MAX_RESULT_BYTES) {
-        return { ok: true, result: res.result };
-      }
-      return {
-        ok: true,
-        truncated: true,
-        sizeBytes: json.length,
-        preview: json.slice(0, MAX_RESULT_BYTES) + "\n…[truncated]",
-      };
+      // Preserve the actual result for the local journal and consented transcript.
+      return res;
+
     },
   });
+}
+
+/** Only the model-facing representation is bounded; transcript details stay intact. */
+export function jsExecModelOutput(output:unknown) {
+  const json=safeJson(output),bytes=new TextEncoder().encode(json);
+  const text=bytes.length<=MAX_RESULT_BYTES?json:JSON.stringify({truncated:true,sizeBytes:bytes.length,preview:new TextDecoder().decode(bytes.slice(0,MAX_RESULT_BYTES)),next:"Recover omitted evidence with a narrower read-only projection. Do not repeat mutations."});
+  return [{type:"text" as const,text}];
 }

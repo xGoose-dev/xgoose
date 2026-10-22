@@ -43,9 +43,9 @@
               <h2 id="account-heading">Account</h2>
             </div>
             <p class="hint">
-              Sign in to sync saved skills, claim your free daily AI quota,
-              and route through the hosted xgoose AI gateway instead of your
-              own provider key.
+              Enter your email to connect this extension. New accounts are created
+              after email confirmation. Hosted Luna uses your account credit;
+              you can also configure your own provider below.
             </p>
             <div
               id="accountState"
@@ -56,7 +56,7 @@
           </section>
 
           <section
-            id="section-connection"
+            id="section-connection" inert data-settings-loading
             aria-labelledby="connection-heading"
           >
             <div class="section-head">
@@ -235,7 +235,7 @@
           </section>
 
           <section
-            id="section-personalization"
+            id="section-personalization" inert data-settings-loading
             aria-labelledby="personalization-heading"
           >
             <div class="section-head">
@@ -301,7 +301,7 @@
             </div>
           </section>
 
-          <section id="section-advanced" aria-labelledby="advanced-heading">
+          <section id="section-advanced" inert data-settings-loading aria-labelledby="advanced-heading">
             <div class="section-head">
               <h2 id="advanced-heading">Advanced</h2>
             </div>
@@ -370,10 +370,10 @@
 
       <div class="footer">
         <span id="saveStatus" class="save-status"></span>
-        <button id="resetBtn" class="btn secondary" type="button">
+        <button id="resetBtn" disabled class="btn secondary" type="button">
           Reset to defaults
         </button>
-        <button id="saveBtn" class="btn primary" type="button">Save</button>
+        <button id="saveBtn" disabled class="btn primary" type="button">Save</button>
       </div>
     </div>
     <script src="options.js"></script>

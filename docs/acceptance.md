@@ -25,5 +25,8 @@ contradictory conditions, empty results, 429, authentication restrictions, skill
 lifecycle, cancellation, worker interruption, navigation, account isolation,
 quota races, replay protection, transcript consent and retention.
 
-Current status: live acceptance has not run. No store submission is approved by
-this document. Only a reviewed report may change release readiness.
+Current status: real Hosted forum runs have been exercised, but none has passed
+all source-grounded answer requirements yet. Three consecutive accepted runs and
+human review remain outstanding. Real email delivery and automatic extension
+sign-in have passed independently; synthetic email testing also covers restart
+recovery. No store submission is approved by this document.

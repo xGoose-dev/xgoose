@@ -67,10 +67,8 @@ async function renderAccount(): Promise<void> {
     inBtn.textContent = "Sign in";
     inBtn.addEventListener("click", async () => {
       track("popup_signin_clicked");
-      await send("sw:account_start_login", undefined);
-      // The approval URL opens in a new tab; close the popup so the user can
-      // see the website. We re-render on storage change anyway when they come
-      // back to the popup later.
+      await send("sw:open_options", undefined);
+      // Email sign-in lives in extension settings; no website registration hop.
       window.close();
     });
     root.appendChild(inBtn);

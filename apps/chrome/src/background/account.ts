@@ -1,18 +1,9 @@
 /**
- * Device-flow login orchestration. Lives in the service worker so the polling
- * loop survives popup / options page close, and so all extension contexts see
- * the same authoritative account state through storage.onChanged.
- *
- * The flow:
- *   1. start() POSTs /auth/device/code → cache device_code + user_code
- *   2. open the website's /account?user_code=<user_code> tab so the user can
- *      sign in and approve
- *   3. poll /auth/device/poll every `interval` seconds for up to expires_in
- *   4. on approval, GET /me, persist {user, tokens} as the Account
- *
- * Mirrors xgoose-safari/src/background/account.ts almost verbatim; the only
- * delta is CLIENT_ID = 'xgoose-extension-chrome' so the gateway can
- * attribute traffic.
+ * Email-confirmation login runs in the service worker. Pending requests are
+ * persisted so polling resumes after a popup closes or the worker restarts.
+ * Only the requesting extension receives tokens; the email confirmation page
+ * verifies the mailbox without signing that browser into the account.
+ * The optional no-email entry point retains legacy device-flow compatibility.
  */
 /// <reference types="chrome" />
 
@@ -38,6 +29,7 @@ export type LoginPhase =
 export interface LoginState {
   phase: LoginPhase;
   userCode: string | null;
+  email: string | null;
   verificationUri: string | null;
   expiresAt: number | null; // unix-ms
   intervalMs: number;
@@ -45,6 +37,8 @@ export interface LoginState {
 }
 
 interface DevicePending {
+  mode?: "email";
+  email?: string;
   deviceCode: string;
   userCode: string;
   clientId: string;
@@ -59,11 +53,23 @@ let lastError: string | null = null;
 
 const CLIENT_ID = "xgoose-extension-chrome";
 
-export function getLoginState(): LoginState {
+const PENDING_KEY="xgoose.pending-email-login";
+const restored=chrome.storage.local.get(PENDING_KEY).then(data=>{
+ const stored=data[PENDING_KEY] as DevicePending|undefined;
+ if(stored?.mode==="email"&&stored.expiresAt>Date.now()){
+  pending={...stored,pollTimer:null};lastPhase="pending";schedulePoll();
+ }else if(stored)void chrome.storage.local.remove(PENDING_KEY);
+});
+chrome.alarms.create("xgoose-email-login",{periodInMinutes:0.5});
+chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==="xgoose-email-login")void restored.then(()=>runPoll()).catch(()=>{});});
+
+export async function getLoginState(): Promise<LoginState> {
+  await restored;
   return {
     phase: lastPhase,
     userCode: pending?.userCode ?? null,
-    verificationUri: pending ? buildVerificationUri(pending.userCode) : null,
+    email: pending?.email ?? null,
+    verificationUri: pending && pending.mode!=="email" ? buildVerificationUri(pending.userCode) : null,
     expiresAt: pending?.expiresAt ?? null,
     intervalMs: pending?.intervalMs ?? 5000,
     error: lastError,
@@ -78,11 +84,22 @@ function buildVerificationUri(userCode: string): string {
 }
 
 /**
- * Begin a fresh device-flow login. If a pending flow already exists, returns
+ * Begin an email login (or a legacy device flow when email is omitted). If a pending flow already exists, returns
  * its state instead of starting a new one (so the UI clicking "Sign in"
  * twice does the right thing).
  */
-export async function startLogin(): Promise<LoginState> {
+export async function startLogin(email?:string): Promise<LoginState> {
+  await restored;
+  if(email){
+    const normalized=email.trim().toLowerCase();
+    if(pending?.email===normalized)return getLoginState();
+    cancelPending();
+    const response=await apiFetch<{poll_token:string;expires_in:number;interval:number}>("/auth/extension/request",{method:"POST",body:JSON.stringify({email:normalized})})
+      .catch(() => ({ok:false as const,status:0,error:"Could not send the email request. Check your connection and try again."}));
+    if(!response.ok){lastPhase="error";lastError=response.error;return getLoginState();}
+    pending={mode:"email",email:normalized,deviceCode:response.data.poll_token,userCode:"",clientId:CLIENT_ID,expiresAt:Date.now()+response.data.expires_in*1000,intervalMs:Math.max(5000,response.data.interval*1000),pollTimer:null};
+    await chrome.storage.local.set({[PENDING_KEY]:pending});lastPhase="pending";lastError=null;schedulePoll();return getLoginState();
+  }
   if (pending) return getLoginState();
 
   const res = await apiFetch<{
@@ -125,8 +142,13 @@ export async function startLogin(): Promise<LoginState> {
   return getLoginState();
 }
 
+export async function cancelLogin():Promise<LoginState>{
+ await restored;cancelPending();lastPhase="idle";lastError=null;return getLoginState();
+}
+
 /** Immediate one-shot poll. Returns the current state after the call. */
 export async function pollOnce(): Promise<LoginState> {
+  await restored;
   if (!pending) return getLoginState();
   await runPoll();
   return getLoginState();
@@ -140,7 +162,7 @@ export async function logout(): Promise<void> {
     // the local copy below.
     await apiFetch("/auth/logout", {
       method: "POST",
-      body: "{}",
+      body: JSON.stringify({refresh_token:account.refreshToken}),
       bearer: account.accessToken,
     }).catch(() => undefined);
   }
@@ -155,7 +177,11 @@ export async function logout(): Promise<void> {
  * Account on success, or null if the refresh failed (caller should treat as
  * "session expired, prompt re-login").
  */
-export async function refreshTokens(): Promise<Account | null> {
+let refreshInFlight:Promise<Account|null>|null=null;
+export function refreshTokens():Promise<Account|null>{
+ return refreshInFlight??=performRefresh().finally(()=>{refreshInFlight=null;});
+}
+async function performRefresh(): Promise<Account | null> {
   const account = await getAccount();
   if (!account) return null;
   const res = await apiFetch<{
@@ -212,10 +238,19 @@ function schedulePoll(): void {
 function cancelPending(): void {
   if (pending?.pollTimer) clearTimeout(pending.pollTimer);
   pending = null;
+  void chrome.storage.local.remove(PENDING_KEY);
 }
 
+let polling=false;
 async function runPoll(): Promise<void> {
+  if(polling)return;polling=true;
+  try { await pollCurrent(); }
+  catch { if (pending) { lastError="Connection interrupted; waiting to retry confirmation."; schedulePoll(); } }
+  finally { polling=false; }
+}
+async function pollCurrent():Promise<void>{
   if (!pending) return;
+  const flow=pending;
   if (Date.now() > pending.expiresAt) {
     cancelPending();
     lastPhase = "expired";
@@ -228,20 +263,22 @@ async function runPoll(): Promise<void> {
     refresh_token: string;
     access_token_expires_at: string;
     token_type: string;
-  }>("/auth/device/poll", {
+    user?: AccountUser;
+    status?: "pending"|"ok";
+  }>(flow.mode==="email"?"/auth/extension/poll":"/auth/device/poll", {
     method: "POST",
-    body: JSON.stringify({
-      device_code: pending.deviceCode,
-      client_id: pending.clientId,
-    }),
+    body: JSON.stringify(flow.mode==="email"?{token:flow.deviceCode}:{device_code:flow.deviceCode,client_id:flow.clientId}),
   });
 
+  if(pending!==flow)return;
+  if(res.ok&&res.data.status==="pending"){schedulePoll();return;}
   if (res.ok) {
     const tokens = res.data;
     // Fetch profile with the just-issued bearer.
-    const me = await apiFetch<{ user: AccountUser }>("/me", {
-      bearer: tokens.access_token,
-    });
+    const me = tokens.user
+      ? {ok:true as const,data:{user:tokens.user}}
+      : await apiFetch<{ user: AccountUser }>("/me", {bearer:tokens.access_token});
+    if (pending !== flow) return;
     if (!me.ok) {
       lastPhase = "error";
       lastError = `signed in but /me failed: ${me.error}`;

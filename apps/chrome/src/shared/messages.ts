@@ -120,7 +120,7 @@ export type MessageMap = {
     response: { ok: true } | { ok: false; error: string };
   };
 
-  // ── xgoose cloud account (device-flow login) ─────────────────────────
+  // ── xgoose cloud account (email confirmation login) ─────────────────────────
   /** Returns the currently-persisted account, or null when signed out. */
   "sw:account_get": { request: void; response: Account | null };
   /**
@@ -130,11 +130,12 @@ export type MessageMap = {
    */
   "sw:account_login_state": { request: void; response: LoginState };
   /**
-   * Start a device-flow login. Opens the approval URL in a new tab and
+   * Start email confirmation login. Without an email, the legacy device flow opens a tab and
    * begins polling. Safe to call multiple times — returns the existing
    * flow if one is already in progress.
    */
-  "sw:account_start_login": { request: void; response: LoginState };
+  "sw:account_cancel_login": { request: void; response: LoginState };
+  "sw:account_start_login": { request: {email:string} | void; response: LoginState };
   /** Force one extra poll (in addition to the timer-driven polling loop). */
   "sw:account_poll_now": { request: void; response: LoginState };
   /** Revoke server session + wipe local account state. */

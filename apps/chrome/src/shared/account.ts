@@ -1,19 +1,7 @@
 /**
- * xgoose cloud account — local state + thin API client.
- *
- * Login uses the OAuth 2.0 device-authorization flow handled by the worker at
- * `https://api.xgoose.org/auth/device/*`. The plugin owns the device side; the
- * user grants the code on the xgoose website (`/account?user_code=…`). On
- * approval, the worker hands us {access_token, refresh_token, expires_at}
- * which we persist in `chrome.storage.local` under `xgoose.account`.
- *
- * All extension contexts (background, popup, options, content) read the same
- * record via storage.onChanged, so a sign-in in the options page lights up
- * the popup and content panel immediately.
- *
- * Wire-compatible with the xgoose-safari implementation: same storage key,
- * same JSON shape, same API endpoints. Only the OAuth client id differs
- * (`xgoose-extension-chrome` vs `xgoose-safari`) so the gateway can attribute traffic.
+ * Shared cloud-account storage and API client. Email confirmation is orchestrated
+ * by background/account.ts; every extension context observes the same local
+ * account record. Tokens are never exposed to the visited webpage.
  */
 /// <reference types="chrome" />
 
@@ -127,7 +115,7 @@ export async function apiFetch<T = unknown>(
     headers.set("content-type", "application/json");
   }
   if (init.bearer) headers.set("Authorization", `Bearer ${init.bearer}`);
-  const res = await fetch(`${XGOOSE_API_URL}${path}`, { ...init, headers });
+  const res = await fetch(`${XGOOSE_API_URL}${path}`, { ...init, headers, signal: init.signal ?? AbortSignal.timeout(30_000) });
   const ctype = res.headers.get("content-type") ?? "";
   if (res.status === 204) {
     return res.ok
