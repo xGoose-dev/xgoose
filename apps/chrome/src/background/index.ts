@@ -1,3 +1,5 @@
+import { skillCatalog, installCatalogSkill } from "./catalog";
+import { recordJournal, getConsent, setConsent } from "./transcripts";
 import { sessionCommand } from "./sessionDb";
 import { executeUserScript, executePage } from "./userScripts";
 // MV3 service worker for xgoose-extension-chrome.
@@ -52,6 +54,12 @@ import { recordEvent } from "@/shared/analytics";
 installConfigSyncListeners();
 
 registerRouter({
+  "sw:skill_catalog": () => skillCatalog(),
+  "sw:install_catalog_skill": ({slug,version}) => installCatalogSkill(slug,version),
+  "sw:open_skill_catalog": async ({slugs}) => { await chrome.tabs.create({url:chrome.runtime.getURL(`options.html?skills=${encodeURIComponent(slugs.join(","))}#catalog`)}); },
+  "sw:transcript_event": (value,sender) => recordJournal(value,sender),
+  "sw:consent_get": () => getConsent(),
+  "sw:consent_set": value => setConsent(value),
   "sw:reconcile_skills": async (_payload, sender) => {
     const allowed = (await activeSkillsForUrl(sender.url ?? "")).map(s => s.namespace);
     await executeUserScript(sender, `(() => { const root = globalThis.xgoose?.skills; if (root) for (const ns of Object.keys(root)) if (!${JSON.stringify(allowed)}.includes(ns)) delete root[ns]; })()`);
@@ -443,7 +451,10 @@ async function runStream(
   req: MessageMap["sw:proxy_fetch_stream_open"]["request"],
 ): Promise<void> {
   const ac = new AbortController();
-  port.onDisconnect.addListener(() => ac.abort());
+  const timeout = setTimeout(() => ac.abort(new Error("Provider request timed out")), 180000);
+  const heartbeat = setInterval(() => safePost(port,{kind:"heartbeat"}),20000);
+  const cleanup = () => { clearTimeout(timeout); clearInterval(heartbeat); };
+  port.onDisconnect.addListener(() => { ac.abort(); cleanup(); });
 
   let resp: Response;
   try {
@@ -458,6 +469,7 @@ async function runStream(
       kind: "error",
       error: `provider fetch failed for ${req.url}: ${err?.message ?? String(err)}`,
     });
+    cleanup();
     safeDisconnect(port);
     return;
   }
@@ -469,6 +481,7 @@ async function runStream(
   const reader = resp.body?.getReader();
   if (!reader) {
     safePost(port, { kind: "end" });
+    cleanup();
     safeDisconnect(port);
     return;
   }
@@ -487,10 +500,9 @@ async function runStream(
     if (tail) safePost(port, { kind: "chunk", data: tail });
     safePost(port, { kind: "end" });
   } catch (err: any) {
-    if (!ac.signal.aborted) {
-      safePost(port, { kind: "error", error: err?.message ?? String(err) });
-    }
+    safePost(port, { kind: "error", error: ac.signal.aborted ? "Provider request stopped or timed out; it was not replayed" : err?.message ?? String(err) });
   } finally {
+    cleanup();
     safeDisconnect(port);
   }
 }
@@ -499,19 +511,6 @@ function newStashKey(): string {
   // Namespaced under `xgoose.install:` so an accidental wildcard
   // `storage.session.get(null)` in dev mode makes the origin obvious.
   return `xgoose.install:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-async function fetchWithRetry(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> {
-  try {
-    return await fetch(input, init);
-  } catch (err: any) {
-    if (init?.signal?.aborted) throw err;
-    await new Promise((r) => setTimeout(r, 350));
-    return await fetch(input, init);
-  }
 }
 
 function safePost(port: chrome.runtime.Port, msg: unknown): void {

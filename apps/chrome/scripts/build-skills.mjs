@@ -115,6 +115,8 @@ async function buildOne(file) {
   const finalSource = headerText + '\n' + wrapped;
   const name = header.name;
   fs.writeFileSync(path.join(OUT, `${name}.xgs.js`), finalSource);
+  fs.writeFileSync(path.join(OUT, `${name}.source.xgs.js`), source);
+  const sourceSha = createHash('sha256').update(source).digest('hex');
   const sha = createHash('sha256').update(finalSource).digest('hex');
   console.log(
     `[build-skills] built ${name} (${header.namespace}, ${fnSummaries.length} fn, ${(
@@ -124,6 +126,8 @@ async function buildOne(file) {
   return {
     ...header,
     filePath: `skills/${name}.xgs.js`,
+    sourcePath: `skills/${name}.source.xgs.js`,
+    sourceSha,
     sha,
     functions: fnSummaries,
     actions,

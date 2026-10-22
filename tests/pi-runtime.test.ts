@@ -35,3 +35,20 @@ test("pre-aborted turns cannot call the provider",async()=>{
   const bundle=createAgent({settings,fetchImpl:fetch,tools:[],streamFn:()=>{throw new Error("must not run");}});
   await assert.rejects(bundle.agent.stream({messages:[{role:"user",content:"hi"}],abortSignal:AbortSignal.abort()}));
 });
+test("compaction preserves full output while persisting a separate model context",async()=>{
+  let summaries=0,normal=0;
+  const bundle=createAgent({settings,fetchImpl:fetch,tools:[],contextBudgetChars:100,streamFn:(_model,ctx)=>{
+    const first=ctx.messages[0];
+    if(first?.role==='user'&&typeof first.content==='string'&&first.content.startsWith('Summarize this browser-agent history')){summaries++;return stream(answer([{type:'text',text:'Earlier researched evidence, URL https://fixture.test/t/1; no actions to replay.'}]));}
+    normal++;assert.ok(JSON.stringify(ctx.messages).includes('Earlier context summary'));
+    return stream(answer([{type:'text',text:'Final grounded continuation'}]));
+  }});
+  const history=[{role:'user',content:'Original question '+ 'x'.repeat(1000)},{role:'assistant',content:[{type:'text',text:'Original answer'}]},{role:'user',content:'Follow up'},{role:'assistant',content:[{type:'text',text:'Second answer'}]},{role:'user',content:'More evidence'},{role:'assistant',content:[{type:'text',text:'Third answer'}]},{role:'user',content:'Continue'}];
+  const result=await bundle.agent.stream({messages:history});const events=[];for await(const event of result.fullStream)events.push(event);
+  const saved=await result.response;
+  assert.equal(summaries,1);assert.equal(normal,1);assert.ok(events.some(e=>e.type==='context-summary'));
+  assert.equal(saved.messages.at(-1)?.content[0].text,'Final grounded continuation');
+  assert.ok(JSON.stringify(saved.modelContext).includes('Earlier context summary'));
+  assert.ok(!JSON.stringify(saved.modelContext).includes('x'.repeat(1000)));
+  assert.equal(history[0].content,'Original question '+ 'x'.repeat(1000));
+});

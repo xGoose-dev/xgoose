@@ -65,6 +65,18 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
 
 (async function init() {
   await mountAccountSection();
+  const privacy = document.createElement("section");
+  privacy.className = "card";
+  privacy.innerHTML = `<h2>Conversation privacy</h2><p>Hosted Luna saves full messages, actual tool inputs and outputs, errors and summaries for 90 days. Credentials are redacted. Staff can read a conversation only after you authorize that specific conversation. View, export and delete at <a href="https://xgoose.org/account/" target="_blank">Your account</a>.</p><p><label><input id="hostedConsent" type="checkbox"> I agree to conversation storage when using Hosted Luna.</label></p><p><label><input id="byokConsent" type="checkbox"> Also upload my BYOK conversations (optional; off by default).</label></p><button id="saveConsent">Save conversation preferences</button><p id="consentStatus"></p><h2>Allow User Scripts</h2><p>Open chrome://extensions → xgoose → Details and enable Allow User Scripts. Disabling skills stops future calls; existing requests and page changes may require a refresh to clear.</p>`;
+  document.querySelector(".page")!.append(privacy);
+  const hosted = privacy.querySelector<HTMLInputElement>("#hostedConsent")!;
+  const byok = privacy.querySelector<HTMLInputElement>("#byokConsent")!;
+  const status = privacy.querySelector<HTMLElement>("#consentStatus")!;
+  try { const c = await send("sw:consent_get", undefined); hosted.checked=c.hosted;byok.checked=c.byok; } catch { status.textContent="Sign in to manage server preferences. BYOK upload is off by default."; }
+  privacy.querySelector("#saveConsent")!.addEventListener("click",async()=>{
+    try { await send("sw:consent_set",{hosted:hosted.checked,byok:byok.checked});status.textContent="Saved. Withdrawing stops future uploads and clears pending uploads. Existing records can be deleted on your account page."; }
+    catch(error) { status.textContent=String(error); }
+  });
   const settings = await loadSettings();
   const providerEl = $<HTMLSelectElement>("#provider");
   const modelEl = $<HTMLSelectElement>("#model");
@@ -584,6 +596,24 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
     }
   }
   await renderSkillList();
+  const catalogSection=document.createElement("section");catalogSection.id="catalog";catalogSection.className="card";
+  const heading=document.createElement("h2");heading.textContent="Website skills";catalogSection.append(heading);
+  document.querySelector(".page")!.append(catalogSection);
+  const selected=new Set((new URLSearchParams(location.search).get("skills")??"").split(","));
+  try {
+    const catalog=await send("sw:skill_catalog",undefined);
+    const installed=await send("sw:list_user_skills",undefined);
+    for(const item of catalog.sort((a,b)=>Number(selected.has(b.slug))-Number(selected.has(a.slug)))) {
+      const row=document.createElement("div");row.className="skill-item";
+      const label=document.createElement("span");label.textContent=`${item.name} · ${item.version} — ${item.description}`;row.append(label);
+      const existing=installed.find(s=>s.name===item.name);
+      const install=document.createElement("button");install.textContent=existing?(existing.version===item.version?"Installed":"Update explicitly"):"Install";
+      install.disabled=existing?.version===item.version;
+      install.addEventListener("click",async()=>{install.disabled=true;try{await send("sw:install_catalog_skill",{slug:item.slug,version:item.version});install.textContent="Installed";await renderSkillList();}catch(error){install.textContent=String(error);install.disabled=false;}});row.append(install);catalogSection.append(row);
+    }
+    if(location.hash==="#catalog")catalogSection.scrollIntoView();
+  }catch {const msg=document.createElement("p");msg.textContent="The skill catalog is temporarily unavailable. Installed skills remain available.";catalogSection.append(msg);}
+
 
   // ── Skill editor ──
 

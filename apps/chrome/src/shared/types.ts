@@ -179,6 +179,8 @@ export type SkillFnSummary = z.infer<typeof SkillFnSummarySchema>;
 
 export const RegistrySkillSchema = SkillHeaderSchema.extend({
   filePath: z.string(),
+  sourcePath: z.string().optional(),
+  sourceSha: z.string().optional(),
   functions: z.array(SkillFnSummarySchema).default([]),
   /** Agent-facing usage guidance from `defineSkill(spec, { instructions })`,
    *  surfaced in the per-turn system reminder under the skill heading. */
@@ -198,6 +200,10 @@ export type StoredSkill = RegistrySkill & { enabled?: boolean };
 
 export const UserSkillSchema = SkillHeaderSchema.extend({
   source: z.string().min(1),
+  identity: z.object({authorId:z.string(),skillId:z.string()}).optional(),
+  sourceSha: z.string().optional(),
+  bundleSha: z.string().optional(),
+  readOnly: z.boolean().default(false),
   bundled: z.string().min(1),
   functions: z.array(SkillFnSummarySchema).default([]),
   instructions: z.string().optional(),
@@ -217,6 +223,7 @@ export type UserSkill = z.infer<typeof UserSkillSchema>;
 // ---------------------------------------------------------------------------
 
 export type StoredConversation = {
+  modelContext?: any[];
   id: string;
   origin: string;
   title: string;

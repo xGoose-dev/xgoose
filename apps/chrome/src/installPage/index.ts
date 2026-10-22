@@ -45,6 +45,7 @@ async function main(): Promise<void> {
 
   let currentHeader: SkillHeader | null = null;
   let currentSource = "";
+  let catalogSlug: string | null = null;
 
   // Pull `?stash=` from the URL — populated by the install-banner content
   // script (or any future trigger that stashes via `sw:stash_install_source`).
@@ -56,6 +57,11 @@ async function main(): Promise<void> {
     const got = await loadStash(stashKey);
     if (got) {
       sourceInput.value = got.source;
+      if (got.originUrl) {
+        const origin = new URL(got.originUrl);
+        const match = origin.pathname.match(/^\/skills\/([^/]+)\.xgs\.js$/);
+        if (origin.origin === "https://api.xgoose.org" && match) catalogSlug = decodeURIComponent(match[1]);
+      }
       fileLabel.textContent = got.originUrl
         ? `loaded from ${shorten(got.originUrl)}`
         : "";
@@ -63,7 +69,7 @@ async function main(): Promise<void> {
     }
   }
 
-  sourceInput.addEventListener("input", handleSourceChange);
+  sourceInput.addEventListener("input", () => { catalogSlug = null; handleSourceChange(); });
 
   fileInput.addEventListener("change", async () => {
     const file = fileInput.files?.[0];
@@ -91,10 +97,15 @@ async function main(): Promise<void> {
     installStatus.textContent = "Installing…";
     installStatus.classList.remove("saved");
     track("install_clicked", { skill: currentHeader.name });
-    const res = await send("sw:edit_skill", {
-      name: currentHeader.name,
-      source: currentSource,
-    });
+    let res;
+    try {
+      if (catalogSlug) {
+        await send("sw:install_catalog_skill", {slug:catalogSlug,version:currentHeader.version});
+        res = {ok:true as const,name:currentHeader.name,namespace:currentHeader.namespace,version:currentHeader.version};
+      } else {
+        res = await send("sw:edit_skill", {name:currentHeader.name,source:currentSource});
+      }
+    } catch(error) { res = {ok:false as const,error:error instanceof Error?error.message:String(error)}; }
     if (res.ok) {
       track("install_succeeded", { skill: res.name, version: res.version });
       installStatus.textContent = `Installed · ${res.name}@${res.version}`;
@@ -104,10 +115,7 @@ async function main(): Promise<void> {
       resultBody.classList.add("success");
       resultBody.textContent =
         `xgoose.skills.${res.namespace} is ready on matching pages. ` +
-        `Reload any open tab to load the new code.` +
-        (res.bodyChanged
-          ? " Heads-up: the bundled IIFE may be stale until the skill is re-published."
-          : "");
+        `Installed code is loaded on matching open tabs. Disabled dependencies stay disabled.`;
     } else {
       track("install_failed", { skill: currentHeader.name });
       installBtn.disabled = false;

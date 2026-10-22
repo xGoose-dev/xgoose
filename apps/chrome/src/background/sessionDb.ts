@@ -59,3 +59,30 @@ export async function sessionCommand(command: { op: "list" | "get" | "save" | "d
     }
   });
 }
+
+export interface JournalEvent {
+  id:string; sessionId:string; runId:string; at:number; event:any;
+  provider:"hosted"|"byok"; ownerId?:string; sequence?:number;
+}
+export async function journal(value:JournalEvent,upload:boolean) {
+  await transaction<void>(["events","outbox","meta"],"readwrite",tx=>{
+    const key=`sequence:${value.sessionId}`;
+    const req=tx.objectStore("meta").get(key);
+    req.onsuccess=()=>{
+      const sequence=req.result??0;
+      const row={...value,sequence};
+      tx.objectStore("events").put(row);
+      if(upload&&value.ownerId)tx.objectStore("outbox").put(row);
+      tx.objectStore("meta").put(sequence+1,key);
+    };
+  });
+}
+export async function pendingEvents(ownerId:string):Promise<JournalEvent[]> {
+  return transaction(["outbox"],"readonly",(tx,done)=>{const r=tx.objectStore("outbox").getAll();r.onsuccess=()=>done(r.result.filter(e=>e.ownerId===ownerId).sort((a,b)=>a.at-b.at).slice(0,50));});
+}
+export async function acknowledgeEvents(ids:string[]) {await transaction<void>(["outbox"],"readwrite",tx=>{for(const id of ids)tx.objectStore("outbox").delete(id);});}
+export async function clearPending(ownerId:string,provider?:"hosted"|"byok") {
+  await transaction<void>(["outbox"],"readwrite",tx=>{
+    const store=tx.objectStore("outbox"),req=store.openCursor();req.onsuccess=()=>{const c=req.result;if(!c)return;if(c.value.ownerId===ownerId&&(!provider||c.value.provider===provider))c.delete();c.continue();};
+  });
+}

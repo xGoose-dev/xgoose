@@ -19,6 +19,14 @@ import type { Provider, RegistrySkill, UserSkill } from "./types";
 export type HeaderBag = Record<string, string>;
 
 export type MessageMap = {
+  "sw:skill_catalog": {request:void;response:import("@/background/catalog").CatalogSkill[]};
+  "sw:install_catalog_skill": {request:{slug:string;version:string};response:void};
+  "sw:open_skill_catalog": {request:{slugs:string[]};response:void};
+
+  "sw:transcript_event": { request: import("@/background/sessionDb").JournalEvent; response: void };
+  "sw:consent_get": { request: void; response: {hosted:boolean;byok:boolean} };
+  "sw:consent_set": { request: {hosted:boolean;byok:boolean}; response: {hosted:boolean;byok:boolean} };
+
   "sw:reconcile_skills": { request: void; response: void };
   "sw:session": { request: { op: "list" | "get" | "save" | "delete" | "event"; id?: string; value?: any }; response: any };
   "sw:page_exec": { request: { code: string; args?: unknown[]; timeoutMs?: number; execId: string }; response: any };

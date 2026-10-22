@@ -174,6 +174,7 @@ export async function getUserSkillCode(
 
 export async function saveUserSkill(skill: UserSkill): Promise<void> {
   const users = await getUserSkills();
+  if (["__proto__","prototype","constructor"].includes(skill.namespace)) throw new Error("Reserved skill namespace");
   const all = await loadRegistry();
   const conflict = all.find(s => s.namespace === skill.namespace && s.name !== skill.name);
   if (conflict) throw new Error(`Namespace ${skill.namespace} already belongs to ${conflict.name}`);
@@ -209,7 +210,8 @@ export async function getSkillSource(name: string): Promise<{
   const builtin = (await loadBuiltinRegistry()).find((s) => s.name === name);
   if (!builtin) return null;
   try {
-    const url = chrome.runtime.getURL(builtin.filePath);
+    if (!builtin.sourcePath) return null;
+    const url = chrome.runtime.getURL(builtin.sourcePath);
     const res = await fetch(url);
     if (!res.ok) return null;
     return { source: await res.text(), origin: "builtin" };
@@ -257,6 +259,7 @@ export async function editSkillFromSource(args: {
   }
 
   const existing = await getUserSkillCode(args.name);
+  if (existing?.readOnly) return {ok:false,error:"This legacy bundle has no editable source. Install an updated source package."};
   const previousSource = existing
     ? existing.source
     : (await loadBuiltinRegistry()).find((s) => s.name === args.name)
@@ -285,6 +288,7 @@ export async function editSkillFromSource(args: {
   }
 
   const next: UserSkill = UserSkillSchema.parse({
+    ...existing,
     ...parsed.header,
     source: args.source,
     bundled,
@@ -306,7 +310,8 @@ export async function editSkillFromSource(args: {
 async function fetchBuiltinSource(name: string): Promise<string | null> {
   const built = (await loadBuiltinRegistry()).find((s) => s.name === name);
   if (!built) return null;
-  const url = chrome.runtime.getURL(built.filePath);
+  if (!built.sourcePath) return null;
+  const url = chrome.runtime.getURL(built.sourcePath);
   const res = await fetch(url);
   if (!res.ok) return null;
   return await res.text();

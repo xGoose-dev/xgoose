@@ -96,7 +96,7 @@ function redactedSnapshot(s: Settings): Record<string, unknown> {
     jsExecTimeoutMs: s.jsExecTimeoutMs,
     redactSensitiveHeaders: s.redactSensitiveHeaders,
     redactSensitiveHeaderKeys: s.redactSensitiveHeaderKeys,
-    baseUrls: s.baseUrls,
+    baseUrls: Object.fromEntries(Object.entries(s.baseUrls ?? {}).map(([key,value]) => { try { const url = new URL(value); return [key, url.origin + url.pathname]; } catch { return [key, ""]; } })),
     // Track which providers have a key WITHOUT exposing the key itself —
     // useful on the account page to surface "Chrome on my laptop has a
     // Gemini key configured" without leaking the secret.

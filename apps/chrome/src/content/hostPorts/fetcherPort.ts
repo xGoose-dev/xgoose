@@ -114,12 +114,12 @@ function openStreaming(
   headers: Record<string, string>,
   body: string | undefined,
   signal: AbortSignal | null,
-  attempt = 0,
 ): Promise<Response> {
   const streamId = Math.random().toString(36).slice(2, 12);
   const port = chrome.runtime.connect({ name: `xgoose:stream:${streamId}` });
 
   return new Promise<Response>((resolve, reject) => {
+    let ended = false;
     let status = 200;
     let respHeaders: Record<string, string> = {};
     let headStreamReady: ((value: Response) => void) | null = null;
@@ -173,29 +173,13 @@ function openStreaming(
               } catch {}
               break;
             case "end":
+              ended = true;
               try {
                 controller.close();
               } catch {}
               teardown?.();
               break;
             case "error":
-              if (
-                headStreamReady &&
-                attempt === 0 &&
-                String(msg.error ?? "").includes("Failed to fetch")
-              ) {
-                const retryResolve = headStreamReady;
-                headStreamReady = null;
-                teardown?.();
-                try {
-                  port.disconnect();
-                } catch {}
-                openStreaming(url, method, headers, body, signal, attempt + 1).then(
-                  retryResolve,
-                  reject,
-                );
-                return;
-              }
               try {
                 controller.error(new Error(msg.error ?? "stream error"));
               } catch {}
@@ -210,9 +194,11 @@ function openStreaming(
           }
         });
         port.onDisconnect.addListener(() => {
-          try {
-            controller.close();
-          } catch {}
+          if (!ended && !signal?.aborted) {
+            const error = new Error("The extension worker disconnected before completion. This request was not replayed.");
+            try { controller.error(error); } catch {}
+            if (headStreamReady) { headStreamReady = null; reject(error); }
+          }
           teardown?.();
         });
       },

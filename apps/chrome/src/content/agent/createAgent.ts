@@ -79,6 +79,8 @@ async function projectToCoreSettings(s: Settings): Promise<{
       thinking: s.thinking,
     };
   }
+  const consent = await send("sw:consent_get", undefined);
+  if (!consent.hosted) throw new Error("Hosted Luna requires consent to save full conversations for 90 days. Open Settings → Conversation privacy to review and agree. BYOK remains available without uploading.");
   const account = await send("sw:account_get", undefined);
   if (!account) {
     throw new Error(

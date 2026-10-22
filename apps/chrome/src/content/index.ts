@@ -1,3 +1,4 @@
+import { showRecommendations } from "./recommendations";
 // Content-script orchestrator: spins up the shadow-DOM panel, keeps active
 // skills in sync, and drives the ToolLoopAgent streaming loop.
 //
@@ -237,6 +238,7 @@ async function bootstrap(): Promise<void> {
   await refreshSkills();
 
   // Conversation state.
+  let modelContext: any[] | null = null;
   let conversationMessages: any[] = [];
   let currentConvoId: string | null = null;
   let currentConvoTitle = "";
@@ -379,6 +381,7 @@ async function bootstrap(): Promise<void> {
           ? String(messages[0].content).slice(0, 80)
           : "Untitled"),
       messages,
+      modelContext: modelContext ?? undefined,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       usage: conversationUsage,
@@ -422,6 +425,7 @@ async function bootstrap(): Promise<void> {
     currentConvoId = null;
     currentConvoTitle = "";
     conversationMessages = [];
+    modelContext = null;
     conversationUsage = { ...EMPTY_USAGE };
     clearTodos();
     panel.clear();
@@ -516,6 +520,7 @@ async function bootstrap(): Promise<void> {
     currentConvoId = newConversationId();
     currentConvoTitle = convo.title;
     conversationMessages = (convo.messages as any[]) ?? [];
+    modelContext = convo.modelContext ?? null;
     conversationUsage = convo.usage
       ? { ...EMPTY_USAGE, ...convo.usage }
       : { ...EMPTY_USAGE };
@@ -531,6 +536,7 @@ async function bootstrap(): Promise<void> {
       currentConvoId = null;
       currentConvoTitle = "";
       conversationMessages = [];
+    modelContext = null;
       conversationUsage = { ...EMPTY_USAGE };
       clearTodos();
       panel.clear();
@@ -644,6 +650,13 @@ async function bootstrap(): Promise<void> {
     running = true;
     abortController = new AbortController();
 
+    const journalRunId = crypto.randomUUID();
+    const journalSessionId = currentConvoId!;
+    const journalProvider = settings.provider === "xgoose-hosted" ? "hosted" : "byok";
+    const record = (event: any) => send("sw:transcript_event", {
+      id: crypto.randomUUID(), sessionId: journalSessionId, runId: journalRunId,
+      provider: journalProvider, at: Date.now(), event,
+    }).catch(() => { panel.setStatus("Local transcript incomplete: storage failed. Export available history before closing."); });
     let stepCount = 0;
     // Error text shown this turn (in-stream `error` part). Persisted into the
     // conversation as an `xgoose-error` message so it survives reload.
@@ -671,6 +684,9 @@ async function bootstrap(): Promise<void> {
     let snapshotted = false;
 
     try {
+      // Refresh consent before queuing the first message of a Hosted session.
+      if (journalProvider === "hosted") await send("sw:consent_get", undefined);
+      await record({type:"user-message",content:prompt});
       const skillsForReminder = (
         await send("sw:active_skills_for_url", { url: getCurrentPageUrl() })
       ).map((s) => ({ ...s, enabled: true }));
@@ -692,7 +708,7 @@ async function bootstrap(): Promise<void> {
       // Zod validation rejects the conversation with "Invalid prompt: The
       // messages do not match the ModelMessage[] schema." and the user
       // has no way to recover except deleting the conversation.
-      const messagesForModel = conversationMessages;
+      const messagesForModel = modelContext ? [...modelContext,{role:"user",content:prompt}] : conversationMessages;
       const { sanitized: cleanMessages, healed } = sanitizeMessages(messagesForModel);
       if (healed > 0) {
         console.info(
@@ -719,11 +735,9 @@ async function bootstrap(): Promise<void> {
       // invalidate the whole prefix — but that was already true before, and
       // those events are rare relative to "user types another question".
       const bundle = await createAgent({ settings, reminder });
-      const runId = crypto.randomUUID();
-      const sessionId = currentConvoId!;
       bundle.agent.subscribe(async event => {
         if (event.type === "text-delta" || event.type === "reasoning-delta") return;
-        await send("sw:session", { op: "event", value: { id: crypto.randomUUID(), sessionId, runId, at: Date.now(), event } });
+        await record(event);
       });
       const result = await bundle.agent.stream({
         messages: cleanMessages,
@@ -880,6 +894,7 @@ async function bootstrap(): Promise<void> {
       if (response?.messages) {
         renderMissingToolCardsFromMessages(response.messages, toolCards);
         conversationMessages.push(...response.messages);
+        modelContext = response.modelContext;
         // AI SDK already gave us a canonical message list; the partial
         // mirror in `inFlight` would just duplicate it, so drop it.
         inFlight = null;
@@ -962,6 +977,7 @@ async function bootstrap(): Promise<void> {
         panel.setStatus("");
       }
     } finally {
+      await record({type:abortController?.signal.aborted?"run-interrupted":"run-end"});
       assistantBubble?.finalize();
       abortController = null;
       running = false;
@@ -1126,6 +1142,8 @@ async function bootstrap(): Promise<void> {
     console.warn("[xgoose:resume] stale clear failed", e);
   }
 
+  void showRecommendations();
+
   // SW push messages.
   registerRouter({
     "cs:set_active_skills": async ({ skills }) => {
@@ -1170,7 +1188,7 @@ async function bootstrap(): Promise<void> {
       // the same name but mutated code) actually take effect; bundled skills
       // are content-addressed by URL so re-injecting them is a no-op anyway.
       resetInjectedSkills();
-      if (skills.length) {
+      {
         panel.setLoadingStatus(
           `Loading ${skills.length} skill${skills.length === 1 ? "" : "s"}…`,
         );
