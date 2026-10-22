@@ -5,7 +5,7 @@ import {resolve} from 'node:path';
 import assert from 'node:assert/strict';
 const profile=await mkdtemp(resolve(tmpdir(),'xgoose-email-'));
 const dist=resolve('apps/chrome/dist');
-const launch=()=>chromium.launchPersistentContext(profile,{channel:'chromium',headless:true,args:[`--disable-extensions-except=${dist}`,`--load-extension=${dist}`]});
+const launch=()=>chromium.launchPersistentContext(profile,{channel:'chromium',headless:true,viewport:{width:1280,height:800},args:[`--disable-extensions-except=${dist}`,`--load-extension=${dist}`]});
 let context=await launch();
 try{
  let sw=context.serviceWorkers()[0]??await context.waitForEvent('serviceworker');

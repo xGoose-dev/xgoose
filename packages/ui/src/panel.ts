@@ -200,13 +200,14 @@ const CSS = `
   border-radius:20px;
   box-shadow:var(--shadow);
   display:none;flex-direction:column;
-  z-index:2147483646;overflow:hidden;
+  z-index:2147483646;overflow:clip;
+  min-width:0;min-height:0;
   -webkit-backdrop-filter:saturate(160%) blur(22px);
   backdrop-filter:saturate(160%) blur(22px);
   transition:box-shadow .25s ease,border-radius .25s ease;
   isolation:isolate;
 }
-/* Animated holographic hairline. */
+/* Static gradient hairline; it must never rotate through panel content. */
 .panel::before{
   content:"";position:absolute;inset:0;pointer-events:none;
   border-radius:inherit;padding:1px;
@@ -217,7 +218,9 @@ const CSS = `
           mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
   -webkit-mask-composite:xor;mask-composite:exclude;
   opacity:.55;z-index:2;
-  -webkit-animation:halo 22s linear infinite;animation:halo 22s linear infinite;
+  /* Keep the border fixed: rotating this box creates overflowing diagonal
+     edges and lets browser focus scrolling shift all panel content. */
+  transform:none;
 }
 .panel.light::before{opacity:.40}
 /* Engines without mask compositing get a static gradient border via box-shadow. */
@@ -229,6 +232,7 @@ const CSS = `
 @supports not ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){
   .panel{background:var(--bg)}
 }
+.panel > :not(.resize-handle){min-width:0;max-width:100%}
 .panel.open{display:flex}
 .panel.overlay{
   /* Overlay = "fill the viewport with breathing room"; ignores user size. */
@@ -469,7 +473,7 @@ const CSS = `
   transition:padding .15s ease;
 }
 .skills-bar .label{
-  color:var(--text-muted);font-weight:700;
+  color:var(--text-muted);font-weight:700;flex-shrink:0;
   text-transform:uppercase;letter-spacing:.08em;font-size:10px;
 }
 .skills-bar .skill-chip{
@@ -513,7 +517,7 @@ const CSS = `
  * Firefox via scrollbar-{width,color}; WebKit via ::-webkit-scrollbar.
  */
 .msgs{
-  flex:1 1 0;overflow-y:auto;overflow-x:hidden;
+  flex:1 1 0;min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;
   padding:14px 14px;
   scrollbar-width:thin;scrollbar-color:rgba(168,85,247,.30) transparent;
   scroll-behavior:smooth;
@@ -586,7 +590,7 @@ const CSS = `
 .msg-ai{
   max-width:95%;
   color:var(--text-ai);font-size:13px;line-height:1.55;
-  word-wrap:break-word;
+  word-wrap:break-word;overflow-wrap:anywhere;
 }
 .msg-ai h1,.msg-ai h2,.msg-ai h3{color:var(--text-ai-head);margin:8px 0 4px;font-size:13.5px;font-weight:650;letter-spacing:-.005em}
 .msg-ai h1{font-size:15.5px}
@@ -1134,7 +1138,7 @@ const CSS = `
   display:inline-flex;align-items:flex-end;gap:6px;flex:0 0 auto;
 }
 .input-area textarea{
-  flex:1;resize:none;
+  flex:1 1 0;min-width:0;width:0;resize:none;
   border:1px solid var(--border-input);border-radius:12px;
   padding:10px 13px;font-size:13px;font-family:inherit;line-height:1.45;
   max-height:120px;min-height:24px;
@@ -2334,10 +2338,22 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   });
 
   // ── input ──
-  inputEl.addEventListener("input", () => {
+  function resizeInput(): void {
     inputEl.style.height = "auto";
-    inputEl.style.height = Math.min(inputEl.scrollHeight, 100) + "px";
+    const css = getComputedStyle(inputEl);
+    const borders = parseFloat(css.borderTopWidth) + parseFloat(css.borderBottomWidth);
+    inputEl.style.height = Math.min(inputEl.scrollHeight + borders, 120) + "px";
+  }
+  inputEl.addEventListener("input", resizeInput);
+  // Stop appearing, panel resizing and page zoom can all change line wrapping.
+  let inputWidth = 0;
+  const inputResizeObserver = new ResizeObserver(entries => {
+    const width = entries[0]?.contentRect.width ?? 0;
+    if (Math.abs(width - inputWidth) < 0.5) return;
+    inputWidth = width;
+    resizeInput();
   });
+  inputResizeObserver.observe(inputEl);
   inputEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !(e as any).isComposing) {
       e.preventDefault();
@@ -2882,6 +2898,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       sendBtn.textContent = "Send";
       sendBtn.classList.remove("stop");
       stopBtn.classList.toggle("active", sending);
+      resizeInput();
       if (!sending) {
         stopBtn.disabled = false;
         stopBtn.textContent = "Stop";

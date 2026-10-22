@@ -38,7 +38,7 @@ export function createJsExecTool(deps: JsExecToolDeps): XgooseBuiltTool {
   return defineTool({
     name: "js_exec",
     description:
-      "Run async JavaScript in the page MAIN world. Code body is wrapped in `(async () => { ... })()`. Use `return X` to return JSON. `xgoose.skills.<ns>.*` is available. The result is JSON-stringified and truncated past ~30 KB. Set parallel_safe:true for read-only code.",
+      "Run async JavaScript in the page MAIN world. Code body is wrapped in `(async () => { ... })()`. Use `return X` to return JSON. `xgoose.skills.<ns>.*` is available. Skills return their documented data directly: do not unwrap a skill return with `.result` unless its schema includes that field. Only the outer js_exec response has {ok,result,error}. Inspect Object.keys(value) and a small sample after an unexpected shape. The result is JSON-stringified and truncated past ~30 KB. Set parallel_safe:true for read-only code.",
     inputSchema: z.object({
       code: z
         .string()
