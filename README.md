@@ -4,9 +4,12 @@ An open source, in-page browser agent powered by PI. This repository contains
 the Chrome extension, shared agent core, page tools, floating chat UI, skill
 runtime, and synthetic regression tests. MIT licensed.
 
-**0.2.0 is under development. It is not a Chrome Web Store release.** The release
-gate requires three consecutive real-browser Hosted Luna runs and human review
-of their evidence. Passing unit tests alone does not meet that gate.
+**0.2.1 is a release candidate with refreshed store assets and toolbar icons.**
+The Chrome Web Store currently serves 0.1.0; the 0.2 update is being prepared for
+review. See [the Chrome page](https://xgoose.org/chrome/) for setup and the store
+link. The documented release gate still requires three consecutive real-browser
+Hosted Luna runs and human evidence review; passing synthetic tests alone does
+not meet that gate.
 
 ## Build
 

@@ -572,7 +572,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
     const skills = await loadSkills();
     skillList.innerHTML = "";
     if (!skills.length) {
-      skillList.innerHTML = `<div class="empty">No skills yet. Click <strong>Add custom skill</strong> below to create one.</div>`;
+      skillList.innerHTML = `<div class="empty">No skills yet. Browse website skills or choose <strong>Add custom skill</strong> to create one.</div>`;
       return;
     }
     for (const s of skills) {
@@ -598,6 +598,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
       (row.querySelector(".skill-matches") as HTMLElement).textContent =
         (s.matches ?? []).join(", ") || "(no URL match — never auto-injects)";
       const cb = row.querySelector("input[type=checkbox]") as HTMLInputElement;
+      cb.setAttribute("aria-label", `Enable ${s.name}`);
       cb.addEventListener("change", async () => {
         await setDisabled(s.name, !cb.checked);
       });

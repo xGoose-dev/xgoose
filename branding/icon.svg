@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <title>xgoose</title>
+  <rect x="8" y="8" width="112" height="112" rx="30" fill="#7357E8"/>
+  <path d="M29 106c1-15 9-25 21-33V49c0-16 11-27 26-27 15 0 25 11 25 26 0 15-10 26-25 27v17c-10 3-19 11-23 20H29v-6Z" fill="#FFF"/>
+  <path d="m99 44 20 8-20 10V44Z" fill="#FFAE57"/>
+  <rect x="65" y="38" width="37" height="17" rx="8.5" fill="#24203B"/>
+  <path d="M72 43h11" stroke="#C9BFFF" stroke-width="3" stroke-linecap="round"/>
+</svg>

@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "xgoose",
   "short_name": "xgoose",
-  "version": "0.2.0",
-  "description": "Floating AI panel for any page. Auto-loads site skills (forums, award travel, more) so the AI uses clean tools, not scraping.",
+  "version": "0.2.1",
+  "description": "Your AI assistant on the current page. Research with website skills, follow sources, and connect your own AI provider.",
   "minimum_chrome_version": "138",
   "icons": {
     "16": "images/icon-16.png",

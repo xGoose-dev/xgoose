@@ -118,12 +118,10 @@ regression check for the build pipeline.
 
 ## Status
 
-Experimental. Sibling to
-[xgoose-extension-safari](../xgoose-extension-safari/) and
-[xgoose-extension-firefox](../xgoose-extension-firefox/); shares the
-`xgoose-core` workspace via `file:` deps. No Chrome Web Store release
-yet — **Load unpacked** is the supported install path.
+Release candidate for the current-page Chrome extension. See the
+[root README](../../README.md) for current release status and the
+[Chrome page](https://xgoose.org/chrome/) for setup instructions.
 
 ## License
 
-Same as the parent [xgoose](https://github.com/uscard-dev/xgoose) project.
+MIT. See [LICENSE](../../LICENSE).
