@@ -17,7 +17,7 @@ try{
    if(url.hostname!=='api.xgoose.org'&&url.hostname!=='byok.fixture.test')return original(input,init);
    if(url.pathname==='/me/transcript-consent')return Response.json({hosted:true,byok:false});
    if(url.pathname==='/me/quota')return Response.json({claimable:false,granted_micros:5000000,remaining_micros:5000000,expires_at:'2100-01-01T00:00:00Z',platform_paused:false});
-   if(url.pathname.endsWith('/models')){state.tests++;return Response.json({data:[{id:'luna'}],models:[{name:'models/gemini-2.5-flash'}]});}
+   if(url.pathname.endsWith('/models')){state.tests++;return Response.json({data:[{id:'luna',context_window:1200000}],models:[{name:'models/gemini-2.5-flash'}]});}
    if(url.pathname.endsWith('/chat/completions')||url.pathname.includes(':streamGenerateContent')){
     const body=await req.json(),google=url.pathname.includes(':streamGenerateContent');
     const credential=req.headers.get(google?'x-goog-api-key':'authorization');
@@ -62,6 +62,7 @@ try{
   assert.ok(state.tests>=1);assert.equal(state.normal,provider==='xgoose-hosted'?4:3);assert.equal(state.summaries,provider==='xgoose-hosted'?1:0);
   const second=state.requests.filter(r=>!r.summary)[1];assert.match(JSON.stringify(second.body),/BROWSER_PROVIDER_728/);
   if(provider==='gemini'||provider==='gemini-litellm')assert.match(JSON.stringify(state.requests.at(-1).body),/c2lnbmF0dXJl/);
+  if(provider==='xgoose-hosted')assert.match(await page.locator('.context-meter').getAttribute('title'),/1,200,000 tokens/);
   assert.ok(state.requests.every(r=>r.credentialCorrect));assert.equal(await page.locator('.msg-err').count(),0);
   await mkdir('artifacts/byok',{recursive:true});await page.locator('.panel').screenshot({path:`artifacts/byok/${provider}-browser.png`});
   reports.push({provider,passed:true,testButton:true,strictCsp:true,backgroundTransport:true,structuredToolResult:true,followUp:true,credentialIsolation:true,compaction:state.summaries===1});await page.close();

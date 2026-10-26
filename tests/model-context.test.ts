@@ -23,6 +23,7 @@ test('Hosted and known BYOK windows follow the model, with output headroom',()=>
  for(const id of ['claude-haiku-5-5','claude-sonnet-5-5'])assert.equal(modelContextWindow(id),1_000_000);
  assert.equal(modelContextWindow('gpt-4o-mini'),128_000);assert.equal(modelContextWindow('gemini-2.5-pro'),1_048_576);
  assert.equal(modelContextWindow('gpt-4.1'),1_047_576);assert.equal(modelContextWindow('custom-unknown'),128_000);
+ assert.equal(createModel({...settings,model:'future-hosted',contextWindowTokens:2_000_000}).contextWindow,2_000_000);
  assert.ok(inputTokenBudget(1_000_000)<1_000_000-4096);
 });
 test('an 800K-token prompt uses the large model window without premature compaction',async()=>{

@@ -77,6 +77,7 @@ async function projectToCoreSettings(s: Settings): Promise<{
   model: string;
   baseUrl: string;
   thinking: boolean;
+  contextWindowTokens?: number;
 }> {
   if (s.provider !== "xgoose-hosted") {
     return {
@@ -95,11 +96,16 @@ async function projectToCoreSettings(s: Settings): Promise<{
       "xgoose hosted AI requires you to sign in. Open the options page and sign in via xgoose.org, or pick a different provider.",
     );
   }
+  // Model metadata comes from the signed-in gateway, so a future Hosted model
+  // need not fall back to the bundled catalogue's conservative unknown window.
+  const catalogue=await send('sw:list_xgoose_models',{}).catch(()=>null);
+  const contextWindowTokens=catalogue?.ok?catalogue.contextWindows?.[s.model]:undefined;
   return {
     provider: "openai-compat",
     apiKey: account.accessToken,
     model: s.model,
     baseUrl: XGOOSE_HOSTED_AI_BASE_URL,
     thinking: false,
+    ...(contextWindowTokens?{contextWindowTokens}:{}),
   };
 }

@@ -346,7 +346,7 @@ registerRouter({
       return { ok: false, error: "Not signed in", signedIn: false };
     }
     const path = `/ai/v1/models${refresh ? "?refresh=1" : ""}`;
-    const res = await apiFetch<{ data?: Array<{ id?: unknown }> }>(path, {
+    const res = await apiFetch<{ data?: Array<{ id?: unknown; context_window?: unknown }> }>(path, {
       method: "GET",
       bearer: account.accessToken,
     });
@@ -362,7 +362,8 @@ registerRouter({
       .map((m) => (typeof m?.id === "string" ? m.id : null))
       .filter((s): s is string => !!s)
       .sort();
-    return { ok: true, models };
+    const contextWindows=Object.fromEntries(data.flatMap(m=>typeof m.id==='string'&&typeof m.context_window==='number'&&Number.isSafeInteger(m.context_window)&&m.context_window>=8192&&m.context_window<=16_000_000?[[m.id,m.context_window]]:[]));
+    return { ok: true, models, contextWindows };
   },
 
   // ── options / panel ─────────────────────────────────────────────────
