@@ -1,0 +1,13 @@
+{
+  "name": "xgoose-extension-safari",
+  "version": "1.6.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "xgoose-extension-chrome": "*"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "extends": "../chrome/tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "../chrome/src/*"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "../chrome/src/**/*.ts"
+  ]
+}

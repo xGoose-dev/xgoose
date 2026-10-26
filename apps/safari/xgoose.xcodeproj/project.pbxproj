@@ -1,0 +1,641 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		2BDC887E282C3C319382A122 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 94AF4481D7D7CBA8821D066F /* PrivacyInfo.xcprivacy */; };
+		34E3891E89923A32979BC8DC /* skills.json in Resources */ = {isa = PBXBuildFile; fileRef = 750EBB372E6496ED69CECC36 /* skills.json */; };
+		375139A8E74A3748DD0EF278 /* third-party-notices.txt in Resources */ = {isa = PBXBuildFile; fileRef = AF628712EC87D244D5D6BCEA /* third-party-notices.txt */; };
+		4DDCED019BFD313B2AE94A84 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 2235CEF00B8E72FAF6E84E51 /* manifest.json */; };
+		50D915BC6242A74CAAA344A7 /* NativeServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D79724DCB5B9ECF9D72EF5 /* NativeServiceTests.swift */; };
+		53C6D297AE31995FA83F05BA /* pageBridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 739AD40BBA4479CF4B7355AC /* pageBridge.js */; };
+		64DA711F4716DA0D36347B11 /* skills.json in Resources */ = {isa = PBXBuildFile; fileRef = 750EBB372E6496ED69CECC36 /* skills.json */; };
+		7C9D6597B7D6449471812C2A /* images in Resources */ = {isa = PBXBuildFile; fileRef = DC56DE2586E02CA6FAC029CA /* images */; };
+		7FA4E70D96101042CDA1B118 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54A382181D5692D14E982554 /* SafariWebExtensionHandler.swift */; };
+		81816B6E30222A704184FB61 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 94AF4481D7D7CBA8821D066F /* PrivacyInfo.xcprivacy */; };
+		932B7F84936BCA09998D4BA1 /* popup.js in Resources */ = {isa = PBXBuildFile; fileRef = 2946E0D88BEB6BC75E64C167 /* popup.js */; };
+		99EA5205A3412C4C425DE86D /* SafariExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = CDFBDD091BD9A26349C122DC /* SafariExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AC5040CB3808EC9D6BC8F8FF /* popup.html in Resources */ = {isa = PBXBuildFile; fileRef = 0BA0C32989E0594EB9037B44 /* popup.html */; };
+		B227B681447B4DF57C8CB9AF /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 0D75987129D2957C629F7D67 /* background.js */; };
+		B4EDA96F2057CE88EEE70761 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F9DC7638B166F34FEBE487BF /* Assets.xcassets */; };
+		C767E0BA3F73E2B37D4F7660 /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = E2908B9D8FEBC13C65BD8D96 /* popup.css */; };
+		D739453C7A100DBBB6D50F9C /* XGooseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9255C5C22F3044299D78A0AE /* XGooseApp.swift */; };
+		DF3A3590E6CABFB63838A83A /* NativeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30DE80143A2E87D453284C8E /* NativeService.swift */; };
+		E39591C7357E1DC47CD49F5D /* NativeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30DE80143A2E87D453284C8E /* NativeService.swift */; };
+		E649E17C847F7E3FA63EF4A5 /* skillRuntime.js in Resources */ = {isa = PBXBuildFile; fileRef = 4F93AB2498265A72491E223B /* skillRuntime.js */; };
+		E65E8F1100EE97B987E4CCF9 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 55AB5544C4895498D37DF137 /* content.js */; };
+		FD7D75CE4778988C19748EFE /* skills in Resources */ = {isa = PBXBuildFile; fileRef = E6FD773FC7B7DB131229887F /* skills */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		72DF5A7D66EAB2D2152E3FDC /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BF15A8B049FC5F71314D466F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F23EBAD677944C8946264976;
+			remoteInfo = xgoose;
+		};
+		DA1A28E7A6084B23C189B3FD /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BF15A8B049FC5F71314D466F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9AEB6475E1C190F05B4D371F;
+			remoteInfo = SafariExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		91953693BCBB1F28E89E7729 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				99EA5205A3412C4C425DE86D /* SafariExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0BA0C32989E0594EB9037B44 /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
+		0D75987129D2957C629F7D67 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = background.js; sourceTree = "<group>"; };
+		2235CEF00B8E72FAF6E84E51 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
+		2946E0D88BEB6BC75E64C167 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
+		30DE80143A2E87D453284C8E /* NativeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeService.swift; sourceTree = "<group>"; };
+		345EDB8829F60CA30851B1BD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		4F93AB2498265A72491E223B /* skillRuntime.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = skillRuntime.js; sourceTree = "<group>"; };
+		54A382181D5692D14E982554 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		55AB5544C4895498D37DF137 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = content.js; sourceTree = "<group>"; };
+		739AD40BBA4479CF4B7355AC /* pageBridge.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = pageBridge.js; sourceTree = "<group>"; };
+		750EBB372E6496ED69CECC36 /* skills.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = skills.json; sourceTree = "<group>"; };
+		8543356E25F8AFC2AD3952FE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		9255C5C22F3044299D78A0AE /* XGooseApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XGooseApp.swift; sourceTree = "<group>"; };
+		92CD3915248D39C2B553AA9E /* xgoose.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = xgoose.entitlements; sourceTree = "<group>"; };
+		94AF4481D7D7CBA8821D066F /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A6D79724DCB5B9ECF9D72EF5 /* NativeServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeServiceTests.swift; sourceTree = "<group>"; };
+		ADC27F1E42C0AE4FD602F113 /* NativeTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = NativeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AF628712EC87D244D5D6BCEA /* third-party-notices.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "third-party-notices.txt"; sourceTree = "<group>"; };
+		B3920BEE763D7F3DB66F2641 /* xgoose.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = xgoose.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CDFBDD091BD9A26349C122DC /* SafariExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SafariExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		DC56DE2586E02CA6FAC029CA /* images */ = {isa = PBXFileReference; lastKnownFileType = folder; name = images; path = dist/images; sourceTree = SOURCE_ROOT; };
+		E2908B9D8FEBC13C65BD8D96 /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = popup.css; sourceTree = "<group>"; };
+		E6FD773FC7B7DB131229887F /* skills */ = {isa = PBXFileReference; lastKnownFileType = folder; name = skills; path = dist/skills; sourceTree = SOURCE_ROOT; };
+		F4FEDC42A3E236A50DAAC078 /* xgoose.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = xgoose.entitlements; sourceTree = "<group>"; };
+		F9DC7638B166F34FEBE487BF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		110BDA82CC208E67DC4BF267 /* Extension */ = {
+			isa = PBXGroup;
+			children = (
+				8543356E25F8AFC2AD3952FE /* Info.plist */,
+				54A382181D5692D14E982554 /* SafariWebExtensionHandler.swift */,
+				F4FEDC42A3E236A50DAAC078 /* xgoose.entitlements */,
+			);
+			path = Extension;
+			sourceTree = "<group>";
+		};
+		48212826FC57E68044543226 /* NativeTests */ = {
+			isa = PBXGroup;
+			children = (
+				A6D79724DCB5B9ECF9D72EF5 /* NativeServiceTests.swift */,
+			);
+			path = NativeTests;
+			sourceTree = "<group>";
+		};
+		A134EDFC04499E787EC3B192 = {
+			isa = PBXGroup;
+			children = (
+				EF7B68B3EE2B0682813FCC9B /* dist */,
+				EBC53AC31F1C602496374CBB /* Native */,
+				48212826FC57E68044543226 /* NativeTests */,
+				F416885139644D0A6E8183F3 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A638DDA8E1B8352B991B3F63 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				30DE80143A2E87D453284C8E /* NativeService.swift */,
+				94AF4481D7D7CBA8821D066F /* PrivacyInfo.xcprivacy */,
+				750EBB372E6496ED69CECC36 /* skills.json */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		EBC53AC31F1C602496374CBB /* Native */ = {
+			isa = PBXGroup;
+			children = (
+				FDFAB779575EEDBCA3BBAB9F /* App */,
+				110BDA82CC208E67DC4BF267 /* Extension */,
+				A638DDA8E1B8352B991B3F63 /* Shared */,
+			);
+			path = Native;
+			sourceTree = "<group>";
+		};
+		EF7B68B3EE2B0682813FCC9B /* dist */ = {
+			isa = PBXGroup;
+			children = (
+				0D75987129D2957C629F7D67 /* background.js */,
+				55AB5544C4895498D37DF137 /* content.js */,
+				DC56DE2586E02CA6FAC029CA /* images */,
+				2235CEF00B8E72FAF6E84E51 /* manifest.json */,
+				739AD40BBA4479CF4B7355AC /* pageBridge.js */,
+				E2908B9D8FEBC13C65BD8D96 /* popup.css */,
+				0BA0C32989E0594EB9037B44 /* popup.html */,
+				2946E0D88BEB6BC75E64C167 /* popup.js */,
+				4F93AB2498265A72491E223B /* skillRuntime.js */,
+				E6FD773FC7B7DB131229887F /* skills */,
+				AF628712EC87D244D5D6BCEA /* third-party-notices.txt */,
+			);
+			path = dist;
+			sourceTree = "<group>";
+		};
+		F416885139644D0A6E8183F3 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				ADC27F1E42C0AE4FD602F113 /* NativeTests.xctest */,
+				CDFBDD091BD9A26349C122DC /* SafariExtension.appex */,
+				B3920BEE763D7F3DB66F2641 /* xgoose.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		FDFAB779575EEDBCA3BBAB9F /* App */ = {
+			isa = PBXGroup;
+			children = (
+				F9DC7638B166F34FEBE487BF /* Assets.xcassets */,
+				345EDB8829F60CA30851B1BD /* Info.plist */,
+				92CD3915248D39C2B553AA9E /* xgoose.entitlements */,
+				9255C5C22F3044299D78A0AE /* XGooseApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5C7983878B87068B38F3B266 /* NativeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 91ADFA23FA696A02904EBAF7 /* Build configuration list for PBXNativeTarget "NativeTests" */;
+			buildPhases = (
+				5BD0FDD4224D9CD468EA29CE /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4518F7BD4A2EC2284BCE68A2 /* PBXTargetDependency */,
+			);
+			name = NativeTests;
+			packageProductDependencies = (
+			);
+			productName = NativeTests;
+			productReference = ADC27F1E42C0AE4FD602F113 /* NativeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		9AEB6475E1C190F05B4D371F /* SafariExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8B338EFE0A9C79A538234E71 /* Build configuration list for PBXNativeTarget "SafariExtension" */;
+			buildPhases = (
+				23E01A8FE1F96DE01DABE5AF /* Sources */,
+				C982052150E709232E36871B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SafariExtension;
+			packageProductDependencies = (
+			);
+			productName = SafariExtension;
+			productReference = CDFBDD091BD9A26349C122DC /* SafariExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		F23EBAD677944C8946264976 /* xgoose */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B6E08C5385896AB0B40BD897 /* Build configuration list for PBXNativeTarget "xgoose" */;
+			buildPhases = (
+				4076780BE26C1FEF10AC677F /* Sources */,
+				55FE1EB349E6AC3EAC916339 /* Resources */,
+				91953693BCBB1F28E89E7729 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				61F2C67A16B6B5CAEBCED664 /* PBXTargetDependency */,
+			);
+			name = xgoose;
+			packageProductDependencies = (
+			);
+			productName = xgoose;
+			productReference = B3920BEE763D7F3DB66F2641 /* xgoose.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		BF15A8B049FC5F71314D466F /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					5C7983878B87068B38F3B266 = {
+						DevelopmentTeam = 2L6B6ZA57F;
+						ProvisioningStyle = Automatic;
+					};
+					9AEB6475E1C190F05B4D371F = {
+						DevelopmentTeam = 2L6B6ZA57F;
+						ProvisioningStyle = Automatic;
+					};
+					F23EBAD677944C8946264976 = {
+						DevelopmentTeam = 2L6B6ZA57F;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 782C267CABEE0C5C4D3D9726 /* Build configuration list for PBXProject "xgoose" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = A134EDFC04499E787EC3B192;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = F416885139644D0A6E8183F3 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F23EBAD677944C8946264976 /* xgoose */,
+				9AEB6475E1C190F05B4D371F /* SafariExtension */,
+				5C7983878B87068B38F3B266 /* NativeTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		55FE1EB349E6AC3EAC916339 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B4EDA96F2057CE88EEE70761 /* Assets.xcassets in Resources */,
+				2BDC887E282C3C319382A122 /* PrivacyInfo.xcprivacy in Resources */,
+				34E3891E89923A32979BC8DC /* skills.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C982052150E709232E36871B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				81816B6E30222A704184FB61 /* PrivacyInfo.xcprivacy in Resources */,
+				B227B681447B4DF57C8CB9AF /* background.js in Resources */,
+				E65E8F1100EE97B987E4CCF9 /* content.js in Resources */,
+				7C9D6597B7D6449471812C2A /* images in Resources */,
+				4DDCED019BFD313B2AE94A84 /* manifest.json in Resources */,
+				53C6D297AE31995FA83F05BA /* pageBridge.js in Resources */,
+				C767E0BA3F73E2B37D4F7660 /* popup.css in Resources */,
+				AC5040CB3808EC9D6BC8F8FF /* popup.html in Resources */,
+				932B7F84936BCA09998D4BA1 /* popup.js in Resources */,
+				E649E17C847F7E3FA63EF4A5 /* skillRuntime.js in Resources */,
+				FD7D75CE4778988C19748EFE /* skills in Resources */,
+				64DA711F4716DA0D36347B11 /* skills.json in Resources */,
+				375139A8E74A3748DD0EF278 /* third-party-notices.txt in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		23E01A8FE1F96DE01DABE5AF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DF3A3590E6CABFB63838A83A /* NativeService.swift in Sources */,
+				7FA4E70D96101042CDA1B118 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4076780BE26C1FEF10AC677F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E39591C7357E1DC47CD49F5D /* NativeService.swift in Sources */,
+				D739453C7A100DBBB6D50F9C /* XGooseApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5BD0FDD4224D9CD468EA29CE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				50D915BC6242A74CAAA344A7 /* NativeServiceTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		4518F7BD4A2EC2284BCE68A2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F23EBAD677944C8946264976 /* xgoose */;
+			targetProxy = 72DF5A7D66EAB2D2152E3FDC /* PBXContainerItemProxy */;
+		};
+		61F2C67A16B6B5CAEBCED664 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9AEB6475E1C190F05B4D371F /* SafariExtension */;
+			targetProxy = DA1A28E7A6084B23C189B3FD /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1B861A4C254B346C8C48532D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.xgoose.xgoose-safari.Tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/xgoose.app/xgoose";
+			};
+			name = Debug;
+		};
+		64F74F752B5178BD8D926186 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.xgoose.xgoose-safari.Tests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/xgoose.app/xgoose";
+			};
+			name = Release;
+		};
+		8BB9C7CF183CDE2A78D2E70E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_ENTITLEMENTS = Native/Extension/xgoose.entitlements;
+				INFOPLIST_FILE = Native/Extension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.xgoose.xgoose-safari.Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		94E62AE5C99B4E3232CB3BD5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Native/App/xgoose.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Native/App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.xgoose.xgoose-safari";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AD32BC0F78A7BE1ACC8E70F1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 11;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 2L6B6ZA57F;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 1.6;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B7FFA600E6CC96B9FBFAC08F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Native/App/xgoose.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Native/App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.xgoose.xgoose-safari";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C06BDEC60A82A773A1F7E2BD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGN_ENTITLEMENTS = Native/Extension/xgoose.entitlements;
+				INFOPLIST_FILE = Native/Extension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "org.xgoose.xgoose-safari.Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C3A6FD5A8CDACEB50296DE3C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 11;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 2L6B6ZA57F;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 1.6;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		782C267CABEE0C5C4D3D9726 /* Build configuration list for PBXProject "xgoose" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C3A6FD5A8CDACEB50296DE3C /* Debug */,
+				AD32BC0F78A7BE1ACC8E70F1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8B338EFE0A9C79A538234E71 /* Build configuration list for PBXNativeTarget "SafariExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8BB9C7CF183CDE2A78D2E70E /* Debug */,
+				C06BDEC60A82A773A1F7E2BD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		91ADFA23FA696A02904EBAF7 /* Build configuration list for PBXNativeTarget "NativeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1B861A4C254B346C8C48532D /* Debug */,
+				64F74F752B5178BD8D926186 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B6E08C5385896AB0B40BD897 /* Build configuration list for PBXNativeTarget "xgoose" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				94E62AE5C99B4E3232CB3BD5 /* Debug */,
+				B7FFA600E6CC96B9FBFAC08F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = BF15A8B049FC5F71314D466F /* Project object */;
+}

@@ -1,3 +1,5 @@
+import {isSafari} from "./host";
+import {nativeCommand} from "./platformBridge";
 /**
  * Shared cloud-account storage and API client. Email confirmation is orchestrated
  * by background/account.ts; every extension context observes the same local
@@ -59,6 +61,10 @@ export async function getOrCreateDeviceId(): Promise<string> {
 }
 
 export async function getAccount(): Promise<Account | null> {
+  if(isSafari) {
+    if(typeof location!=="undefined" && location.protocol==="safari-web-extension:")return nativeCommand("account");
+    const response=await chrome.runtime.sendMessage({kind:"sw:account_get"}); if(response?.__error)throw new Error(response.__error);return response??null;
+  }
   const got = await chrome.storage.local.get(ACCOUNT_KEY);
   const raw = got[ACCOUNT_KEY];
   if (!raw) return null;

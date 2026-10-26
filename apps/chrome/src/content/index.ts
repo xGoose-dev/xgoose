@@ -1,4 +1,5 @@
 import {initializeLocale,localizeRoot,languageReminder} from "@/shared/locale";
+import {isSafari,safariExecutionReminder} from "@/shared/host";
 import {mountUserScriptsGuide} from "./userScriptsGuide";
 import {userScriptsReminder} from "@/shared/userScriptsSetup";
 import {resetBridgeReadiness} from "./pageRpc";
@@ -79,7 +80,9 @@ import {
 
 // Chrome MV3 ships `chrome.*` only — no browser polyfill needed.
 
-if (location.protocol.startsWith("http")) {
+const contentGlobal=globalThis as typeof globalThis & {__xgooseContentStarted?:boolean};
+if (location.protocol.startsWith("http") && !contentGlobal.__xgooseContentStarted) {
+  contentGlobal.__xgooseContentStarted=true;
   bootstrap().catch((err) => console.warn("[xgoose] bootstrap error", err));
 }
 
@@ -91,13 +94,15 @@ async function bootstrap(): Promise<void> {
   installPageExecutor((op, payload) => op === "exec"
     ? send("sw:page_exec", payload)
     : send("sw:page_abort", { execId: typeof payload === "string" ? payload : payload.execId }));
-  installOneClickSkillLinks();
+  if(!isSafari)installOneClickSkillLinks();
 
+  if(isSafari) await send("sw:host_prepare",undefined);
   await loadAll();
   await initializeLocale();
-  const panel = createPanel({imageUploads:true});
+  const panel = createPanel({imageUploads:true,visualViewport:isSafari,editableSkills:!isSafari});
   localizeRoot(document.querySelector("#xgoose-root")!.shadowRoot!);
-  const permissionGuide=mountUserScriptsGuide(()=>{resetBridgeReadiness();resetInjectedSkills();void refreshSkills();});
+  const permissionGuide=isSafari ? {check:async()=>false,setBuiltinSite:(_value:boolean)=>{}} : mountUserScriptsGuide(()=>{resetBridgeReadiness();resetInjectedSkills();void refreshSkills();});
+  if(isSafari) void send("sw:host_progress",{kind:"page"});
   const origin = getCurrentOrigin();
 
   // Apply saved layout (button position + panel size) before deciding whether
@@ -438,6 +443,13 @@ async function bootstrap(): Promise<void> {
     window.clearInterval(checkpoint);
     abortController?.abort(new Error("document_closed"));
   }, { once: true });
+  if(isSafari)document.addEventListener("visibilitychange",()=>{
+    if(document.visibilityState!=="hidden" || !running)return;
+    snapshotInFlightToMessages();
+    conversationMessages.push({role:"xgoose-error",content:"Interrupted when Safari left the foreground. Send another message to continue."});
+    persistCurrentConvo();
+    abortController?.abort(new Error("safari_suspended"));
+  });
 
   panel.onNew(async () => {
     await stopBeforeConversationSwitch();
@@ -743,8 +755,8 @@ async function bootstrap(): Promise<void> {
       const reminder =
         baseReminder +
         languageReminder(settings.answerLanguage) +
-        "\n# Chrome skill execution\nUse skill_call({skill,function,args}) for all website skill calls. This structured tool works for bundled skills without Allow User Scripts. Examples using xgoose.skills.ns.fn(args) describe the same function and arguments; translate them to skill_call instead of js_exec. Raw js_exec requires Allow User Scripts.\n" +
-        (scriptsEnabled?"":userScriptsReminder(chrome.runtime.id,builtinSite))+
+        (isSafari ? safariExecutionReminder : "\n# Chrome skill execution\nUse skill_call({skill,function,args}) for all website skill calls. This structured tool works for bundled skills without Allow User Scripts. Examples using xgoose.skills.ns.fn(args) describe the same function and arguments; translate them to skill_call instead of js_exec. Raw js_exec requires Allow User Scripts.\n") +
+        (isSafari || scriptsEnabled?"":userScriptsReminder(chrome.runtime.id,builtinSite))+
         sourceGroundedToolUseReminder(prompt, skillsForReminder.length > 0);
 
       // Heal any orphaned tool-call / tool-result parts that survived from a
@@ -946,6 +958,7 @@ async function bootstrap(): Promise<void> {
 
       panel.removeThinking();
       assistantBubble?.finalize();
+      if(isSafari && assistantBubble && !turnErrorDisplay && !abortController?.signal.aborted) void send("sw:host_progress",{kind:"answer"});
       if (reasoningBlock) {
         reasoningBlock.finalize();
         reasoningBlock = null;
@@ -1045,6 +1058,7 @@ async function bootstrap(): Promise<void> {
     } finally {
       await record({type:abortController?.signal.aborted?"run-interrupted":"run-end"});
       assistantBubble?.finalize();
+
       abortController = null;
       running = false;
       // Always clear the in-flight slot — any data we wanted to keep has

@@ -1,3 +1,4 @@
+import {isSafari,hostCapabilities} from "@/shared/host";
 import { normalizeHostedError } from "@/shared/hosted";
 // Chrome host wrapper around `@xgoose/core`'s `createAgent`. Composes the
 // core agent, the page-controller DOM tools, and the host-specific skill
@@ -71,6 +72,7 @@ export async function createAgent(opts: {
     },
     tools,
     reminder: opts.reminder,
+    capabilities:hostCapabilities,
   });
 }
 
@@ -85,7 +87,7 @@ async function projectToCoreSettings(s: Settings): Promise<{
   if (s.provider !== "xgoose-hosted") {
     return {
       provider: s.provider,
-      apiKey: getProviderApiKey(s),
+      apiKey: isSafari ? (await send("sw:native_credentials",{provider:s.provider})).apiKey : getProviderApiKey(s),
       model: s.model,
       baseUrl: getProviderBaseUrl(s),
       thinking: s.thinking,

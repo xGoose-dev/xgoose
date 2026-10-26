@@ -1,0 +1,100 @@
+name: xgoose
+options:
+  deploymentTarget:
+    iOS: '18.0'
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    TARGETED_DEVICE_FAMILY: '1,2'
+    DEVELOPMENT_TEAM: 2L6B6ZA57F
+    MARKETING_VERSION: '1.6'
+    CURRENT_PROJECT_VERSION: '11'
+    GENERATE_INFOPLIST_FILE: false
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: false
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+targets:
+  xgoose:
+    type: application
+    platform: iOS
+    sources:
+      - Native/App
+      - Native/Shared
+    info:
+      path: Native/App/Info.plist
+      properties:
+        CFBundleDisplayName: xgoose
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleURLTypes:
+          - CFBundleURLSchemes: [xgoose]
+            CFBundleURLName: org.xgoose.xgoose-safari
+        ITSAppUsesNonExemptEncryption: false
+        KeychainPrefix: 2L6B6ZA57F.
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+    entitlements:
+      path: Native/App/xgoose.entitlements
+      properties:
+        com.apple.security.application-groups: [group.org.xgoose.xgoose-safari]
+        keychain-access-groups: [$(AppIdentifierPrefix)org.xgoose.xgoose-safari]
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: org.xgoose.xgoose-safari
+    dependencies:
+      - target: SafariExtension
+  SafariExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Native/Extension
+      - Native/Shared
+      - path: dist
+        excludes: [images, skills]
+        buildPhase: resources
+      - path: dist/images
+        type: folder
+        buildPhase: resources
+      - path: dist/skills
+        type: folder
+        buildPhase: resources
+    info:
+      path: Native/Extension/Info.plist
+      properties:
+        CFBundleDisplayName: xgoose
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        KeychainPrefix: 2L6B6ZA57F.
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.Safari.web-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SafariWebExtensionHandler
+    entitlements:
+      path: Native/Extension/xgoose.entitlements
+      properties:
+        com.apple.security.application-groups: [group.org.xgoose.xgoose-safari]
+        keychain-access-groups: [$(AppIdentifierPrefix)org.xgoose.xgoose-safari]
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: org.xgoose.xgoose-safari.Extension
+      ASSETCATALOG_COMPILER_APPICON_NAME: ''
+      SKIP_INSTALL: true
+  NativeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [NativeTests]
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: org.xgoose.xgoose-safari.Tests
+      GENERATE_INFOPLIST_FILE: true
+    dependencies:
+      - target: xgoose
+schemes:
+  xgoose:
+    build:
+      targets:
+        xgoose: all
+    run:
+      config: Debug
+    test:
+      targets: [NativeTests]
+    archive:
+      config: Release

@@ -26,9 +26,13 @@ jobs:
         run: python3 -m unittest discover -s tests -p 'release_test.py'
       - run: node --test scripts/tests/*.test.mjs
       - run: npm run check
+      - name: Safari adapter typecheck and packaged resources
+        run: npm run typecheck -w xgoose-extension-safari && npm run build -w xgoose-extension-safari
       - run: npx playwright install --with-deps chromium
       - name: Browser regressions
         run: npm run e2e
+      - name: Safari viewport regression
+        run: node tests/browser/safari-viewport.mjs
       - name: Reproducible release archive
         run: python3 scripts/package-chrome.py
       - run: python3 scripts/add-edge-artifact.py artifacts/ci-release
