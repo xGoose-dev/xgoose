@@ -1,0 +1,58 @@
+{
+  "checkedAt": "2026-10-26T19:39:24.746742+00:00",
+  "appId": "6770188718",
+  "platform": "IOS",
+  "version": "1.6",
+  "build": "12",
+  "versionId": "4888e9c6-9ca8-4396-8db5-ac5e771ef1aa",
+  "buildId": "5521d2bb-5156-489d-9f7b-3e4fb630a7ac",
+  "processingState": "VALID",
+  "appStoreState": "WAITING_FOR_REVIEW",
+  "releaseType": "MANUAL",
+  "reviewSubmissionId": "1cf2952a-e26b-4988-9f4c-b23c7bb3bb93",
+  "submittedDate": "2026-10-26T19:38:51.047Z",
+  "submissionItemCount": 1,
+  "macOSState": "DEVELOPER_REJECTED",
+  "macOSAction": "Withdrew 1.6 after explicit user authorization to unlock shared app information; no macOS build, resubmission or release.",
+  "privacyPolicyUrl": "https://api.xgoose.org/privacy/ios",
+  "subtitle": "Your AI, on the page",
+  "ageRatingNewFields": {
+    "socialMedia": false,
+    "socialMediaAgeRestricted": false
+  },
+  "screenshots": [
+    {
+      "id": "d1000019-388e-81ae-8034-85a6517c3017",
+      "fileName": "iphone-6.9-hn-en.png",
+      "delivery": "COMPLETE"
+    },
+    {
+      "id": "35c00019-388e-81ae-8007-c047d4dfe56c",
+      "fileName": "iphone-6.9-native-home-en.png",
+      "delivery": "COMPLETE"
+    },
+    {
+      "id": "0a000019-388e-81ae-8002-d841af728ce4",
+      "fileName": "iphone-6.9-hn-zh.png",
+      "delivery": "COMPLETE"
+    },
+    {
+      "id": "db800019-388e-81ae-803a-4085678dbfc8",
+      "fileName": "ipad-11-safari-hn-landscape.png",
+      "delivery": "COMPLETE"
+    },
+    {
+      "id": "64800019-388e-81ae-8033-b9a159722ed1",
+      "fileName": "ipad-13-native-home.png",
+      "delivery": "COMPLETE"
+    },
+    {
+      "id": "95800019-388e-81ae-803b-0bf1210e5c39",
+      "fileName": "ipad-13-language.png",
+      "delivery": "COMPLETE"
+    }
+  ],
+  "usesNonExemptEncryption": false,
+  "sourceCommit": "e0a5e481019b2bf1aea817a260693a9606a5255e",
+  "ipaSha256": "0b911658f2d9fbad3a2ace8be022d40e155ad86f3742f13823b45c4531341dc2"
+}

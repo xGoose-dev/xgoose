@@ -1,7 +1,9 @@
 # iOS 1.6 replacement validation
 
 App Store 6770188718; existing app/extension bundle IDs, group and Keychain sharing
-retained. iOS/iPadOS 18 minimum. Release remains manual; macOS is outside this task.
+retained. iOS/iPadOS 18 minimum. iOS 1.6 (12) is Waiting for Review and release
+remains manual. macOS 1.6 was withdrawn only after explicit user authorization to
+unlock Apple's shared app information; it was not rebuilt, resubmitted or released.
 Initial 0.3.2 baseline merged with current main 2dc955e (0.3.4), including website
 available-evidence answers, summary windows and recoverable context budgets.
 
@@ -61,12 +63,18 @@ represent these as physical-device checks.
 ## Backend evidence and release boundary
 
 113 deletion/backend tests pass, including owner isolation, session revocation,
-durable erasure and object-store retry. Backend changes are integrated into
-production master and released by GitHub Deploy run 40373988854. Read-only health
-returned commit c20ca4e155773507a87525673366ade9cb0662b7 and version
-d666acd5-524a-4b39-8e2f-60cea7b1cde0, preserving all four approved Hosted models:
-luna, claude-haiku-5-5, claude-sonnet-5-5, gpt-6.1-sol.
-No direct Wrangler deployment or LiteLLM restart is permitted for this task.
+durable erasure and object-store retry. Backend changes were integrated and
+released through GitHub. Earlier health returned c20ca4e and four models. Final
+read-only verification on 2026-10-26 returned current origin/master commit
+2982b27f9091bb95c30c2c5ad25a9590f717e793, deployed version
+f00c54b9-8ccf-4705-88e2-55a3bb0f3240 and the complete approved six-model catalogue:
+luna, claude-haiku-5-5, claude-sonnet-5-5, gpt-6.1-sol, deepseek-flash and
+gpt-6.1-terra. GitHub master Deploy runs 40387996758 and 40387439845 both succeeded
+for that commit. Safari loads the current server catalogue dynamically.
+No gateway changes or deployments were performed in the final submission phase.
+Future website/API releases must preserve current master, merge and push to
+master, and use the guarded scripts/production-release.mjs workflow. Direct
+production Wrangler deployment and unrelated LiteLLM restarts are prohibited.
 
 Public iOS policy: https://api.xgoose.org/privacy/ios. Nine ASC data types with
 purposes and no tracking published; native Privacy Manifest matches. Optional
@@ -74,23 +82,46 @@ analytics default off and Safari parameters exclude email/keys/chat/model/prompt
 
 ## Build and submission evidence
 
-- Signed archive/export 1.6 (11) succeeds using existing distribution assets.
-  Source signing restored to Automatic. Bundle IDs, minimum OS and signatures checked.
-- Apple upload validation caught iPad orientations and manifest description length;
-  corrected both before successful upload. Delivery UUID
-  e3dec9ea-f6ce-431c-b94a-187192d267db.
+- Final signed archive/export **1.6 (12)** succeeds using existing distribution
+  assets. Source signing is restored to Automatic. App/extension identifiers,
+  App Group, shared Keychain entitlement, minimum OS and strict signatures checked.
+- Apple validation initially caught iPad orientations and manifest description
+  length; both were fixed. Build 11 was uploaded and superseded before submission.
+  Final build 12 delivery/build UUID: 5521d2bb-5156-489d-9f7b-3e4fb630a7ac; Apple
+  processing state VALID. Export compliance declares no non-exempt encryption.
+- Final source: main merge e0a5e481019b2bf1aea817a260693a9606a5255e, PRs #13 and #14.
+  PR #14 checks 40386315779 and 40386370161 passed.
+- Build 12 fixes the live interruption notice, marks periodic partial checkpoints
+  for crash recovery and avoids duplicating a canonical abort response. Actual
+  iOS 26.5 Safari QA requested a long Hosted answer, backgrounded Safari, returned
+  and verified 63 received lines retained with an explicit interruption notice.
+- Final IPA SHA-256:
+  0b911658f2d9fbad3a2ace8be022d40e155ad86f3742f13823b45c4531341dc2.
+  Durable local copies: builds/xgoose-1.6-12.ipa and
+  builds/xgoose-1.6-12.xcarchive (ignored, not committed).
 - Review Gemini key verified with actual inference and excluded from source/IPA.
-  It belongs only in ASC review notes; never include the credential in this document.
-- Build 11 processed VALID. Old iOS build 10 withdrawn, build 11 attached, listing
-  and review notes replaced, six new actual screenshots processed COMPLETE. macOS
-  remains Pending Developer Release. Existing ASC privacy URL is shared with the
-  pending macOS app-info record and cannot be edited independently; it is retained
-  at https://xgoose.org/privacy, verified to include the updated iOS policy.
-- Final interruption QA found that a suspension notice was persisted without being
-  shown immediately. Build 12 fixes the live notice, marks periodic partial
-  checkpoints for crash recovery and avoids duplicating a canonical abort response.
-  Build 12 validation/upload/replacement and final review state remain pending.
+  It belongs only in ASC review notes; never include the credential in evidence.
+- Old iOS build 10 withdrawn; build 12 attached to the existing iOS 1.6 record.
+  Description, release notes, keywords and review instructions replaced. Six
+  actual iPhone/iPad screenshots processed COMPLETE; old screenshots removed.
+- Apple initially rejected adding the iOS version to review because shared age
+  metadata lacked the new socialMedia field. macOS Pending Developer Release
+  locked that shared record. After the user explicitly approved withdrawal,
+  macOS 1.6 changed to DEVELOPER_REJECTED. The app's private assistant has no own
+  public social feed, so socialMedia=false and socialMediaAgeRestricted=false
+  were saved. Updated subtitle and https://api.xgoose.org/privacy/ios saved.
+- **Submitted 2026-10-26 19:38:51 UTC**. Review submission
+  1cf2952a-e26b-4988-9f4c-b23c7bb3bb93 contains exactly one iOS item. Both the public
+  ASC API and authenticated ASC page confirm **WAITING_FOR_REVIEW**. Release type
+  **MANUAL**. No macOS item was submitted.
 
-Local logs: /tmp/xgoose-ios-*.log, /tmp/xgoose-chrome-e2e-final.log and
-/tmp/xgoose-safari-viewport.log. Save sanitized final status and real screenshots
-alongside this document when submission completes.
+Sanitized machine-readable evidence is in evidence/app-store-submission.json and
+evidence/test-results.json. Actual screenshots are retained in screenshots/
+(ignored), including asc-ios-1.6-12-waiting-for-review.png and
+iphone-12-interrupted-reply.png. Tests ran on Apple simulators with real Safari;
+physical devices and spoken VoiceOver interaction were not tested.
+
+Local test logs: /tmp/xgoose-ios-unit-final.log,
+/tmp/xgoose-ios-native-tests.log, /tmp/xgoose-chrome-e2e-final.log and
+/tmp/xgoose-safari-viewport.log. The Chrome suite passed after a transient worker
+startup timeout during a concurrent archive; no failure was suppressed.
