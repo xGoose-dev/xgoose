@@ -32,6 +32,19 @@ def build_archive(root, output):
     dist = root / 'apps/chrome/dist'
     if json.loads((dist / 'manifest.json').read_text()) != json.loads((root / 'apps/chrome/static/manifest.json').read_text()):
         raise ValueError('Built manifest differs from source; rebuild before packaging')
+    manifest = json.loads((dist / 'manifest.json').read_text())
+    if default_locale := manifest.get('default_locale'):
+        source_locales = root / 'apps/chrome/static/_locales'
+        if not (source_locales / default_locale / 'messages.json').is_file():
+            raise ValueError('Missing default locale messages')
+        for source in source_locales.glob('*/messages.json'):
+            built = dist / '_locales' / source.relative_to(source_locales)
+            if not built.is_file() or built.read_bytes() != source.read_bytes():
+                raise ValueError(f'Missing or stale built locale: {source.parent.name}')
+            messages = json.loads(built.read_text())
+            for key in re.findall(r'__MSG_(\w+)__', json.dumps(manifest)):
+                if not messages.get(key, {}).get('message'):
+                    raise ValueError(f'Missing manifest message {key} in {source.parent.name}')
     for required in ('background.js', 'content.js', 'pageBridge.js', 'popup.html', 'options.html'):
         if not (dist / required).is_file():
             raise ValueError(f'Missing built extension file: {required}')
