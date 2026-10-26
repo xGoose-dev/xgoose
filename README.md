@@ -11,8 +11,10 @@ language adds no language directive to AI context; only an explicit preferred
 answer language sets a default. Requests in chat take priority.
 
 Getting started includes email sign-in, an illustrated optional User Scripts
-setup, and eight example websites. Skill installation and authoring live on a
-separate advanced setup page. YouTube uses basic page reading from the Chrome
+setup, and eight example websites. Its language selector sets the interface and
+answer preference together, translating the page immediately. Settings keeps
+the two preferences independently editable. Skill installation and authoring
+live on a separate advanced setup page. YouTube uses basic page reading from the Chrome
 toolbar; a dedicated YouTube skill is not bundled.
 
 Gemini BYOK uses the background streaming transport, including tools, images,

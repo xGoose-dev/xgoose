@@ -355,5 +355,6 @@
   "Skills & advanced setup": "Skills y configuración avanzada",
   "Back to getting started": "Volver a primeros pasos",
   "Add your own tools when you are ready.": "Añade tus propias herramientas cuando quieras.",
-  "Sign-in could not load. Open Settings to try again.": "No se pudo cargar el inicio de sesión. Abre Ajustes para intentarlo de nuevo."
+  "Sign-in could not load. Open Settings to try again.": "No se pudo cargar el inicio de sesión. Abre Ajustes para intentarlo de nuevo.",
+  "Choose the language for the interface and AI answers together. Automatic follows your browser for the interface and your conversation for answers. You can change them separately in Settings.": "Elige el idioma de la interfaz y de las respuestas de IA a la vez. En modo automático, la interfaz sigue el navegador y las respuestas siguen la conversación. Puedes ajustarlos por separado en Configuración."
 }

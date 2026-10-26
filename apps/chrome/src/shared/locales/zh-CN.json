@@ -355,5 +355,6 @@
   "Skills & advanced setup": "Skills 与进阶设置",
   "Back to getting started": "返回开始使用",
   "Add your own tools when you are ready.": "准备好后，再添加自己的工具。",
-  "Sign-in could not load. Open Settings to try again.": "登录加载失败，请打开设置重试。"
+  "Sign-in could not load. Open Settings to try again.": "登录加载失败，请打开设置重试。",
+  "Choose the language for the interface and AI answers together. Automatic follows your browser for the interface and your conversation for answers. You can change them separately in Settings.": "同时设置界面和 AI 默认回复语言。自动模式下，界面跟随浏览器，回答跟随对话。之后可在设置中分别调整。"
 }

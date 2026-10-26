@@ -111,8 +111,8 @@ export async function saveLanguage(value:LanguagePreference) {
   await chrome.storage.local.set({'xgoose.settings':{...raw,language:value}});
 }
 
-/** Shared by onboarding and Settings; answer choice never changes UI locale. */
-export async function mountAnswerLanguage(select:HTMLSelectElement,status?:HTMLElement|null) {
+/** Onboarding can set both preferences together; Settings keeps them independent. */
+export async function mountAnswerLanguage(select:HTMLSelectElement,status?:HTMLElement|null,options:{syncInterface?:boolean}={}) {
   const key='xgoose.settings';
   const read=(raw:any)=>{select.value=LANGUAGE_CHOICES.includes(raw?.answerLanguage)?raw.answerLanguage:'auto';};
   read((await chrome.storage.local.get(key))[key]);
@@ -121,7 +121,7 @@ export async function mountAnswerLanguage(select:HTMLSelectElement,status?:HTMLE
     const value=select.value as LanguagePreference;select.disabled=true;
     try{
       const raw=(await chrome.storage.local.get(key))[key]??{};
-      await chrome.storage.local.set({[key]:{...raw,answerLanguage:value}});
+      await chrome.storage.local.set({[key]:{...raw,answerLanguage:value,...(options.syncInterface?{language:value}:{})}});
       if(status)status.textContent='Saved automatically.';
     }catch{if(status)status.textContent='Language could not be saved. Please try again.';read((await chrome.storage.local.get(key))[key]);}
     finally{select.disabled=false;}
