@@ -1,6 +1,6 @@
 {
   "name": "xgoose-extension-chrome",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Chrome MV3 host for the xgoose agent, built on top of @xgoose/core, @xgoose/page-controller, and @xgoose/ui.",
   "type": "module",

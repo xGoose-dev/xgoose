@@ -56,7 +56,7 @@ export const SettingsSchema = z.object({
   apiKeys: z.record(z.string(), z.string()).default({}),
   baseUrls: z.record(z.string(), z.string()).default({}),
   apiKey: z.string().default(""),
-  model: z.string().default("luna"),
+  model: z.string().default("claude-haiku-5-5"),
   baseUrl: z.string().default(""),
   thinking: z.boolean().default(false),
   theme: ThemeSchema.default("system"),

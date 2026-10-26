@@ -109,6 +109,7 @@ function copyStatics() {
       'options.css',
       'install.html',
       'install.css',
+      'third-party-notices.txt',
     ]) {
       const src = resolve(staticDir, name);
       if (existsSync(src)) cpSync(src, resolve(out, name));

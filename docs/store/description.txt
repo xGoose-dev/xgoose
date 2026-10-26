@@ -13,7 +13,7 @@ Skill updates
 xgoose checks daily for new versions of supported catalog skills and shows an update badge. Review available versions, matching websites and source in Settings, then choose when to update. Local edits are flagged before replacement.
 
 Connect your own AI
-Bring an OpenAI-compatible endpoint, including LiteLLM, or a Gemini API key. BYOK works without an xgoose account. Start with xgoose Hosted AI: sign in with email and use your available account credit, without copying an API key. Hosted models are managed by your account. Choose BYOK in Settings to configure your own provider and API key. Trial availability is shown in your account when the campaign is open.
+Bring an OpenAI-compatible endpoint, including LiteLLM, or a Gemini API key. BYOK works without an xgoose account. Hosted AI defaults to Haiku 5.5 for new installs. Start with xgoose Hosted AI: sign in with email and use your available account credit, without copying an API key. Hosted models are managed by your account. Choose BYOK in Settings to configure your own provider and API key. Trial availability is shown in your account when the campaign is open.
 
 Sign in from the extension
 Enter your email in settings and click the confirmation link in your inbox. Your account is created after confirmation. No password or separate website registration is needed.
@@ -25,7 +25,7 @@ Learn and customize
 Getting started focuses on email sign-in, optional User Scripts setup and websites to try. Skills installation, writing guides and troubleshooting have their own advanced setup page. A starter .xgs.js opens in the installer for review. On xgoose.org, the built-in xgoose guide provides the same setup, installation and authoring help.
 
 Stay in control
-Stop a run at any time. xgoose works on the current page: refreshing, navigating away or closing it ends the active run. Long conversations compact automatically when needed so you can continue; full chat history remains available locally. Disabling a skill prevents new calls but cannot undo earlier requests or page changes; refresh the page if necessary.
+Stop a run at any time. xgoose works on the current page: refreshing, navigating away or closing it ends the active run. Context capacity follows the selected model, including 1M-token Hosted models. The Context indicator shows current token occupancy separately from cumulative usage; local pre-request counts are estimates. Long conversations compact automatically near the model limit, with space reserved for replies, so you can continue; full chat history remains available locally. Disabling a skill prevents new calls but cannot undo earlier requests or page changes; refresh the page if necessary.
 
 Conversation privacy
 Attach up to 3 PNG, JPEG or WebP images per message, or paste an image into the chat input. Preview and remove attachments before sending. Images are resized locally and sent to the selected image-capable model. Attached images remain in local conversation history; diagnostic transcripts include attachment metadata, not image bytes.

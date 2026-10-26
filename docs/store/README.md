@@ -246,3 +246,15 @@ Uncommitted provider additions in another checkout are not part of this release.
 
 GitHub publication and Chrome Web Store submission are separate steps. Check
 the release artifact report and Developer Dashboard for actual submission status.
+
+
+## 0.3.2 prepared — October 26, 2026
+
+New installs default to Hosted Haiku 5.5; explicit saved choices are preserved.
+Context windows follow each known model (Hosted Claude 5.5: 1M, Luna/Sol: 1.05M).
+Chunked local o200k BPE counting estimates text, system/tool schemas and images;
+non-OpenAI tokenizers use an allowance, and provider limits remain authoritative.
+The occupancy meter distinguishes current context from cumulative usage.
+Compaction reserves output space and retries a pre-response context rejection
+once without replaying actions. The gateway transport guards are independently
+bounded and increased alongside the model windows, with long-context billing.

@@ -4,7 +4,14 @@ An open source, in-page browser agent powered by PI. This repository contains
 the Chrome extension, shared agent core, page tools, floating chat UI, skill
 runtime, and synthetic regression tests. MIT licensed.
 
-**0.3.1** includes the Weibo/NGA reader fixes, optional NGA image context,
+**0.3.2** defaults Hosted AI to Haiku 5.5 and uses model-specific context windows
+instead of a fixed 128K window or 175 KB early-compaction threshold. Luna and
+GPT-6.1 Sol use 1,050,000 tokens; Haiku/Sonnet 5.5 use 1,000,000. Context occupancy
+is a local token estimate before a request and provider-reported usage after a
+response, separate from cumulative conversation totals. Output headroom, bounded
+transport sizes and automatic compaction/retry remain in place.
+
+0.3.1 includes the Weibo/NGA reader fixes, optional NGA image context,
 and the latest onboarding language and sign-in fixes. It retains a focused
 sign-in onboarding flow, separate interface and answer language preferences,
 cleaner personalization settings, and built-in website skills. The interface follows the browser by default. **Automatic** answer
