@@ -33,7 +33,7 @@ test('a single oversized Chinese tool result compacts with bounded summary reque
  const t=transport();let executed=0;const body='中文回复'.repeat(25000)+' FINAL_CONSTRAINT https://fixture.test/t/19';
  const messages=[{role:'user',content:'Research this topic.'},{role:'assistant',content:[{type:'tool-call',toolCallId:'done-1',toolName:'lookup',input:{}}]},{role:'tool',content:[{type:'tool-result',toolCallId:'done-1',toolName:'lookup',output:{type:'json',value:{body}}}]},{role:'user',content:'Continue; keep FINAL_CONSTRAINT.'}];
  const saved=JSON.stringify(messages);
- const bundle=createAgent({settings,fetchImpl:t.fetchImpl,tools:[defineTool({name:'lookup',description:'lookup',inputSchema:z.object({}),execute:()=>{executed++;return null;}})]});
+ const bundle=createAgent({settings,requestBudgetBytes:175000,maxContextMessages:400,fetchImpl:t.fetchImpl,tools:[defineTool({name:'lookup',description:'lookup',inputSchema:z.object({}),execute:()=>{executed++;return null;}})]});
  const result=await drain(bundle,messages);
  assert.ok(t.summaries>=3);assert.equal(executed,0);assert.ok(result.events.some(e=>e.type==='context-compacting'));assert.ok(result.events.some(e=>e.type==='context-summary'&&e.afterBytes<175000));
  assert.equal(JSON.stringify(messages),saved);assert.ok(JSON.stringify(result.response.modelContext).includes('FINAL_CONSTRAINT'));
@@ -43,14 +43,14 @@ test('a single oversized Chinese tool result compacts with bounded summary reque
 test('compaction during a real tool loop keeps complete transcript output and executes the action once',async()=>{
  let normal=0,executed=0;const large={body:'论坛证据'.repeat(25000),source:'https://fixture.test/t/19'};
  const t=transport(()=>++normal===1?sse('',{id:'real-action',type:'function',function:{name:'lookup',arguments:'{}'}}):sse('Finished using the saved evidence.'));
- const result=await drain(createAgent({settings,fetchImpl:t.fetchImpl,tools:[defineTool({name:'lookup',description:'Read fixture',inputSchema:z.object({}),execute:()=>{executed++;return large;}})]}),[{role:'user',content:'Research the current topic.'}]);
+ const result=await drain(createAgent({settings,requestBudgetBytes:175000,maxContextMessages:400,fetchImpl:t.fetchImpl,tools:[defineTool({name:'lookup',description:'Read fixture',inputSchema:z.object({}),execute:()=>{executed++;return large;}})]}),[{role:'user',content:'Research the current topic.'}]);
  assert.equal(executed,1);assert.equal(normal,2);assert.ok(t.summaries>0);
  assert.deepEqual(result.response.messages.find((m:any)=>m.role==='tool')?.content[0].output.value,large);
  assert.ok(result.events.filter(e=>e.type==='tool-call').length===1);assert.ok(result.usage.inputTokens>200);
 });
 test('an oversized first user message compacts without requiring assistant history',async()=>{
  const t=transport();const message='Read this supplied material carefully: '+'研究资料'.repeat(24000)+' FINAL_CONSTRAINT';
- const result=await drain(createAgent({settings,fetchImpl:t.fetchImpl,tools:[]}),[{role:'user',content:message}]);
+ const result=await drain(createAgent({settings,requestBudgetBytes:175000,maxContextMessages:400,fetchImpl:t.fetchImpl,tools:[]}),[{role:'user',content:message}]);
  assert.ok(t.summaries>0);assert.ok(result.events.some(e=>e.type==='context-summary'));
  assert.ok(JSON.stringify(result.response.modelContext).includes('Current request condensed automatically'));
  assert.ok(JSON.stringify(result.response.modelContext).includes('FINAL_CONSTRAINT'));
@@ -58,7 +58,7 @@ test('an oversized first user message compacts without requiring assistant histo
 test('recent image attachments survive compaction and base64 is never summarized as text',async()=>{
  const marker='UNIQUE_PRIVATE_IMAGE_BYTES';const t=transport();
  const history:any[]=[{role:'user',content:[{type:'text',text:'Prior image question'},...Array.from({length:3},()=>({type:'image',mimeType:'image/jpeg',data:marker}))]},{role:'assistant',content:[{type:'text',text:'中文'.repeat(100000)}]},{role:'user',content:'Keep using the attached image.'}];
- const result=await drain(createAgent({settings,fetchImpl:t.fetchImpl,tools:[]}),history);
+ const result=await drain(createAgent({settings,requestBudgetBytes:175000,maxContextMessages:400,fetchImpl:t.fetchImpl,tools:[]}),history);
  const final=t.requests.at(-1);assert.equal(final.messages.flatMap((m:any)=>Array.isArray(m.content)?m.content:[]).filter((p:any)=>p.type==='image_url').length,3);
  for(const req of t.requests.slice(0,-1))assert.ok(!JSON.stringify(req).includes(marker));
  assert.ok(JSON.stringify(result.response.modelContext).includes(marker));
@@ -69,7 +69,7 @@ test('summary failure produces explicit incomplete excerpts and still continues 
   if(JSON.stringify(body).includes('Summarize this browser-agent history')){count++;return Response.json({error:{message:'Temporary summary failure'}},{status:503});}
   assert.ok(JSON.stringify(body).includes('incomplete history excerpts'));return sse('Continuing with explicit gaps.');
  };
- const result=await drain(createAgent({settings,fetchImpl,tools:[]}),[{role:'user',content:'Previous request'},{role:'assistant',content:[{type:'text',text:'历史'.repeat(100000)}]},{role:'user',content:'Continue safely.'}]);
+ const result=await drain(createAgent({settings,requestBudgetBytes:175000,maxContextMessages:400,fetchImpl,tools:[]}),[{role:'user',content:'Previous request'},{role:'assistant',content:[{type:'text',text:'历史'.repeat(100000)}]},{role:'user',content:'Continue safely.'}]);
  assert.equal(count,1);assert.ok(result.events.some(e=>e.type==='context-summary'));assert.ok(!result.events.some(e=>e.type==='error'));
 });
 test('large active skill schemas switch to a bounded help index with authored guidance',()=>{
@@ -86,7 +86,7 @@ test('the gateway is authoritative: a pre-response context rejection compacts an
   assert.ok(textBytes(text)<100000);return sse('Resumed automatically after gateway compaction.');
  };
  const input=[{role:'user',content:'Earlier question'},{role:'assistant',content:[{type:'text',text:'Evidence: https://fixture.test/t/19'}]},{role:'user',content:'Continue.'}];
- const result=await drain(createAgent({settings,fetchImpl,tools:[]}),input);
+ const result=await drain(createAgent({settings,requestBudgetBytes:175000,maxContextMessages:400,fetchImpl,tools:[]}),input);
  assert.equal(normal,2);assert.equal(summaries,1);assert.ok(!result.events.some(e=>e.type==='error'));
  assert.ok(result.events.some(e=>e.type==='context-summary'));assert.ok(JSON.stringify(result.response.modelContext).includes('Resumed automatically'));
 });
@@ -98,14 +98,14 @@ test('a repeated context rejection stops after one retry and unrelated errors ne
    if(body.includes('Summarize this browser-agent history'))return sse('Preserved earlier goal and completed actions.');
    normal++;return Response.json({error:{code:contextFailure?'context_length_exceeded':'too_many_requests',message:contextFailure?'Model context limit exceeded':'Rate limit reached'}},{status:contextFailure?400:429});
   };
-  const result=await drain(createAgent({settings,fetchImpl,tools:[]}),[{role:'user',content:'Question'}]);
+  const result=await drain(createAgent({settings,requestBudgetBytes:175000,maxContextMessages:400,fetchImpl,tools:[]}),[{role:'user',content:'Question'}]);
   assert.equal(normal,contextFailure?2:1);assert.equal(result.events.filter(e=>e.type==='error').length,1);
  }
 });
 test('many tiny messages compact before the gateway message-count limit',async()=>{
  const t=transport();const messages=Array.from({length:420},(_,i)=>i%2?{role:'assistant',content:[{type:'text',text:'ok'}]}:{role:'user',content:'small question'});
  messages.push({role:'user',content:'Continue after the long exchange.'} as any);
- const result=await drain(createAgent({settings,fetchImpl:t.fetchImpl,tools:[]}),messages);
+ const result=await drain(createAgent({settings,requestBudgetBytes:175000,maxContextMessages:400,fetchImpl:t.fetchImpl,tools:[]}),messages);
  assert.ok(t.summaries>0);assert.ok(result.events.some(e=>e.type==='context-summary'));
  assert.ok(t.requests.at(-1).messages.length<10);
 });

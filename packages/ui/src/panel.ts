@@ -1479,7 +1479,7 @@ export type Panel = {
    *  {turns}× · ${cost}` with a tooltip breakdown for input / output /
    *  reasoning / cache. */
   setUsage(usage: import("@xgoose/core").ConversationUsage | null): void;
-  setContextUsage(usage:{textBytes:number;limitBytes:number}|null):void;
+  setContextUsage(usage:{textBytes:number;limitBytes:number}|{tokens:number;contextWindow:number;outputReserve:number;estimated:boolean;model:string}|null):void;
   /** Replace the visible queued-prompts tray. Pass `[]` to hide it. The
    *  panel doesn't own queue state — the content script does — this just
    *  reflects whatever the caller hands us. Each item is rendered as a
@@ -2952,6 +2952,12 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       metricsEl.classList.add("active");
     },
     setContextUsage(usage){
+      if(usage&&'tokens' in usage){
+        if(!Number.isFinite(usage.tokens)||!Number.isFinite(usage.contextWindow)||usage.contextWindow<=0){contextMeter.hidden=true;return;}
+        contextMeter.hidden=false;contextMeter.textContent=`Context ${Math.round(100*usage.tokens/usage.contextWindow)}%`;
+        contextMeter.title=`${usage.model}: ${usage.estimated?'Estimated current input':'Current input'} ${usage.tokens.toLocaleString()} / ${usage.contextWindow.toLocaleString()} tokens; ${usage.outputReserve.toLocaleString()} tokens reserved for output. Includes system instructions, tools and images. Provider limits are authoritative. Cumulative conversation token usage is separate.`;
+        contextMeter.setAttribute('aria-label',contextMeter.title);return;
+      }
       if(!usage||!Number.isFinite(usage.textBytes)||!Number.isFinite(usage.limitBytes)||usage.limitBytes<=0){contextMeter.hidden=true;return;}
       contextMeter.hidden=false;contextMeter.textContent=`Context ${Math.round(100*usage.textBytes/usage.limitBytes)}%`;
       contextMeter.title=`Gateway measured current request: ${usage.textBytes.toLocaleString()} / ${usage.limitBytes.toLocaleString()} UTF-8 bytes. Image bytes are excluded. Conversation token totals are separate.`;

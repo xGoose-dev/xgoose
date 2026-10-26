@@ -1,4 +1,5 @@
-import {requestTextBytes,textBytes,clipBytes,textChunks,omitImageBytes,modelOnlyMessage,collapsedSystem,excerptSummary} from "./contextWindow";
+import {requestTextBytes,requestContextTokens,textBytes,clipBytes,textChunks,omitImageBytes,modelOnlyMessage,collapsedSystem,excerptSummary} from "./contextWindow";
+import {inputTokenBudget,requestByteBudget,OUTPUT_RESERVE_TOKENS} from './contextPolicy';
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { Agent, type AgentMessage, type StreamFn, type AgentContext } from "@earendil-works/pi-agent-core";
 import { streamSimple as openai } from "@earendil-works/pi-ai/api/openai-completions";
@@ -24,6 +25,7 @@ export interface CreateAgentOpts {
   maxSteps?: number;
   contextBudgetChars?: number;
   requestBudgetBytes?: number;
+  maxContextMessages?: number;
   /** Injectable provider stream for deterministic acceptance tests. */
   streamFn?: StreamFn;
 }
@@ -92,10 +94,11 @@ export class PageAgentRuntime {
     let steps = 0;
     const completedMessages: AgentMessage[] = [];
     const summaryUsage: AssistantMessage[] = [];
-    let gatewayBudget=opts.requestBudgetBytes??175000;
+    let gatewayBudget=opts.requestBudgetBytes??requestByteBudget(model.contextWindow);
+    let tokenBudget=inputTokenBudget(model.contextWindow);
     let activeContext:AgentContext|undefined;
     const rawStream: StreamFn = opts.streamFn ?? ((m, context, options) => {
-      const requestOptions = { ...options, apiKey: opts.settings.apiKey, fetch: async (input:any,init:any)=>{const response=await opts.fetchImpl(input,init);const target=Number(response.headers.get("x-xgoose-context-target-bytes"));if(target>=32000&&target<=175000)gatewayBudget=Math.min(gatewayBudget,target);return response;}, maxRetries: 0, maxTokens: options?.maxTokens ?? 4096 };
+      const requestOptions = { ...options, apiKey: opts.settings.apiKey, fetch: async (input:any,init:any)=>{const response=await opts.fetchImpl(input,init);const target=Number(response.headers.get("x-xgoose-context-target-bytes"));if(Number.isFinite(target)&&target>=32000)gatewayBudget=Math.min(gatewayBudget,target);const tokens=Number(response.headers.get('x-xgoose-context-target-tokens'));if(Number.isFinite(tokens)&&tokens>=1024)tokenBudget=Math.min(tokenBudget,tokens);return response;}, maxRetries: 0, maxTokens: options?.maxTokens ?? 4096 };
       if (m.api === "google-generative-ai") {
         // PI rejects its top-level fetch option for Google. The underlying
         // Google SDK supports a per-request transport through httpOptions.
@@ -118,8 +121,9 @@ export class PageAgentRuntime {
         this.modelMessages = context.messages;
         const budget=gatewayBudget;
         const size=requestTextBytes(context.messages,model);
+        const tokens=requestContextTokens(context.messages,model);
         const legacyTrigger=opts.contextBudgetChars!==undefined&&JSON.stringify(context.messages.map(modelOnlyMessage),omitImageBytes).length>opts.contextBudgetChars;
-        if(size<=budget&&!legacyTrigger&&!force&&context.messages.length<400)return;
+        if(size<=budget&&tokens<=tokenBudget&&!legacyTrigger&&!force&&context.messages.length<(opts.maxContextMessages??4800))return;
         await emit({type:"context-compacting",beforeBytes:size});
         signal?.throwIfAborted();
         const system=collapsedSystem(context.messages);
@@ -131,7 +135,7 @@ export class PageAgentRuntime {
         let summaryFailed=false;
         const summarize=async (text:string):Promise<string>=>{
           const summaries:string[]=[];
-          for(const chunk of textChunks(text,60000)){
+          for(const chunk of textChunks(text,Math.min(60000,Math.max(512,Math.floor((tokenBudget-2048)*1.2))))){
             signal?.throwIfAborted();
             if(summaryFailed){summaries.push(clipBytes(chunk,2000));continue;}
             const summaryStream=await rawStream(model,normalizeContext({messages:[{role:"user",timestamp:Date.now(),content:
@@ -155,11 +159,11 @@ export class PageAgentRuntime {
         let summary=older.length?await summarize(originalText):"";
         if(summaryFailed)summary=excerptSummary(older);
         // Preserve the current request and its image attachments separately.
-        if(latestUser&&textBytes(JSON.stringify(latestUser,omitImageBytes))>32000){
+        if(latestUser&&(textBytes(JSON.stringify(latestUser,omitImageBytes))>32000||requestContextTokens([latestUser],model)>tokenBudget*.6)){
           const parts=Array.isArray(latestUser.content)?latestUser.content:[];
           const images=parts.filter((part:any)=>part.type==="image") as any[];
           const condensed=await summarize(JSON.stringify(latestUser,omitImageBytes));
-          latestUser={...latestUser,content:[{type:"text",text:"Current request condensed automatically; exact full text remains in local history.\n"+clipBytes(condensed,20000)},...images]};
+          latestUser={...latestUser,content:[{type:"text",text:"Current request condensed automatically; exact full text remains in local history.\n"+clipBytes(condensed,Math.min(20000,Math.max(512,Math.floor(tokenBudget*.8))))},...images]};
         }
         const recentImages=older.flatMap((message:any)=>Array.isArray(message.content)?message.content.filter((part:any)=>part.type==="image"):[]);
         const latestImages=latestUser&&Array.isArray(latestUser.content)?latestUser.content.filter((part:any)=>part.type==="image").length:0;
@@ -173,7 +177,10 @@ export class PageAgentRuntime {
         if(requestTextBytes(messages,model)>budget){
           (summaryMessage.content as any[])[0].text=marker+clipBytes(summary,8000);
         }
-        if(requestTextBytes(messages,model)>budget)throw new Error("Installed tool documentation exceeds the request budget. Disable oversized custom skills and try again.");
+        for(let limit=4000;requestContextTokens(messages,model)>tokenBudget&&limit>=250;limit=Math.floor(limit/2)){
+          (summaryMessage.content as any[])[0].text=marker+clipBytes(summary,limit);
+        }
+        if(requestTextBytes(messages,model)>budget||requestContextTokens(messages,model)>tokenBudget)throw new Error("Installed tool documentation exceeds the request budget. Disable oversized custom skills and try again.");
         this.modelMessages=messages;
         await emit({type:"context-summary",text:summary,beforeBytes:size,afterBytes:requestTextBytes(messages,model),modelContext:fromPiMessages(messages,true)});
         return {...context,messages};
@@ -188,7 +195,7 @@ export class PageAgentRuntime {
           const source=await rawStream(m,current,options);let retry=false,committed=false;
           for await(const event of source){
             if(event.type==="error"&&!committed&&attempt===0&&activeContext&&/context.{0,35}(?:too (?:large|long)|limit|exceed)|context_length_exceeded|maximum context length/i.test(event.error.errorMessage??"")){
-              gatewayBudget=Math.min(gatewayBudget,120000);
+              tokenBudget=Math.min(tokenBudget,Math.max(16000,requestContextTokens(collapsedSystem(current.messages),model)+4096,Math.floor(requestContextTokens(current.messages,model)*.6)));
               const compacted=await compactContext(activeContext,options?.signal,true);
               if(compacted){activeContext.messages=compacted.messages;this.modelMessages=compacted.messages;current=normalizeContext({messages:compacted.messages as any});retry=true;break;}
             }
@@ -228,6 +235,8 @@ export class PageAgentRuntime {
         const bounded={...context,messages:capContextImages(context.messages)};
         activeContext=bounded;
         const compacted=await compactContext(bounded,signal);
+        const chosen=compacted??bounded;
+        await emit({type:'context-usage',tokens:requestContextTokens(chosen.messages,model),contextWindow:model.contextWindow,outputReserve:OUTPUT_RESERVE_TOKENS,estimated:true,model:model.id});
         if(compacted){activeContext=compacted;return {context:compacted};}
         return {context:bounded};
       },
@@ -247,6 +256,11 @@ export class PageAgentRuntime {
       if (event.type === "tool_execution_start") await emit({ type: "tool-call", toolCallId: event.toolCallId, toolName: event.toolName, input: event.args });
       if (event.type === "tool_execution_end") await emit({ type: event.isError ? "tool-error" : "tool-result", toolCallId: event.toolCallId, toolName: event.toolName, output: event.result.details ?? event.result, error: event.isError ? event.result.content.filter((p:{type:string})=>p.type==="text").map((p:{text?:string})=>p.text).join("\n") : undefined });
       if (event.type === "message_end") completedMessages.push(event.message);
+      if(event.type==='message_end'&&event.message.role==='assistant'&&event.message.stopReason!=='error'){
+        const usage=event.message.usage;
+        const tokens=usage.input+usage.cacheRead+usage.cacheWrite+usage.output;
+        if(tokens>0)await emit({type:'context-usage',tokens,contextWindow:model.contextWindow,outputReserve:OUTPUT_RESERVE_TOKENS,estimated:false,model:model.id});
+      }
       if (event.type === "message_end") await emit({ type: "message-end", messages: fromPiMessages([event.message]) });
       if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error") await emit({ type: "error", error: event.message.errorMessage ?? "Provider stream failed" });
     });

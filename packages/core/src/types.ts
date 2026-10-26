@@ -21,6 +21,8 @@ export type Provider = z.infer<typeof ProviderSchema>;
  * for their own tools / UI.
  */
 export interface CoreSettings {
+  /** Optional authoritative metadata supplied by a host/custom endpoint. */
+  contextWindowTokens?: number;
   provider: Provider;
   apiKey: string;
   model: string;

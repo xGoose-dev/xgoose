@@ -43,7 +43,7 @@ try{
  await page.locator('.panel').screenshot({path:'artifacts/context-compaction/continued.png'});
  await page.locator('.btn-new').click();await page.locator('.in-text').fill('Force gateway rejection once, then continue.');await page.locator('.btn-send').click();
  await page.waitForFunction(()=>document.querySelector('#xgoose-root').shadowRoot.textContent.includes('Gateway recovery completed.'));
- await page.locator('.context-meter').filter({hasText:'Context 30%'}).waitFor();assert.match(await page.locator('.context-meter').getAttribute('title'),/57,000 \/ 190,000 UTF-8 bytes/);
+ await page.locator('.context-meter').waitFor();assert.match(await page.locator('.context-meter').getAttribute('title'),/Estimated current input.*1,050,000 tokens/);assert.doesNotMatch(await page.locator('.context-meter').getAttribute('title'),/UTF-8 bytes/);
  assert.equal(gatewayRequests,2);assert.equal(await page.locator('.msg-err').count(),0);
  console.log(JSON.stringify({passed:true,largeChineseToolResult:true,visibleCompactionStatus:true,boundedWireRequests:true,boundedSummaryChunks:true,completeLocalHistory:true,compactedModelHistory:true,gatewayRejectionAutoRetry:true,noToolReplay:researchRequests===2,syntheticOnly:true,requests:requests.length}));
 }finally{await context.close();server.close();await rm(profile,{recursive:true,force:true});}

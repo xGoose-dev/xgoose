@@ -30,7 +30,7 @@ import { track,failureReason } from "@/shared/analytics";
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<Provider, string> = {
   ...CORE_DEFAULT_MODEL_BY_PROVIDER,
-  "xgoose-hosted": "luna",
+  "xgoose-hosted": "claude-haiku-5-5",
 };
 
 const SETTINGS_KEY = "xgoose.settings";

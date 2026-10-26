@@ -778,7 +778,7 @@ async function bootstrap(): Promise<void> {
       // Reminder content changes (navigation, new todos, new memory) DO
       // invalidate the whole prefix — but that was already true before, and
       // those events are rare relative to "user types another question".
-      const bundle = await createAgent({ settings, reminder, onProviderResponse: async event=>{if(event.contextTextBytes!==undefined&&event.contextLimitBytes)panel.setContextUsage({textBytes:event.contextTextBytes,limitBytes:event.contextLimitBytes});await record(event);} });
+      const bundle = await createAgent({ settings, reminder, onProviderResponse: async event=>{await record(event);} });
       bundle.agent.subscribe(async event => {
         if (event.type === "text-delta" || event.type === "reasoning-delta") return;
         await record(event);
@@ -790,6 +790,10 @@ async function bootstrap(): Promise<void> {
 
       for await (const part of result.fullStream as AsyncIterable<any>) {
         switch (part.type) {
+          case 'context-usage': {
+            panel.setContextUsage(part);
+            break;
+          }
           case "context-compacting": {
             panel.setLoadingStatus("Compacting conversation…");
             break;
