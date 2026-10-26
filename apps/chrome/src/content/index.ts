@@ -261,6 +261,8 @@ async function bootstrap(): Promise<void> {
   let currentConvoTitle = "";
   let abortController: AbortController | null = null;
   let running = false;
+  let lifecycleInterrupted = false;
+  const interruptionNotice = "Interrupted before completion. Received content was saved. Send another message to continue.";
   let runSettled: Promise<void> = Promise.resolve();
   let resolveRunSettled: (() => void) | undefined;
   async function stopBeforeConversationSwitch() {
@@ -437,18 +439,25 @@ async function bootstrap(): Promise<void> {
     persistCurrentConvo([...conversationMessages, ...buildCapturedAssistantTurn({
       text: inFlight.fullText, toolNames: inFlight.toolNames,
       toolInputs: inFlight.toolInputs, toolOutputs: inFlight.toolOutputs,
-    })]);
+    }), ...(isSafari ? [{role:"xgoose-error",content:interruptionNotice}] : [])]);
   }, 1000);
+  function interruptPageRun(reason:string):void {
+    if(!isSafari || !running || lifecycleInterrupted)return;
+    lifecycleInterrupted=true;
+    snapshotInFlightToMessages();
+    conversationMessages.push({role:"xgoose-error",content:interruptionNotice});
+    panel.addErrorMessage(interruptionNotice);
+    queuedMessages.length=0;panel.setQueuedMessages([]);
+    persistCurrentConvo();
+    abortController?.abort(new Error(reason));
+  }
   window.addEventListener("pagehide", () => {
+    interruptPageRun("document_closed");
     window.clearInterval(checkpoint);
     abortController?.abort(new Error("document_closed"));
   }, { once: true });
   if(isSafari)document.addEventListener("visibilitychange",()=>{
-    if(document.visibilityState!=="hidden" || !running)return;
-    snapshotInFlightToMessages();
-    conversationMessages.push({role:"xgoose-error",content:"Interrupted when Safari left the foreground. Send another message to continue."});
-    persistCurrentConvo();
-    abortController?.abort(new Error("safari_suspended"));
+    if(document.visibilityState==="hidden")interruptPageRun("safari_suspended");
   });
 
   panel.onNew(async () => {
@@ -685,6 +694,7 @@ async function bootstrap(): Promise<void> {
     );
     panel.showThinking(opts.hidden ? "Continuing on new page…" : "Thinking…");
     running = true;
+    lifecycleInterrupted = false;
     runSettled = new Promise<void>(resolve => { resolveRunSettled = resolve; });
     abortController = new AbortController();
 
@@ -966,7 +976,12 @@ async function bootstrap(): Promise<void> {
 
       const response = await Promise.resolve(result.response).catch(() => null);
       const usage = await Promise.resolve(result.usage).catch(() => null);
-      if (response?.messages) {
+      if (isSafari && lifecycleInterrupted) {
+        // The lifecycle snapshot already contains the received partial turn.
+        // Some providers resolve a canonical response after abort; appending it
+        // again would duplicate the preserved text and tool results.
+        inFlight=null;snapshotted=true;
+      } else if (response?.messages) {
         renderMissingToolCardsFromMessages(response.messages, toolCards);
         conversationMessages.push(...response.messages);
         modelContext = response.modelContext;
@@ -1015,7 +1030,7 @@ async function bootstrap(): Promise<void> {
         // a `result.usage` for them. We still bump the turn counter (so
         // history math stays consistent) but can't credit tokens or cost.
         accumulateUsage(null);
-        panel.setStatus(wasNav ? "Navigation stopped the turn" : "Stopped");
+        panel.setStatus(lifecycleInterrupted ? "Interrupted — send another message to continue" : wasNav ? "Navigation stopped the turn" : "Stopped");
         track(wasNav ? "chat_turn_navigated" : "chat_turn_stopped_by_user", {
           flow_id:turnFlow,duration_ms:Date.now()-turnStarted,provider:getSettings().provider,
           steps: stepCount,
