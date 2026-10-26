@@ -49,4 +49,4 @@ void checkPermission();
 document.querySelectorAll<HTMLAnchorElement>("[data-start-site]").forEach(link=>link.addEventListener("click",()=>track("onboarding_website_opened",{target:link.dataset.startSite!})));
 
 void mountAccountSection().catch(()=>{document.querySelector("#accountState")!.textContent="Sign-in could not load. Open Settings to try again.";});
-void mountAnswerLanguage(document.querySelector<HTMLSelectElement>("#answerLanguage")!,document.querySelector<HTMLElement>("#answerLanguageStatus"));
+void mountAnswerLanguage(document.querySelector<HTMLSelectElement>("#answerLanguage")!,document.querySelector<HTMLElement>("#answerLanguageStatus"),{syncInterface:true});
