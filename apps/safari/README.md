@@ -1,7 +1,7 @@
 # xgoose Safari for iOS
 
 Fresh SwiftUI host and Safari Web Extension, built from the same agent, content script,
-UI, page controller and packaged skills as Chrome 0.3.2. iOS/iPadOS 18 or newer.
+UI, page controller and packaged skills as the current Chrome main (0.3.4). iOS/iPadOS 18 or newer.
 
 The existing App Store identity is retained: app 6770188718, app bundle
 `org.xgoose.xgoose-safari`, extension `.Extension`, team `2L6B6ZA57F`, and App Group

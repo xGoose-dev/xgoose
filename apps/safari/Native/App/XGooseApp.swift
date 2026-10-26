@@ -304,6 +304,6 @@ struct HelpView:View {
             }
             ShareLink(item:text) {Text(model.t("Export previous conversation archive","导出旧会话存档","Exportar conversaciones anteriores"))}
         }
-        Text("xgoose 1.6 · Core 0.3.2").foregroundStyle(.secondary)
+        Text("xgoose 1.6 · Core 0.3.4").foregroundStyle(.secondary)
     }.navigationTitle(model.t("Help & privacy","帮助与隐私","Ayuda y privacidad"))}
 }
