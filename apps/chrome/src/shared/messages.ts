@@ -19,6 +19,7 @@ import type { Provider, RegistrySkill, UserSkill } from "./types";
 export type HeaderBag = Record<string, string>;
 
 export type MessageMap = {
+  'sw:nga_images': {request:{urls:string[]};response:import('@/background/ngaImages').NgaImageResult[]};
   "sw:user_scripts_status": {request:void;response:{enabled:boolean}};
   "sw:open_user_scripts_setup": {request:{guide?:boolean};response:void};
   "sw:substack_read": {

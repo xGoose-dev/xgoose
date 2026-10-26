@@ -7,7 +7,7 @@ import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 const sha=text=>createHash('sha256').update(text).digest('hex');
-const cases=[['v2ex','v2ex',20,'0.2.1'],['weibo','weibo',11,'0.2.1'],['nga','nga',8,'0.1.1'],['reddit','reddit',13,'0.1.1']];
+const cases=[['v2ex','v2ex',20,'0.2.1'],['weibo','weibo',11,'0.2.2'],['nga','nga',8,'0.1.3'],['reddit','reddit',13,'0.1.1']];
 const profile=await mkdtemp(resolve(tmpdir(),'xgoose-marketplace-'));
 const dist=resolve('apps/chrome/dist');
 const context=await chromium.launchPersistentContext(profile,{
@@ -45,7 +45,7 @@ try{
     const stored=await installer.evaluate(({slug})=>chrome.runtime.sendMessage({kind:'sw:get_user_skill',payload:{name:slug}}),{slug});
     assert.ok(stored?.identity,JSON.stringify(stored));assert.equal(stored.identity.skillId,detail.id);
     assert.equal(stored.identity.authorId,detail.owner.id);
-    assert.equal(stored.sourceSha,sha(source));assert.equal(stored.actions.length,4);
+    assert.equal(stored.sourceSha,sha(source));assert.equal(stored.actions.length,slug==='nga'?5:4);
     assert.equal(sha(stored.bundled),stored.bundleSha);
     report.push({slug,version:release.version,functions:count,sourceSha:sha(source),installed:true});
     console.log(`PASS published metadata + download + catalog installation: ${slug} (${count} functions)`);

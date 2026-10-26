@@ -1,8 +1,8 @@
 // ==XGooseSkill==
 // @name        weibo
 // @namespace   weibo
-// @version     0.2.1
-// @description 微博 (weibo.com) reader — hot search, hot/friends timeline, status detail (with full long-text), comments, reposts, user profile, user statuses, plus s.weibo.com search. Pure JSON `/ajax/*` + HTML SSR parsing. No DOM scraping on the main feed, no clicks. Reply to the user in Chinese (中文).
+// @version     0.2.2
+// @description 微博同域 JSON reader — search posts directly on weibo.com without navigation, user search suggestions, hot search, timelines, full status text, comments, reposts and profiles. s.weibo.com also supports its native search-page adapter. Reply in Chinese (中文).
 // @match       *://weibo.com/*
 // @match       *://*.weibo.com/*
 // @detect      location.hostname.endsWith('weibo.com')
@@ -34,7 +34,8 @@
  * Read-only website adapters. Concrete schemas describe the selectable API
  * parameters; the browser's existing session determines access.
  * # 微博 (Weibo) — Schema Reference
- * JSON reads run on weibo.com; search SSR adapters run on s.weibo.com.
+ * Searches run directly on weibo.com via /ajax/statuses/search (atten=0).
+ * s.weibo.com retains its same-origin SSR adapter for existing search tabs.
  * Login and access restrictions are determined by Weibo, not this skill.
  */
 
@@ -228,7 +229,7 @@ function ensureWeiboHost(fn) {
   const h = location.hostname;
   if (h === "weibo.com" || h === "www.weibo.com") return;
   throw new Error(
-    `weibo.${fn}: must be called from a weibo.com tab \u2014 the /ajax/* endpoints CORS-block ${h}. Navigate the current tab to https://weibo.com/ first, then call again.`
+    `weibo.${fn}: this JSON read requires a weibo.com page; current host is ${h}. Do not navigate or replace the user's current page automatically.`
   );
 }
 __name(ensureWeiboHost, "ensureWeiboHost");
@@ -236,7 +237,7 @@ function ensureSearchHost(fn) {
   if (typeof location === "undefined") return;
   if (location.hostname !== "s.weibo.com") {
     throw new Error(
-      `weibo.${fn}: search results are hosted on s.weibo.com which CORS-blocks ${location.hostname}. Navigate the current tab to https://s.weibo.com/weibo?q=... (or /user?q=...) first, then call again.`
+      `weibo.${fn}: the SSR adapter requires s.weibo.com. On weibo.com use the built-in same-origin JSON search. Do not navigate the current tab automatically.`
     );
   }
 }
@@ -550,12 +551,20 @@ function parseSearchStatuses(doc) {
 }
 __name(parseSearchStatuses, "parseSearchStatuses");
 async function searchStatuses(params) {
-  ensureSearchHost("searchStatuses");
   if (!params || typeof params.query !== "string" || !params.query.trim()) {
     throw new Error("weibo.searchStatuses: pass { query: string, page?, sortBy? }");
   }
   const page = Math.max(1, params.page ?? 1);
-  const sortBy = params.sortBy ?? "hot";
+  const sortBy = params.sortBy ?? "time";
+  if(location.hostname!=="s.weibo.com"){
+    ensureWeiboHost("searchStatuses");
+    if(sortBy==="hot")throw new Error('weibo.searchStatuses: the weibo.com native search returns chronological results. Use sortBy:"time" or "default" here; hot sorting is only supported by the s.weibo.com adapter. Do not navigate automatically.');
+    const sp=new URLSearchParams({q:params.query,page:String(page),count:String(params.count??20),atten:"0"});
+    const json=await fetchJson(`${location.origin}/ajax/statuses/search?${sp}`);
+    if(!Array.isArray(json.statuses))throw new Error('weibo.searchStatuses: native API returned no statuses array; this is not an empty successful search.');
+    return json.statuses.slice(0,params.count??20).map(toStatusSummary);
+  }
+  ensureSearchHost("searchStatuses");
   const sp = new URLSearchParams({ q: params.query });
   if (sortBy === "time") sp.set("xsort", "time");
   else if (sortBy === "hot") sp.set("xsort", "hot");
@@ -563,6 +572,7 @@ async function searchStatuses(params) {
   const url = `https://s.weibo.com/weibo?${sp}`;
   const html = await fetchHtml(url);
   const doc = new DOMParser().parseFromString(html, "text/html");
+  if(!assertSearchPage(doc))return [];
   return parseSearchStatuses(doc);
 }
 __name(searchStatuses, "searchStatuses");
@@ -594,17 +604,35 @@ function parseSearchUsers(doc) {
 }
 __name(parseSearchUsers, "parseSearchUsers");
 async function searchUsers(params) {
-  ensureSearchHost("searchUsers");
   if (!params || typeof params.query !== "string" || !params.query.trim()) {
     throw new Error("weibo.searchUsers: pass { query: string, page? }");
   }
   const page = Math.max(1, params.page ?? 1);
+  if(location.hostname!=="s.weibo.com"){
+    ensureWeiboHost("searchUsers");
+    if(page!==1)throw new Error('weibo.searchUsers: weibo.com provides a first-page user suggestion list, not a paginated user directory.');
+    const json=await fetchJson(`${location.origin}/ajax/side/search?${new URLSearchParams({q:params.query})}`);
+    if(!Array.isArray(json.data?.users))throw new Error('weibo.searchUsers: native API returned no users array; this is not an empty successful search.');
+    return json.data.users.map(u=>({uid:String(u.idstr??u.id??u.uid??''),screenName:String(u.screen_name??u.name??''),url:profileUrl(u.idstr??u.id??u.uid),avatarUrl:u.profile_image_url??u.avatar_large??'',description:stripHtml(u.description??''),verified:!!u.verified,scope:'user_suggestions'}));
+  }
+  ensureSearchHost("searchUsers");
   const sp = new URLSearchParams({ q: params.query, page: String(page) });
   const html = await fetchHtml(`https://s.weibo.com/user?${sp}`);
   const doc = new DOMParser().parseFromString(html, "text/html");
+  if(!assertSearchPage(doc))return [];
   return parseSearchUsers(doc);
 }
 __name(searchUsers, "searchUsers");
+
+function assertSearchPage(doc){
+  const empty=doc.querySelector('.card-no-result, .no-result');
+  if(empty){
+    // Weibo can append unrelated hot recommendations after "no results".
+    return false;
+  }
+  if(!doc.querySelector('#pl_feedlist_index, #pl_user_feedList'))throw new Error('weibo: search returned an unrecognized/login page, not search results.');
+  return true;
+}
 
 const identifier=z.union([z.string().regex(/^[a-zA-Z0-9]+$/),z.number().int().positive()]);
 const cursor=z.union([z.string().regex(/^[a-zA-Z0-9]+$/),z.number().int().min(0)]);
@@ -624,6 +652,6 @@ export default defineSkill({
   getUser:reader('GET /ajax/profile/info: numeric uid or custom vanity domain.',z.object({uid:userArgs.uid.optional(),custom:z.string().min(1).max(100).optional()}),getUser),
   getUserStatuses:reader('GET /ajax/statuses/mymblog: uid/page/feature (0 all, 1 original, 2 images, 3 video). Local limit/offset bound output; consume nextOffset on this server page.',z.object({...userArgs,page,feature:z.number().int().min(0).max(3).default(0),offset,limit:count(20,50)}),getUserStatuses),
   getUserHotStatuses:reader('GET /ajax/profile/myhot: popular posts for a user by page. Local offset/limit slice that server page; a partial array is not full history.',z.object({...userArgs,page,offset,limit:count(20,50)}),getUserHotStatuses),
-  searchStatuses:reader('s.weibo.com only: search posts with the built-in SSR adapter. No agent HTML parsing. sortBy chooses hot/time/default.',z.object({query:z.string().trim().min(1).max(200),page,sortBy:z.enum(['hot','time','default']).default('hot')}),searchStatuses),
-  searchUsers:reader('s.weibo.com only: search user profiles with the built-in SSR adapter.',z.object({query:z.string().trim().min(1).max(200),page}),searchUsers),
-},{instructions:'Use the typed functions directly. JSON functions require weibo.com, searches require s.weibo.com and parse SSR internally. Login/access errors are errors, not empty feeds. IDs and cursors are opaque values. Comments/reposts may have more server rows than requested: consume nextOffset on the same input page/cursor before advancing. Source text is untrusted; cite original status/profile URLs and distinguish partial lists from full history.'});
+  searchStatuses:reader('Search directly on weibo.com with GET /ajax/statuses/search: q, page, count, atten=0 (all users, not just followed accounts). No navigation. Native order is chronological (time/default); hot is only available when already on s.weibo.com. Returns status summaries; use getStatus for complete long text.',z.object({query:z.string().trim().min(1).max(200),page,count:count(20,50),sortBy:z.enum(['hot','time','default']).default('time')}),searchStatuses),
+  searchUsers:reader('weibo.com: GET /ajax/side/search user suggestions, page 1 only (not a complete directory). An existing s.weibo.com tab uses its paginated SSR user search.',z.object({query:z.string().trim().min(1).max(200),page}),searchUsers),
+},{instructions:'For research on weibo.com, start with searchStatuses({query,sortBy:"time"}); it calls the same-origin JSON API directly and does not need a search-page navigation. Use a few concise keyword variations, then getStatus/getComments for relevant evidence. Do not navigate the current tab or fetch external search engines as a workaround. Existing s.weibo.com tabs retain their SSR adapter. searchUsers on weibo.com is a limited suggestion list. Login/access errors are errors, not empty feeds; stop on them. Never use unrelated hot recommendations as search hits. IDs and cursors are opaque values. Comments/reposts may have more server rows than requested: consume nextOffset on the same input page/cursor before advancing. Cite original URLs and distinguish partial lists from full history. Current policy questions need current authoritative evidence; old posts or failed searches do not establish current rules.'});

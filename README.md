@@ -10,6 +10,15 @@ skills. The interface follows the browser by default. **Automatic** answer
 language adds no language directive to AI context; only an explicit preferred
 answer language sets a default. Requests in chat take priority.
 
+Weibo 0.2.2 searches directly on `weibo.com` through the native JSON search API.
+NGA 0.1.3 recovers once from malformed topic JSON and adds **看图概括此帖**.
+`nga.getTopic({tid, includeImages:true, maxImages:3})` can attach images from the
+selected posts to the model. Text-only reading remains the default. Images carry
+their original post/floor links, are limited to three per call and normalized
+to bounded JPEGs. Recent images survive follow-up turns; diagnostic transcripts
+omit their bytes. Older hosts that only return image URLs must say that the
+images were not actually seen.
+
 Getting started includes email sign-in, an illustrated optional User Scripts
 setup, and eight example websites. Its language selector sets the interface and
 answer preference together, translating the page immediately. Settings keeps

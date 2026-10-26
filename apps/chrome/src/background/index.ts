@@ -2,6 +2,7 @@ import {executableSkillsForUrl, injectPackagedSkills, reconcileSkills, skillSnap
 import { installSkillUpdateChecks, checkSkillUpdates, skillUpdateState, updateSkill } from "./skillUpdates";
 import { hostedStatus } from "./hosted";
 import { readSubstackPublication } from "./substackReader";
+import { readNgaImages } from './ngaImages';
 import { skillCatalog, installCatalogSkill } from "./catalog";
 import { recordJournal, getConsent, setConsent } from "./transcripts";
 import { sessionCommand } from "./sessionDb";
@@ -66,6 +67,7 @@ chrome.runtime.onInstalled.addListener(({reason}) => {
 });
 
 registerRouter({
+  'sw:nga_images': (request,sender)=>readNgaImages(request.urls,sender.url??''),
   "sw:user_scripts_status": async () => {try{await chrome.userScripts.getScripts();return {enabled:true};}catch{return {enabled:false};}},
   "sw:open_user_scripts_setup": async ({guide}) => {await chrome.tabs.create({url:guide?chrome.runtime.getURL("onboarding.html"):`chrome://extensions/?id=${chrome.runtime.id}`});},
   "sw:skill_updates": ({check}) => check ? checkSkillUpdates() : skillUpdateState(),

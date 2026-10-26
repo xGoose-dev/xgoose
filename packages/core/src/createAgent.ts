@@ -29,13 +29,18 @@ export interface CreateAgentOpts {
 }
 export type AgentBundle = { agent: PageAgentRuntime; tools: Record<string, XgooseBuiltTool> };
 const emptyUsage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
+function capContextImages(messages:AgentMessage[]):AgentMessage[] {
+  let left=8;
+  return messages.slice().reverse().map(message=>!Array.isArray(message.content)?message:{...message,content:message.content.slice().reverse().map(part=>part.type==='image'&&left--<=0?{type:'text' as const,text:'[Earlier source image omitted from model context; read it again if needed.]'}:part).reverse()} as AgentMessage).reverse();
+}
 
 export function toPiMessages(messages: ChatMessage[], model: Model<Api>): AgentMessage[] {
   // Keep recent image context bounded without deleting local conversation history.
   let imagesLeft=8;
   const bounded=messages.slice().reverse().map(message=>{
-    if(message.role!=="user"||!Array.isArray(message.content))return message;
-    const content=message.content.slice().reverse().map((part:any)=>part?.type==="image"?(imagesLeft-->0?part:{type:"text",text:"[Earlier image omitted from model context. Ask the user to reattach it if needed.]"}):part).reverse();
+    if(!["user","tool"].includes(message.role)||!Array.isArray(message.content))return message;
+    const boundImage=(part:any)=>part?.type==="image"?(imagesLeft-->0?part:{type:"text",text:"[Earlier image omitted from model context. Ask the user to reattach it if needed.]"}):part;
+    const content=message.content.slice().reverse().map((part:any)=>part?.type==='tool-result'&&Array.isArray(part.images)?{...part,images:part.images.slice().reverse().map(boundImage).reverse()}:boundImage(part)).reverse();
     return {...message,content};
   }).reverse();
   return bounded.flatMap((m): AgentMessage[] => {
@@ -43,7 +48,7 @@ export function toPiMessages(messages: ChatMessage[], model: Model<Api>): AgentM
     if (m.role === "user") return [{ role: "user", content, timestamp: m.timestamp ?? Date.now() }];
     if (m.role === "system") return [{ role: "system", content: typeof m.content === "string" ? m.content : content.map((p: any) => p.text ?? "").join("\n"),timestamp:m.timestamp??0 } as AgentMessage];
     if (m.role === "assistant") return [{ role: "assistant", content: content.map((p: any) => p.type === "tool-call" ? { type: "toolCall", id: p.toolCallId, name: p.toolName, arguments: p.input, ...(p.thoughtSignature ? {thoughtSignature:p.thoughtSignature} : {}) } : p.type === "reasoning" ? { type: "thinking", thinking: p.text, ...(p.thinkingSignature ? {thinkingSignature:p.thinkingSignature} : {}) } : p), api: m.api ?? model.api, provider: m.provider ?? model.provider, model: m.model ?? model.id, usage: emptyUsage(), stopReason: "stop", timestamp: m.timestamp ?? Date.now() } as AssistantMessage];
-    if (m.role === "tool") return content.map((p: any) => ({ role: "toolResult", toolCallId: p.toolCallId, toolName: p.toolName, content: [{ type: "text", text: typeof p.output?.value === "string" ? p.output.value : JSON.stringify(p.output?.value ?? p.output ?? null) }], isError: p.output?.type === "error-text", timestamp: m.timestamp ?? Date.now() }));
+    if (m.role === "tool") return content.map((p: any) => ({ role: "toolResult", toolCallId: p.toolCallId, toolName: p.toolName, content: [{ type: "text", text: typeof p.output?.value === "string" ? p.output.value : JSON.stringify(p.output?.value ?? p.output ?? null) },...(p.images??[])], isError: p.output?.type === "error-text", timestamp: m.timestamp ?? Date.now() }));
     return [];
   });
 }
@@ -51,7 +56,7 @@ export function fromPiMessages(messages: AgentMessage[], forModel = false): Chat
   return messages.flatMap((m): ChatMessage[] => {
     if (m.role === "user") return [{ role: "user", content: m.content }];
     if (m.role === "assistant") return [{ role: "assistant", api:m.api, provider:m.provider, model:m.model, content: m.content.map(p => p.type === "toolCall" ? { type: "tool-call", toolCallId: p.id, toolName: p.name, input: p.arguments, ...(p.thoughtSignature ? {thoughtSignature:p.thoughtSignature} : {}) } : p.type === "thinking" ? { type: "reasoning", text: p.thinking, ...(p.thinkingSignature ? {thinkingSignature:p.thinkingSignature} : {}) } : p) }];
-    if (m.role === "toolResult") return [{ role: "tool", content: [{ type: "tool-result", toolCallId: m.toolCallId, toolName: m.toolName, output: { type: m.isError ? "error-text" : "json", value: (!forModel ? m.details : undefined) ?? m.content.map(p => p.type === "text" ? p.text : "[image]").join("\n") } }] }];
+    if (m.role === "toolResult") return [{ role: "tool", content: [{ type: "tool-result", toolCallId: m.toolCallId, toolName: m.toolName, output: { type: m.isError ? "error-text" : "json", value: (!forModel && !m.isError ? m.details : undefined) ?? m.content.map(p => p.type === "text" ? p.text : "[image]").join("\n") },...(m.content.some(p=>p.type==='image')?{images:m.content.filter(p=>p.type==='image')}:{}) }] }];
     return [];
   });
 }
@@ -156,7 +161,7 @@ export class PageAgentRuntime {
           const condensed=await summarize(JSON.stringify(latestUser,omitImageBytes));
           latestUser={...latestUser,content:[{type:"text",text:"Current request condensed automatically; exact full text remains in local history.\n"+clipBytes(condensed,20000)},...images]};
         }
-        const recentImages=older.filter(message=>message.role==="user").flatMap((message:any)=>Array.isArray(message.content)?message.content.filter((part:any)=>part.type==="image"):[]);
+        const recentImages=older.flatMap((message:any)=>Array.isArray(message.content)?message.content.filter((part:any)=>part.type==="image"):[]);
         const latestImages=latestUser&&Array.isArray(latestUser.content)?latestUser.content.filter((part:any)=>part.type==="image").length:0;
         const imageSlots=Math.max(0,8-latestImages);
         const preservedImages=imageSlots?recentImages.slice(-imageSlots):[];
@@ -220,9 +225,11 @@ export class PageAgentRuntime {
       toolExecution: "sequential",
       streamFn: streamProvider,
       prepareRequest: async ({context},signal)=>{
-        activeContext=context;
-        const compacted=await compactContext(context,signal);
+        const bounded={...context,messages:capContextImages(context.messages)};
+        activeContext=bounded;
+        const compacted=await compactContext(bounded,signal);
         if(compacted){activeContext=compacted;return {context:compacted};}
+        return {context:bounded};
       },
       finishTurn: () => ++steps >= (opts.maxSteps ?? 50) ? { action: "end" } : undefined,
     });
@@ -238,7 +245,7 @@ export class PageAgentRuntime {
         if (e.type === "thinking_end") await emit({ type: "reasoning-end" });
       }
       if (event.type === "tool_execution_start") await emit({ type: "tool-call", toolCallId: event.toolCallId, toolName: event.toolName, input: event.args });
-      if (event.type === "tool_execution_end") await emit({ type: event.isError ? "tool-error" : "tool-result", toolCallId: event.toolCallId, toolName: event.toolName, output: event.result.details ?? event.result, error: event.isError ? event.result.content : undefined });
+      if (event.type === "tool_execution_end") await emit({ type: event.isError ? "tool-error" : "tool-result", toolCallId: event.toolCallId, toolName: event.toolName, output: event.result.details ?? event.result, error: event.isError ? event.result.content.filter((p:{type:string})=>p.type==="text").map((p:{text?:string})=>p.text).join("\n") : undefined });
       if (event.type === "message_end") completedMessages.push(event.message);
       if (event.type === "message_end") await emit({ type: "message-end", messages: fromPiMessages([event.message]) });
       if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error") await emit({ type: "error", error: event.message.errorMessage ?? "Provider stream failed" });
