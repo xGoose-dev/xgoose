@@ -4,6 +4,8 @@ import {createModel} from '../packages/core/src/model.ts';
 import {createAgent} from '../packages/core/src/createAgent.ts';
 import {estimateTextTokens,requestContextTokens} from '../packages/core/src/contextTokens.ts';
 import {modelContextWindow,inputTokenBudget} from '../packages/core/src/contextPolicy.ts';
+import {defineTool} from '../packages/core/src/tools/buildTool.ts';
+import {z} from 'zod';
 const settings={provider:'openai-compat' as const,model:'luna',baseUrl:'https://fixture.invalid',apiKey:'fixture',thinking:false};
 function response(text:string){return new Response(`data: ${JSON.stringify({choices:[{index:0,delta:{role:'assistant',content:text},finish_reason:null}]})}\n\ndata: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`,{headers:{'content-type':'text/event-stream'}});}
 async function run(model:string,text:string){
@@ -55,4 +57,33 @@ test('large-window compaction uses bounded large batches instead of dozens of le
  const result=await bundle.agent.stream({messages:[{role:'user',content:'Research earlier evidence'},{role:'assistant',content:[{type:'text',text:'evidence '.repeat(180000)}]},{role:'user',content:'Continue FINAL_GOAL'}]});
  for await(const event of result.fullStream)events.push(event);
  assert.equal(sizes.length,2);assert.ok(sizes.some(size=>size>1_000_000));assert.ok(sizes.every(size=>size<1_220_000));assert.ok(!events.some(e=>e.type==='error'));
+});
+
+for (const explicitCap of [undefined, 175000]) test(`successful gateway policy replaces a legacy cap; explicit host cap=${explicitCap}`, async () => {
+ let normal=0,summaries=0,reads=0;
+ const events:any[]=[];
+ const bundle=createAgent({settings,requestBudgetBytes:explicitCap,tools:[defineTool({
+   name:'read_list',description:'Read independent source data',inputSchema:z.object({}),
+   execute:()=>({page:++reads,text:'evidence '.repeat(15000)}),
+ })],fetchImpl:async(_input,init)=>{
+   const body=JSON.parse(String(init?.body));
+   if(JSON.stringify(body).includes('Summarize this browser-agent history')){summaries++;return response('Two list pages were read. Preserve both results and answer with partial coverage.');}
+   normal++;
+   const tool=normal<=2;
+   const delta=tool?{role:'assistant',tool_calls:[{index:0,id:`list-${normal}`,type:'function',function:{name:'read_list',arguments:'{}'}}]}:{role:'assistant',content:'Useful available findings.'};
+   return new Response(`data: ${JSON.stringify({choices:[{index:0,delta,finish_reason:null}]})}\n\ndata: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:tool?'tool_calls':'stop'}]})}\n\ndata: [DONE]\n\n`,{headers:{
+     'content-type':'text/event-stream',
+     'x-xgoose-context-window-tokens':'1050000',
+     'x-xgoose-context-target-tokens':String(inputTokenBudget(1050000)),
+     'x-xgoose-context-target-bytes':normal===1?'180000':'7980000',
+   }});
+ }});
+ const run=await bundle.agent.stream({messages:[{role:'user',content:'Use both accessible list pages and answer from available information.'}]});
+ for await(const event of run.fullStream)events.push(event);
+ assert.equal(normal,3);assert.equal(reads,2);
+ assert.equal(summaries>0,explicitCap!==undefined);
+ const compact=events.find(event=>event.type==='context-compacting');
+ if(explicitCap!==undefined){assert.equal(compact.reason,'byte_limit');assert.equal(compact.requestBudgetBytes,explicitCap);assert.equal(compact.contextWindowTokens,1050000);}
+ else assert.equal(compact,undefined,'The old 180KB policy must not latch into subsequent successful requests');
+ assert.equal((await run.response).messages.filter(message=>message.role==='tool').length,2);
 });

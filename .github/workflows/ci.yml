@@ -24,12 +24,14 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Release safety tests
         run: python3 -m unittest discover -s tests -p 'release_test.py'
+      - run: node --test scripts/tests/*.test.mjs
       - run: npm run check
       - run: npx playwright install --with-deps chromium
       - name: Browser regressions
         run: npm run e2e
       - name: Reproducible release archive
         run: python3 scripts/package-chrome.py
+      - run: python3 scripts/add-edge-artifact.py artifacts/ci-release
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: chrome-release-${{ github.sha }}
