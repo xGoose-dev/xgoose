@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "xgoose",
+  "name": "__MSG_extensionName__",
   "short_name": "xgoose",
   "version": "0.3.3",
-  "description": "Your AI assistant on the current page. Research with website skills, follow sources, and connect your own AI provider.",
+  "description": "__MSG_extensionDescription__",
+  "default_locale": "en",
   "minimum_chrome_version": "138",
   "icons": {
     "16": "images/icon-16.png",

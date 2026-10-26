@@ -65,6 +65,29 @@ class ReleaseSafetyTest(unittest.TestCase):
             release.build_archive(self.root, output)
         self.assertEqual((output / before['archive']).read_bytes(), archive)
 
+    def test_manifest_locales_must_be_built_and_resolve_messages(self):
+        manifest = {'version': '0.2.8', 'manifest_version': 3, 'default_locale': 'en',
+                    'name': '__MSG_extensionName__', 'description': '__MSG_extensionDescription__'}
+        for path in (self.root / 'apps/chrome/static/manifest.json', self.dist / 'manifest.json'):
+            path.write_text(json.dumps(manifest))
+        messages = {'extensionName': {'message': 'xgoose'},
+                    'extensionDescription': {'message': 'Website AI assistant'}}
+        for locale in ('en', 'zh_CN'):
+            path = self.root / f'apps/chrome/static/_locales/{locale}/messages.json'
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(messages))
+        with self.assertRaisesRegex(ValueError, 'Missing or stale built locale'):
+            release.build_archive(self.root, self.root / 'out')
+        shutil.copytree(self.root / 'apps/chrome/static/_locales', self.dist / '_locales')
+        result = release.build_archive(self.root, self.root / 'out')
+        with zipfile.ZipFile(self.root / 'out' / result['archive']) as z:
+            self.assertIn('_locales/zh_CN/messages.json', z.namelist())
+            self.assertEqual(json.loads(z.read('_locales/en/messages.json')), messages)
+        for base in (self.root / 'apps/chrome/static', self.dist):
+            (base / '_locales/zh_CN/messages.json').write_text('{"extensionName":{"message":"xgoose"}}')
+        with self.assertRaisesRegex(ValueError, 'Missing manifest message'):
+            release.build_archive(self.root, self.root / 'invalid')
+
     def test_source_and_lockfile_version_mismatch_fail(self):
         path = self.root / 'package-lock.json'
         doc = json.loads(path.read_text())

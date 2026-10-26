@@ -120,6 +120,11 @@ function copyStatics() {
     if (existsSync(imagesDir)) {
       cpSync(imagesDir, resolve(out, 'images'), { recursive: true });
     }
+    // Store listing languages are discovered from the packaged manifest locales.
+    const localesDir = resolve(staticDir, '_locales');
+    if (existsSync(localesDir)) {
+      cpSync(localesDir, resolve(out, '_locales'), { recursive: true });
+    }
   }
 }
 
