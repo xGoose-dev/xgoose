@@ -357,5 +357,9 @@
   "Add your own tools when you are ready.": "准备好后，再添加自己的工具。",
   "Sign-in could not load. Open Settings to try again.": "登录加载失败，请打开设置重试。",
   "Choose the language for the interface and AI answers together. Automatic follows your browser for the interface and your conversation for answers. You can change them separately in Settings.": "同时设置界面和 AI 默认回复语言。自动模式下，界面跟随浏览器，回答跟随对话。之后可在设置中分别调整。",
-  "In Microsoft Edge, open the Edge address above. The Chrome image is a reference for locating Allow User Scripts.": "在 Microsoft Edge 中，请打开上方的 Edge 地址。Chrome 图片仅用于参考 Allow User Scripts 开关的位置。"
+  "In Microsoft Edge, open the Edge address above. The Chrome image is a reference for locating Allow User Scripts.": "在 Microsoft Edge 中，请打开上方的 Edge 地址。Chrome 图片仅用于参考 Allow User Scripts 开关的位置。",
+  "Uninstall": "卸载",
+  "Uninstall failed": "卸载失败",
+  "Uninstall custom skill \"{name}\"? Export any local edits first. A bundled copy, if present, will remain available.": "卸载自定义技能“{name}”？请先导出需要保留的本地修改；若有内置副本，内置副本仍可使用。",
+  "This links your local skill to the reviewed marketplace entry and installs that version.": "这会将本地技能关联到已核对的技能市场条目，并安装该版本。"
 }

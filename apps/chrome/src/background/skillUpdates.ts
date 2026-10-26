@@ -1,12 +1,13 @@
 import { skillCatalog, installCatalogSkill } from './catalog';
 import { listSkillsWithEnabled, getUserSkillCode } from './skillRegistry';
 import identities from '@/shared/builtinCatalog.json';
+import { catalogUpdateIdentity } from '@/shared/skillUpdateIdentity';
 import { newerVersion } from '@/shared/skillVersions';
 export const UPDATE_KEY = 'xgoose.skills.updates-v1';
 const ALARM = 'xgoose-skill-updates';
 export interface SkillUpdate {
   name:string; slug:string; currentVersion:string; version:string; localModified:boolean;
-  matches:string[]; dependencies:string[]; fingerprint:string;
+  matches:string[]; dependencies:string[]; fingerprint:string; unlinked?:boolean;
 }
 export interface UpdateState { checkedAt:number; updates:SkillUpdate[] }
 async function hash(s:string) { return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))),b=>b.toString(16).padStart(2,'0')).join(''); }
@@ -15,14 +16,15 @@ async function scan():Promise<UpdateState> {
   const catalog=await skillCatalog(true), installed=await listSkillsWithEnabled(), updates:SkillUpdate[]=[];
   for(const skill of installed) {
     const user=await getUserSkillCode(skill.name);
-    // Local imports/edits without a catalog identity must not silently adopt an author.
-    const identity=user ? user.identity : (identities as Record<string,{authorId:string;skillId:string}>)[skill.name];
+    // Unlinked local overrides can offer an explicit, reviewed link/update to
+    // a pinned publisher. Scanning never changes the installed identity.
+    const identity=catalogUpdateIdentity(skill.name,user,identities);
     if(!identity)continue;
     const item=catalog.find(i=>i.id===identity.skillId&&i.authorId===identity.authorId&&i.name===skill.name&&i.namespace===skill.namespace);
     if(!item||!newerVersion(item.version,skill.version))continue;
     const fingerprint=user ? await hash(user.source) : skill.sha;
     updates.push({name:skill.name,slug:item.slug,currentVersion:skill.version,version:item.version,
-      localModified:!!user&&(!user.sourceSha||user.sourceSha!==fingerprint),matches:item.matches,dependencies:item.dependencies,fingerprint});
+      unlinked:!!user&&!user.identity,localModified:!!user&&(!user.sourceSha||user.sourceSha!==fingerprint),matches:item.matches,dependencies:item.dependencies,fingerprint});
   }
   const state={checkedAt:Date.now(),updates};
   await chrome.storage.local.set({[UPDATE_KEY]:state});

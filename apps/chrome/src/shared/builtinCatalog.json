@@ -46,5 +46,9 @@
   "discourse-forum": {
     "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
     "skillId": "f73a8567-96a8-43be-9066-5520c03c1bd3"
+  },
+  "amex-chat": {
+    "authorId": "da12dccf-f9f8-4d52-b6ad-4a69340266ed",
+    "skillId": "00aad896-f4f6-4042-898d-6da9442fee07"
   }
 }

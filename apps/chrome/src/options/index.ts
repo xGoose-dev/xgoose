@@ -599,7 +599,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
           <div class="skill-desc"></div>
           <div class="skill-matches"></div>
         </div>
-        ${s.userAuthored ? `<button class="skill-edit" data-name="${escAttr(s.name)}">Edit</button>` : ""}
+        ${s.userAuthored ? `<div class="skill-row-actions"><button class="skill-edit" data-name="${escAttr(s.name)}">Edit</button><button class="skill-uninstall btn secondary compact" type="button"></button></div>` : ""}
       `;
       (row.querySelector(".skill-name") as HTMLElement).textContent = s.name;
       (row.querySelector(".skill-ns") as HTMLElement).textContent =
@@ -619,6 +619,20 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
       editBtn?.addEventListener("click", async () => {
         await openEditorFor(s.name);
       });
+      const uninstall=row.querySelector<HTMLButtonElement>('.skill-uninstall');
+      if(uninstall){
+        uninstall.textContent=translate('Uninstall');
+        uninstall.setAttribute('aria-label',`${translate('Uninstall')} ${s.name}`);
+        uninstall.addEventListener('click',async()=>{
+          if(!confirm(translate('Uninstall custom skill "{name}"? Export any local edits first. A bundled copy, if present, will remain available.').replace('{name}',s.name)))return;
+          uninstall.disabled=true;
+          try{
+            await send('sw:delete_user_skill',{name:s.name});
+            if(editingName===s.name)closeEditor();
+            await renderSkillList();
+          }catch(error){uninstall.disabled=false;$("#saveStatus").textContent=`${translate('Uninstall failed')}: ${error instanceof Error?error.message:String(error)}`;}
+        });
+      }
       skillList.appendChild(row);
     }
   }
