@@ -1,3 +1,4 @@
+import {browserUiText} from './browser';
 import zh from './locales/zh-CN.json';
 import es from './locales/es.json';
 export const LANGUAGE_CHOICES=['auto','en','zh-CN','es'] as const;
@@ -23,7 +24,7 @@ export function languageReminder(value:LanguagePreference, languages:readonly st
   return `\n# Preferred response language\nPreferred language: ${name} (${locale}). Use this language for your answers by default, even when the current website or the user's message is in another language. If the user explicitly requests a different response language, follow that request. Preserve original quotes, source titles, proper names, URLs and code accurately.\n`;
 }
 const normal=(text:string)=>text.replace(/\s+/g,' ').trim();
-export function translate(text:string,locale:Locale=getLocale()):string {
+function translateLocale(text:string,locale:Locale):string {
   const key=normal(text),value=dictionaries[locale][key];
   if(value!==undefined)return text.match(/^\s*/)?.[0]+value+(text.match(/\s*$/)?.[0]??'');
   // Bounded product-owned status strings; captured names and data stay unchanged.
@@ -47,6 +48,10 @@ export function translate(text:string,locale:Locale=getLocale()):string {
   if(locale==='en')return text;
   for(const [pattern,chinese,spanish] of patterns)if(pattern.test(key))return key.replace(pattern,locale==='zh-CN'?chinese:spanish);
   return text;
+}
+
+export function translate(text:string,locale:Locale=getLocale()):string {
+  return browserUiText(translateLocale(text,locale),normal(text));
 }
 
 // Translate only extension-owned UI roots. Never observe the host website.

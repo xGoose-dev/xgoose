@@ -1,3 +1,4 @@
+import {extensionDetailsUrl, isMicrosoftEdge} from '@/shared/browser';
 import {mountAccountSection} from "@/shared/accountSection";
 import {initializeLocale,mountAnswerLanguage} from "@/shared/locale";
 void initializeLocale(document.body);
@@ -28,7 +29,7 @@ async function checkPermission() {
     step.open = true;
   }
 }
-const detailsUrl = `chrome://extensions/?id=${chrome.runtime.id}`;
+const detailsUrl = extensionDetailsUrl(chrome.runtime.id);
 document.querySelector("#extensionDetailsUrl")!.textContent = detailsUrl;
 document.querySelector(".chrome-guide-address")!.textContent = detailsUrl;
 document.querySelector("#openExtensions")!.addEventListener("click", async () => {
@@ -50,3 +51,10 @@ document.querySelectorAll<HTMLAnchorElement>("[data-start-site]").forEach(link=>
 
 void mountAccountSection().catch(()=>{document.querySelector("#accountState")!.textContent="Sign-in could not load. Open Settings to try again.";});
 void mountAnswerLanguage(document.querySelector<HTMLSelectElement>("#answerLanguage")!,document.querySelector<HTMLElement>("#answerLanguageStatus"),{syncInterface:true});
+
+if (isMicrosoftEdge()) {
+  const reference = document.createElement('p');
+  reference.className = 'hint';
+  reference.textContent = 'In Microsoft Edge, open the Edge address above. The Chrome image is a reference for locating Allow User Scripts.';
+  document.querySelector('#permissionGuideCaption')!.prepend(reference);
+}

@@ -1,3 +1,4 @@
+import {extensionDetailsUrl} from '@/shared/browser';
 import {track,failureReason} from "@/shared/analytics";
 import { send } from "@/shared/messages";
 import { onAccountChange } from "@/shared/account";
@@ -40,14 +41,14 @@ export function mountSetup(): void {
   banner.id="userScriptsAlert";banner.className="user-scripts-alert";banner.hidden=true;banner.setAttribute("role","alert");
   banner.innerHTML=`<strong>Enable custom scripts and advanced actions</strong><p>Allow User Scripts is off. Built-in skills and page reading are ready to use. Enable it to run community skills, edited or online-updated skills, and custom JavaScript actions.</p><div class="permission-actions"><button type="button" class="btn primary compact" id="enableUserScripts">Enable Allow User Scripts</button><a href="onboarding.html">See the highlighted toggle &amp; setup steps</a><button type="button" class="btn secondary compact" id="recheckUserScripts">Check again</button></div><p class="hint">In Chrome: xgoose extension details → below Site access → Allow User Scripts → turn on. Return here and retry your request.</p>`;
   document.querySelector(".layout")!.before(banner);
-  banner.querySelector("#enableUserScripts")!.addEventListener("click",async()=>{track("permission_settings_opened",{page:"settings"});try{await send("sw:open_user_scripts_setup",{});}catch{banner.querySelector("p")!.textContent=`Open chrome://extensions/?id=${chrome.runtime.id}, then turn on Allow User Scripts below Site access.`;}});
+  banner.querySelector("#enableUserScripts")!.addEventListener("click",async()=>{track("permission_settings_opened",{page:"settings"});try{await send("sw:open_user_scripts_setup",{});}catch{banner.querySelector("p")!.textContent=`Open ${extensionDetailsUrl(chrome.runtime.id)}, then turn on Allow User Scripts below Site access.`;}});
   banner.querySelector("#recheckUserScripts")!.addEventListener("click",()=>void checkPermission());
   const permissions = document.createElement("div");
   permissions.className = "permission-status";
   permissions.innerHTML = `<div><strong>Allow User Scripts</strong><p class="hint" id="userScriptsStatus">Checking Chrome permission…</p></div><div class="permission-actions"><button id="openUserScriptsSettings" class="btn secondary compact" type="button">Open xgoose’s extension details</button><a href="onboarding.html">Show me where</a></div>`;
   document.querySelector("#section-skills .hint")!.after(permissions);
   permissions.querySelector("#openUserScriptsSettings")!.addEventListener("click", async () => {
-    try { await chrome.tabs.create({url:`chrome://extensions/?id=${chrome.runtime.id}`}); }
+    try { await chrome.tabs.create({url:extensionDetailsUrl(chrome.runtime.id)}); }
     catch { permissions.querySelector("#userScriptsStatus")!.textContent = "Chrome could not open the page. Select Show me where for the manual address."; }
   });
   async function checkPermission() {
