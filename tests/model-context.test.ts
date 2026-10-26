@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createModel} from '../packages/core/src/model.ts';
 import {createAgent} from '../packages/core/src/createAgent.ts';
-import {estimateTextTokens,requestContextTokens} from '../packages/core/src/contextWindow.ts';
+import {estimateTextTokens,requestContextTokens} from '../packages/core/src/contextTokens.ts';
 import {modelContextWindow,inputTokenBudget} from '../packages/core/src/contextPolicy.ts';
 const settings={provider:'openai-compat' as const,model:'luna',baseUrl:'https://fixture.invalid',apiKey:'fixture',thinking:false};
 function response(text:string){return new Response(`data: ${JSON.stringify({choices:[{index:0,delta:{role:'assistant',content:text},finish_reason:null}]})}\n\ndata: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`,{headers:{'content-type':'text/event-stream'}});}
