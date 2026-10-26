@@ -1,4 +1,4 @@
-import {requestContextTokens} from './contextTokens';
+import {requestContextTokens,estimateTextTokens} from './contextTokens';
 import {requestTextBytes,textBytes,clipBytes,textChunks,omitImageBytes,modelOnlyMessage,collapsedSystem,excerptSummary} from "./contextWindow";
 import {inputTokenBudget,requestByteBudget,OUTPUT_RESERVE_TOKENS} from './contextPolicy';
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
@@ -132,11 +132,18 @@ export class PageAgentRuntime {
         const latestUserIndex=transcript.map((message,index)=>message.role==="user"?index:-1).filter(index=>index>=0).at(-1)??-1;
         let latestUser=latestUserIndex>=0?transcript[latestUserIndex]:undefined;
         const older=transcript.filter((_message,index)=>index!==latestUserIndex);
-        const goal=latestUser?clipBytes(JSON.stringify(latestUser,omitImageBytes),6000):"Continue the user's task.";
+        const goal=latestUser?clipBytes(JSON.stringify(latestUser,omitImageBytes),Math.min(6000,Math.max(512,Math.floor(tokenBudget*.5)))):"Continue the user's task.";
         let summaryFailed=false;
         const summarize=async (text:string):Promise<string>=>{
           const summaries:string[]=[];
-          for(const chunk of textChunks(text,Math.min(60000,Math.max(512,Math.floor((tokenBudget-2048)*1.2))))){
+          const chunks=textChunks(text,Math.min(1_200_000,Math.floor(budget*.3),Math.max(512,Math.floor((tokenBudget-2048)*1.2))));
+          for(let index=0;index<chunks.length;index++){
+            const chunk=chunks[index];
+            // Dense Unicode/code can tokenize differently from ordinary prose.
+            // Split an overfull candidate before dispatching the summary call.
+            if(textBytes(chunk)>512&&estimateTextTokens(chunk)>Math.max(128,(tokenBudget-1536)*.8)){
+              chunks.splice(index,1,...textChunks(chunk,Math.ceil(textBytes(chunk)/2)));index--;continue;
+            }
             signal?.throwIfAborted();
             if(summaryFailed){summaries.push(clipBytes(chunk,2000));continue;}
             const summaryStream=await rawStream(model,normalizeContext({messages:[{role:"user",timestamp:Date.now(),content:

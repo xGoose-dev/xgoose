@@ -45,3 +45,14 @@ test('context estimates include system/tool schemas and images, not base64 lengt
  const tools=requestContextTokens([{role:'system',content:'System instructions',toolsAdded:[{name:'read',description:'Read a source',parameters:{type:'object',properties:{q:{type:'string'}}}}],timestamp:0},...base] as any,model);
  assert.ok(tools>plain);
 });
+test('large-window compaction uses bounded large batches instead of dozens of legacy 60KB calls',async()=>{
+ const sizes:number[]=[];const events:any[]=[];
+ const bundle=createAgent({settings,tools:[],contextBudgetChars:100,fetchImpl:async(_input,init)=>{
+   const body=String(init?.body);
+   if(body.includes('Summarize this browser-agent history')){sizes.push(Buffer.byteLength(body));return response('Preserved FINAL_GOAL, sources and completed actions.');}
+   return response('Continued.');
+ }});
+ const result=await bundle.agent.stream({messages:[{role:'user',content:'Research earlier evidence'},{role:'assistant',content:[{type:'text',text:'evidence '.repeat(180000)}]},{role:'user',content:'Continue FINAL_GOAL'}]});
+ for await(const event of result.fullStream)events.push(event);
+ assert.equal(sizes.length,2);assert.ok(sizes.some(size=>size>1_000_000));assert.ok(sizes.every(size=>size<1_220_000));assert.ok(!events.some(e=>e.type==='error'));
+});
