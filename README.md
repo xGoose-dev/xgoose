@@ -90,3 +90,14 @@ See `docs/acceptance.md` for the live forum acceptance specification. Public CI
 uses only synthetic data. Never commit API keys, browser profiles, real chats,
 forum login state, or private acceptance evidence. No provider key is bundled in
 this extension.
+
+### Microsoft Edge
+
+The Chromium host also detects Microsoft Edge for extension-details links and
+localized setup copy. The onboarding guide labels its Chrome screenshot as a
+reference on Edge. Built-in skills use the same packaged execution path.
+Run the focused regression against an official Edge executable with
+`EDGE_EXECUTABLE_PATH=/path/to/MicrosoftEdge node tests/browser/edge-compatibility.mjs`.
+The test uses a disposable profile, opens the real Edge details page from both
+setup entry points, and invokes a built-in reader against fixture website data
+while User Scripts is off. It does not make a live Hosted inference request.

@@ -1,3 +1,4 @@
+import {extensionDetailsUrl} from '@/shared/browser';
 import {executableSkillsForUrl, injectPackagedSkills, reconcileSkills, skillSnapshot, pageTarget} from "./packagedSkills";
 import { installSkillUpdateChecks, checkSkillUpdates, skillUpdateState, updateSkill } from "./skillUpdates";
 import { hostedStatus } from "./hosted";
@@ -69,7 +70,7 @@ chrome.runtime.onInstalled.addListener(({reason}) => {
 registerRouter({
   'sw:nga_images': (request,sender)=>readNgaImages(request.urls,sender.url??''),
   "sw:user_scripts_status": async () => {try{await chrome.userScripts.getScripts();return {enabled:true};}catch{return {enabled:false};}},
-  "sw:open_user_scripts_setup": async ({guide}) => {await chrome.tabs.create({url:guide?chrome.runtime.getURL("onboarding.html"):`chrome://extensions/?id=${chrome.runtime.id}`});},
+  "sw:open_user_scripts_setup": async ({guide}) => {await chrome.tabs.create({url:guide?chrome.runtime.getURL("onboarding.html"):extensionDetailsUrl(chrome.runtime.id)});},
   "sw:skill_updates": ({check}) => check ? checkSkillUpdates() : skillUpdateState(),
   "sw:update_skill": request => updateSkill(request),
   "sw:substack_read": (request, sender) => readSubstackPublication(request, sender.url ?? ""),

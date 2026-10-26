@@ -1,8 +1,9 @@
+import {extensionDetailsUrl} from '@/shared/browser';
 /** Every dynamically supplied program passes through Chrome's userScripts API. */
 export async function executeUserScript(sender: chrome.runtime.MessageSender, code: string): Promise<any> {
   const tabId = sender.tab?.id, documentId = sender.documentId;
   if (typeof tabId !== "number" || !documentId) throw new Error("A live page document is required");
-  if (!chrome.userScripts?.execute) throw new Error("Open chrome://extensions, select xgoose, and enable Allow User Scripts.");
+  if (!chrome.userScripts?.execute) throw new Error(`Open ${extensionDetailsUrl()}, select xgoose, and enable Allow User Scripts.`);
   const results = await chrome.userScripts.execute({ target: { tabId, documentIds: [documentId] }, world: "MAIN", js: [{ code }] });
   const result = results.find(r => r.documentId === documentId);
   if (!result) throw new Error("The page changed; start a new run in the current document.");
