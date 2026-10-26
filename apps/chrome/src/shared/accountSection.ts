@@ -24,6 +24,11 @@ export async function mountAccountSection(): Promise<void> {
   // countdown stays fresh and we pick up the SW's polling result.
   let pendingTicker: ReturnType<typeof setInterval> | null = null;
   let emailDraft="";
+  let renderedKey="";
+  let renderedMinutes=-1;
+
+  const remainingMinutes=(login:LoginState)=>Math.max(0,Math.ceil(((login.expiresAt??0)-Date.now())/60000));
+  const pendingMessage=(login:LoginState)=>`Email sent to ${login.email??"your inbox"}. Click the confirmation link and this extension will sign in automatically. The link expires in ${remainingMinutes(login)} minutes. You can close this settings page.`;
 
   async function refresh(): Promise<void> {
     const [account, loginState] = await Promise.all([
@@ -40,6 +45,20 @@ export async function mountAccountSection(): Promise<void> {
   }
 
   function render(account: Account | null, login: LoginState): void {
+    // Polling must not replace focused controls every two seconds. Keep the
+    // pending form stable; only its countdown text needs periodic updates.
+    const nextKey=JSON.stringify(account?{user:account.user}:login);
+    if(nextKey===renderedKey){
+      const minutes=remainingMinutes(login);
+      if(!account&&login.phase==="pending"&&minutes!==renderedMinutes){
+        const text=root.parentElement?.querySelector('.device-code-card')?.firstChild;
+        if(text?.nodeType===Node.TEXT_NODE)text.textContent=pendingMessage(login);
+        renderedMinutes=minutes;
+      }
+      return;
+    }
+    renderedKey=nextKey;
+    renderedMinutes=remainingMinutes(login);
     // Clear any transient device-code/error cards we previously appended
     // alongside the root (they live as siblings inside the section).
     const parent = root.parentElement;
@@ -112,8 +131,7 @@ export async function mountAccountSection(): Promise<void> {
     form.append(email,signIn);body.append(form);host.append(body);
     if(login.phase==="pending"){
       const card=document.createElement("div");card.className="device-code-card";
-      const remaining=Math.max(0,Math.ceil(((login.expiresAt??0)-Date.now())/60000));
-      card.textContent=`Email sent to ${login.email??"your inbox"}. Click the confirmation link and this extension will sign in automatically. The link expires in ${remaining} minutes. You can close this settings page.`;
+      card.textContent=pendingMessage(login);
       const change = document.createElement("button");
       change.type = "button"; change.className = "btn secondary";
       change.textContent = "Change email or request another link";
