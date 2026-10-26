@@ -1,0 +1,41 @@
+{
+  "sharedUnitTests": 90,
+  "nativeTests": 7,
+  "nativeRuntime": "iOS 18.6",
+  "chromeE2e": "passed",
+  "safariViewport": "passed",
+  "appStoreBuild": "1.6 (12)",
+  "appStoreBuildId": "5521d2bb-5156-489d-9f7b-3e4fb630a7ac",
+  "processingState": "VALID",
+  "mainCommit": "e0a5e481019b2bf1aea817a260693a9606a5255e",
+  "githubChecks": [
+    "40381135103",
+    "40381237972",
+    "40386315779",
+    "40386370161"
+  ],
+  "actualSafari": [
+    "Discourse/USCardForum",
+    "Hacker News",
+    "NGA public hot topics",
+    "Weibo public feed",
+    "ordinary page read",
+    "Gemini image input",
+    "Stop",
+    "Markdown share sheet"
+  ],
+  "restrictedSite": "Reddit logged-out API HTTP 403 is reported explicitly",
+  "permissionRevocation": "websiteAvailable cleared; firstAnswerAt retained",
+  "iPadNative": "iOS 18.6, 13 inch, portrait/landscape, dark, accessibility XXXL",
+  "iPadSafari": "iOS 26.5, 11 inch, portrait/landscape",
+  "ipaSha256": "0b911658f2d9fbad3a2ace8be022d40e155ad86f3742f13823b45c4531341dc2",
+  "pullRequests": [
+    "https://github.com/xGoose-dev/xgoose/pull/13",
+    "https://github.com/xGoose-dev/xgoose/pull/14"
+  ],
+  "interruption": "Build 12 live Safari: background during Hosted generation, 63 partial lines retained, explicit interruption notice",
+  "appStoreState": "WAITING_FOR_REVIEW",
+  "releaseType": "MANUAL",
+  "physicalDeviceTested": false,
+  "voiceOverSpokenInteractionTested": false
+}

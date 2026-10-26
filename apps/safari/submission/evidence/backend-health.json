@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "env": "production",
+  "release": {
+    "commit": "c20ca4e155773507a87525673366ade9cb0662b7",
+    "version": "d666acd5-524a-4b39-8e2f-60cea7b1cde0"
+  },
+  "hosted_models": [
+    "luna",
+    "claude-haiku-5-5",
+    "claude-sonnet-5-5",
+    "gpt-6.1-sol"
+  ],
+  "verification": {
+    "method": "read-only health check",
+    "sixModelRequirementVerified": false,
+    "missingRequiredModels": [
+      "DeepSeek Flash",
+      "GPT-6.1 Terra"
+    ],
+    "gatewayMutatedInFinalSubmissionPhase": false
+  }
+}
