@@ -4,9 +4,10 @@ An open source, in-page browser agent powered by PI. This repository contains
 the Chrome extension, shared agent core, page tools, floating chat UI, skill
 runtime, and synthetic regression tests. MIT licensed.
 
-**0.3.0** adds a focused sign-in onboarding flow, separate interface and answer
-language preferences, cleaner personalization settings, and built-in website
-skills. The interface follows the browser by default. **Automatic** answer
+**0.3.1** includes the Weibo/NGA reader fixes, optional NGA image context,
+and the latest onboarding language and sign-in fixes. It retains a focused
+sign-in onboarding flow, separate interface and answer language preferences,
+cleaner personalization settings, and built-in website skills. The interface follows the browser by default. **Automatic** answer
 language adds no language directive to AI context; only an explicit preferred
 answer language sets a default. Requests in chat take priority.
 
