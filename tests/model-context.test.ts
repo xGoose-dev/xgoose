@@ -21,7 +21,7 @@ async function run(model:string,text:string){
 test('Hosted and known BYOK windows follow the model, with output headroom',()=>{
  for(const id of ['luna','gpt-6.1-sol'])assert.equal(createModel({...settings,model:id}).contextWindow,1_050_000);
  for(const id of ['claude-haiku-5-5','claude-sonnet-5-5'])assert.equal(modelContextWindow(id),1_000_000);
- assert.equal(modelContextWindow('gpt-4o-mini'),128_000);assert.equal(modelContextWindow('gemini-2.5-pro'),1_048_576);
+ assert.equal(modelContextWindow('o1-mini'),128_000);assert.equal(modelContextWindow('gpt-4-32k'),32_768);assert.equal(modelContextWindow('gpt-4o-mini'),128_000);assert.equal(modelContextWindow('gemini-2.5-pro'),1_048_576);
  assert.equal(modelContextWindow('gpt-4.1'),1_047_576);assert.equal(modelContextWindow('custom-unknown'),128_000);
  assert.equal(createModel({...settings,model:'future-hosted',contextWindowTokens:2_000_000}).contextWindow,2_000_000);
  assert.ok(inputTokenBudget(1_000_000)<1_000_000-4096);
