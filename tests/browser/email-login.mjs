@@ -32,6 +32,10 @@ try{
  await options.getByText('Could not send the email request.',{exact:false}).waitFor();
  await options.getByRole('button',{name:'Send sign-in email',exact:true}).click();
  await options.getByText('Email sent to new@example.test.',{exact:false}).waitFor();assert.equal(context.pages().length,before);
+ // A pending login poll must preserve keyboard focus and clickable controls.
+ await options.getByRole('button',{name:'Change email or request another link',exact:true}).focus();
+ await options.waitForTimeout(2300);
+ assert.equal(await options.evaluate(()=>document.activeElement?.textContent),'Change email or request another link');
  await options.getByRole('button',{name:'Change email or request another link',exact:true}).click();
  await options.locator('#loginEmail').fill('replacement@example.test');
  await options.getByRole('button',{name:'Send sign-in email',exact:true}).click();
