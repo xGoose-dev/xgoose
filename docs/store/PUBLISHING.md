@@ -6,7 +6,7 @@ The submit workflow downloads existing release assets, verifies their SHA256SUMS
 
 Configure these GitHub repository secrets after authorizing dedicated store-publishing access:
 
-- Chrome: CWS_CLIENT_ID, CWS_CLIENT_SECRET, CWS_REFRESH_TOKEN, CWS_PUBLISHER_ID, CWS_EXTENSION_ID.
+- Chrome (dedicated service account): CWS_SERVICE_ACCOUNT_JSON, CWS_PUBLISHER_ID, CWS_EXTENSION_ID. The account is linked in the publisher dashboard and has no Google Cloud project roles. Legacy OAuth is also supported with CWS_CLIENT_ID, CWS_CLIENT_SECRET and CWS_REFRESH_TOKEN instead of CWS_SERVICE_ACCOUNT_JSON.
 - Edge: EDGE_CLIENT_ID, EDGE_API_KEY, EDGE_PRODUCT_ID.
 
 Missing secrets leave a clear 'not submitted' workflow summary. Use the authenticated internal browser for that release. Do not extract browser session cookies for CI or put personal API keys into public artifacts.

@@ -31,6 +31,7 @@ jobs:
       SELECTED_STORE: ${{ inputs.store || 'both' }}
       TARGET_STORE: ${{ matrix.store }}
       GH_TOKEN: ${{ github.token }}
+      CWS_SERVICE_ACCOUNT_JSON: ${{ secrets.CWS_SERVICE_ACCOUNT_JSON }}
       CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
       CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
       CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
@@ -51,11 +52,11 @@ jobs:
         run: |
           node --input-type=module <<'JS'
           import {appendFileSync} from 'node:fs';
-          import {requiredSecrets} from './scripts/store-publish.mjs';
+          import {missingStoreSecrets} from './scripts/store-publish.mjs';
           const {RELEASE_TAG,SELECTED_STORE,TARGET_STORE,GITHUB_OUTPUT,GITHUB_STEP_SUMMARY}=process.env;
           if(!/^v\d+\.\d+\.\d+$/.test(RELEASE_TAG))throw Error('Invalid release tag');
           const selected=SELECTED_STORE==='both'||SELECTED_STORE===TARGET_STORE;
-          const missing=requiredSecrets[TARGET_STORE].filter(key=>!process.env[key]);
+          const missing=missingStoreSecrets(TARGET_STORE,process.env);
           appendFileSync(GITHUB_OUTPUT,`ready=${selected&&!missing.length}\n`);
           if(selected&&missing.length)appendFileSync(GITHUB_STEP_SUMMARY,`## ${TARGET_STORE}: not submitted\nConfigure repository secrets: ${missing.join(', ')}. Use the browser dashboard until configured.\n`);
           JS
