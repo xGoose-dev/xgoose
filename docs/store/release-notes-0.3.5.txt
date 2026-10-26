@@ -1,0 +1,3 @@
+Onboarding explicitly sets the interface and preferred answer language together, with immediate translation. Automatic keeps answers in the conversation language; Settings retains separate controls.
+
+Built-in Amex Chat is updated to 0.4.4: on-demand SOPs, concise messages, robust new-reply cursors and a distinctive user-input chime. Skill installs refresh stale catalogs once while preserving exact version, publisher and digest checks. Pinned local imports offer a reviewed link-and-update action, and custom skills can be uninstalled directly from the installed list; bundled copies remain available. No new extension permissions.

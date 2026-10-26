@@ -36,6 +36,7 @@ function translateLocale(text:string,locale:Locale):string {
     [/^Context (\d+%)$/,'上下文 $1','Contexto $1'],
     [/^(\d+) steps?$/,'$1 步','$1 pasos'],
     [/^(\d+) skill updates? available(.*)$/,'有 $1 个 skill 更新$2','Hay $1 actualizaciones de skills$2'],
+    [/^Link and update (.+)$/,'关联并更新 $1','Vincular y actualizar $1'],
     [/^Update (.+)$/,'更新 $1','Actualizar $1'],
     [/^Updating (.+)…$/,'正在更新 $1…','Actualizando $1…'],
     [/^Last checked (.+)\.$/,'上次检查：$1。','Última comprobación: $1.'],

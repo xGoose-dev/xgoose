@@ -15,12 +15,12 @@ export function mountSkillUpdates() {
     for(const update of state.updates) {
       const row=document.createElement('div');row.className='skill-update-item';
       const info=document.createElement('div'),title=document.createElement('strong');title.textContent=update.name;
-      const versions=document.createElement('p');versions.className='hint';versions.textContent=`${update.currentVersion} → ${update.version}${update.localModified?' · Contains local edits':''}`;
+      const versions=document.createElement('p');versions.className='hint';versions.textContent=`${update.currentVersion} → ${update.version}${update.unlinked?' · Not linked to catalog':''}${update.localModified?' · Contains local edits':''}`;
       const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='Review update';
       const scope=document.createElement('p');scope.className='hint';scope.textContent=`Sites: ${update.matches.join(', ')||'None'}. Dependencies: ${update.dependencies.join(', ')||'None'}.`;
       const source=document.createElement('a');source.href=`https://xgoose.org/skill/?slug=${encodeURIComponent(update.slug)}`;source.target='_blank';source.rel='noopener';source.textContent='View skill and source ↗';
       details.append(summary,scope,source);info.append(title,versions,details);
-      const button=document.createElement('button');button.className='btn secondary compact';button.textContent=`Update ${update.name}`;
+      const button=document.createElement('button');button.className='btn secondary compact';button.textContent=update.unlinked?`Link and update ${update.name}`:`Update ${update.name}`;
       button.addEventListener('click',()=>void install(update));row.append(info,button);list.append(row);
     }
   }
@@ -34,8 +34,9 @@ export function mountSkillUpdates() {
   async function install(update:SkillUpdate) {
     if(busy)return;
     const question=translate("Update {name} from {current} to {version}?").replace("{name}",update.name).replace("{current}",update.currentVersion).replace("{version}",update.version);
+    const linkWarning=update.unlinked?" "+translate("This links your local skill to the reviewed marketplace entry and installs that version."):"";
     const warning=update.localModified?" "+translate("This replaces your local edits. Export or copy your source first if you want to keep them."):"";
-    if(!confirm(question+warning+"\n"+translate("The new version will run on:")+" "+(update.matches.join(', ')||translate("No matching sites"))+". "+translate("Review the source before updating.")))return;
+    if(!confirm(question+linkWarning+warning+"\n"+translate("The new version will run on:")+" "+(update.matches.join(', ')||translate("No matching sites"))+". "+translate("Review the source before updating.")))return;
     const started=Date.now();track("skill_update_started",{skill:update.name,version:update.version});
     busy=true;section.querySelectorAll('button').forEach(b=>b.disabled=true);status.textContent=`Updating ${update.name}…`;
     try{await send('sw:update_skill',update);track('skill_update_succeeded',{skill:update.name,version:update.version,duration_ms:Date.now()-started});render(await send('sw:skill_updates',{}));status.textContent=`${update.name} updated to ${update.version}. ${status.textContent}`;}

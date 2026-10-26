@@ -6,7 +6,7 @@ export async function skillCatalog(force = false):Promise<CatalogSkill[]> {
   const key="xgoose.skill-catalog-v1",stored=(await chrome.storage.local.get(key))[key] as {at:number;items:CatalogSkill[]}|undefined;
   if(!force&&stored&&Date.now()-stored.at<3600000)return stored.items;
   try {
-    const response=await apiFetch<{version:number;items:CatalogSkill[]}>("/skills/catalog");
+    const response=await apiFetch<{version:number;items:CatalogSkill[]}>("/skills/catalog", force ? {cache:"no-store"} : undefined);
     if(!response.ok)throw new Error(response.error);
     if(response.data.version!==1||!Array.isArray(response.data.items))throw new Error("Unsupported catalog");
     await chrome.storage.local.set({[key]:{at:Date.now(),items:response.data.items}});return response.data.items;
@@ -16,7 +16,11 @@ async function sha(value:string){return Array.from(new Uint8Array(await crypto.s
 export async function installCatalogSkill(slug:string,version:string,visiting=new Set<string>(), beforeWrite?:()=>Promise<void>):Promise<void>{
   if(visiting.has(slug))throw new Error("Skill dependency cycle");
   visiting.add(slug);
-  const catalog=await skillCatalog(),item=catalog.find(s=>s.slug===slug&&s.version===version);
+  let catalog=await skillCatalog();
+  let item=catalog.find(s=>s.slug===slug&&s.version===version);
+  // The install page may have reviewed a version published after our cached
+  // catalog. Retry once against the network before asking for another review.
+  if(!item){catalog=await skillCatalog(true);item=catalog.find(s=>s.slug===slug&&s.version===version);}
   if(!item)throw new Error("The catalog version changed. Refresh and review the update.");
   for(const ref of item.dependencies){
     const name=ref.replace(/@[^@]+$/,""),dep=catalog.find(s=>s.name===name||s.namespace===name);

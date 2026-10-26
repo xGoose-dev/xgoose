@@ -1,6 +1,6 @@
 {
   "name": "xgoose",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "private": true,
   "description": "Headless agent + DOM page controller + chat UI for xgoose (factored out of xgoose-safari so the same code can host Chrome / Firefox / userscript-style extensions).",
   "workspaces": [
