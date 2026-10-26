@@ -1,4 +1,5 @@
-import {initializeLocale,localizeRoot,languageReminder} from "@/shared/locale";
+import {HOSTED_AUTH_STOPPED,isHostedAuthStopped} from '@/shared/hosted';
+import {initializeLocale,localizeRoot,languageReminder,translate} from "@/shared/locale";
 import {isSafari,safariExecutionReminder} from "@/shared/host";
 import {mountUserScriptsGuide} from "./userScriptsGuide";
 import {userScriptsReminder} from "@/shared/userScriptsSetup";
@@ -1004,7 +1005,7 @@ async function bootstrap(): Promise<void> {
       }
 
       accumulateUsage(usage as any);
-      panel.setStatus(`${stepCount} step${stepCount === 1 ? "" : "s"}`);
+      panel.setStatus(turnErrorDisplay&&settings.provider==="xgoose-hosted"&&isHostedAuthStopped(turnErrorDisplay)?"Listening stopped — sign in to continue":`${stepCount} step${stepCount === 1 ? "" : "s"}`);
       track(turnErrorDisplay?"chat_turn_failed":"chat_turn_finished", {
         flow_id:turnFlow,duration_ms:Date.now()-turnStarted,
         ...(turnErrorDisplay?{reason:failureReason(turnErrorDisplay)}:{}),
@@ -1068,7 +1069,7 @@ async function bootstrap(): Promise<void> {
         panel.addErrorMessage(errDisplay);
         // Persist into history so the error is still visible after reload.
         conversationMessages.push({ role: "xgoose-error", content: errDisplay });
-        panel.setStatus("");
+        panel.setStatus(getSettings().provider==="xgoose-hosted"&&isHostedAuthStopped(errDisplay)?"Listening stopped — sign in to continue":"");
       }
     } finally {
       await record({type:abortController?.signal.aborted?"run-interrupted":"run-end"});
@@ -1141,7 +1142,7 @@ async function bootstrap(): Promise<void> {
     push(err?.cause?.statusCode ? `HTTP ${err.cause.statusCode}` : "");
     if (!parts.length) push(String(err ?? "Unknown error"));
     const msg = parts.find((p) => p && p !== "Error") ?? "Unknown AI error";
-    return msg.slice(0, 1000);
+    return isHostedAuthStopped(msg)?translate(HOSTED_AUTH_STOPPED):msg.slice(0, 1000);
   }
 
   function sourceGroundedToolUseReminder(

@@ -133,13 +133,14 @@ export type MessageMap = {
 
   // ── provider fetch proxy (one-shot + streaming) ──────────────────────
   "sw:proxy_fetch": {
-    request: { url: string; method: string; headers: HeaderBag; body?: string };
+    request: { url: string; method: string; headers: HeaderBag; body?: string; hostedAccountId?: string };
     response:
       | { ok: true; status: number; headers: HeaderBag; body: string }
       | { ok: false; error: string };
   };
   "sw:proxy_fetch_stream_open": {
     request: {
+      hostedAccountId?: string;
       streamId: string;
       url: string;
       method: string;

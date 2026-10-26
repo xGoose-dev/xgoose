@@ -17,7 +17,7 @@ import { send } from "@/shared/messages";
 // — content fetcher only calls 'sw:proxy_fetch' and
 // 'sw:proxy_fetch_stream_open', both of which already match.
 
-export function createChromeProviderFetch(): HostFetcher {
+export function createChromeProviderFetch(options:{hostedAccountId?:string}={}): HostFetcher {
   return (async (input: any, init?: RequestInit) => {
     const req = new Request(input, init);
     const method = req.method;
@@ -30,7 +30,7 @@ export function createChromeProviderFetch(): HostFetcher {
     if (signal?.aborted) throw new DOMException("aborted", "AbortError");
 
     if (wantsStreaming(url, headers, bodyText)) {
-      return openStreaming(url, method, headers, bodyText, signal);
+      return openStreaming(url, method, headers, bodyText, signal, options.hostedAccountId);
     }
 
     const fetchPromise = send("sw:proxy_fetch", {
@@ -38,6 +38,7 @@ export function createChromeProviderFetch(): HostFetcher {
       method,
       headers,
       body: bodyText,
+      hostedAccountId: options.hostedAccountId,
     });
     const resp = await raceAbort(fetchPromise, signal);
     if (!resp.ok) throw new Error(resp.error);
@@ -114,6 +115,7 @@ function openStreaming(
   headers: Record<string, string>,
   body: string | undefined,
   signal: AbortSignal | null,
+  hostedAccountId?:string,
 ): Promise<Response> {
   const streamId = Math.random().toString(36).slice(2, 12);
   const port = chrome.runtime.connect({ name: `xgoose:stream:${streamId}` });
@@ -210,7 +212,7 @@ function openStreaming(
       },
     });
     headStreamReady = resolve;
-    send("sw:proxy_fetch_stream_open", { streamId, url, method, headers, body })
+    send("sw:proxy_fetch_stream_open", { streamId, url, method, headers, body, hostedAccountId })
       .then((res) => {
         if (!res.ok) {
           port.disconnect();

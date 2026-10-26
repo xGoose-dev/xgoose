@@ -36,17 +36,10 @@ function getFetchImpl(): ReturnType<typeof createChromeProviderFetch> {
   return cachedFetch;
 }
 
-/**
- * Async because the `'xgoose-hosted'` provider has to fetch the current
- * account access token from the background SW before it can construct
- * the equivalent `openai-compat` settings. For every other provider
- * this is a fast pass-through.
- *
- * The xgoose-hosted virtual provider is collapsed to `'openai-compat'`
- * + the gateway base URL + the user's bearer token here, so the core
- * `createAgent` never has to know about it. If the user picks hosted
- * but isn't signed in we throw an actionable error — the content panel
- * surfaces it to the user with a "Sign in" CTA in the options page.
+/** Hosted requests are session-managed in the worker, including compaction.
+ * The runtime carries only the original account ID and a non-secret SDK marker;
+ * each HTTP request reads current credentials and can recover one rejected 401.
+ * BYOK retains its own provider key and transport without account recovery.
  */
 export async function createAgent(opts: {
   settings: Settings;
@@ -58,11 +51,12 @@ export async function createAgent(opts: {
     ...buildLegacyTools(),
   ];
   const coreSettings = await projectToCoreSettings(opts.settings);
+  const fetchProvider=opts.settings.provider==="xgoose-hosted"?createChromeProviderFetch({hostedAccountId:coreSettings.hostedAccountId}):getFetchImpl();
   return coreCreateAgent({
     settings: coreSettings,
     fetchImpl: async (input, init) => {
       const started=Date.now();
-      const response=await getFetchImpl()(input,init);
+      const response=await fetchProvider(input,init);
       // Record correlation metadata, never request headers or credentials.
       await opts.onProviderResponse?.({type:"model-response",requestId:response.headers.get("x-request-id"),status:response.status,firstResponseMs:Date.now()-started,...(response.headers.get("x-xgoose-context-unit")==="utf8_bytes"?{contextTextBytes:Number(response.headers.get("x-xgoose-context-text-bytes")),contextLimitBytes:Number(response.headers.get("x-xgoose-context-limit-bytes"))}:{ }),
         ...(response.headers.has('x-xgoose-context-window-tokens')?{contextWindowTokens:Number(response.headers.get('x-xgoose-context-window-tokens'))}:{}),
@@ -83,6 +77,7 @@ async function projectToCoreSettings(s: Settings): Promise<{
   baseUrl: string;
   thinking: boolean;
   contextWindowTokens?: number;
+  hostedAccountId?:string;
 }> {
   if (s.provider !== "xgoose-hosted") {
     return {
@@ -107,7 +102,8 @@ async function projectToCoreSettings(s: Settings): Promise<{
   const contextWindowTokens=catalogue?.ok?catalogue.contextWindows?.[s.model]:undefined;
   return {
     provider: "openai-compat",
-    apiKey: account.accessToken,
+    apiKey: "hosted-session-managed",
+    hostedAccountId:account.user.id,
     model: s.model,
     baseUrl: XGOOSE_HOSTED_AI_BASE_URL,
     thinking: false,

@@ -362,5 +362,7 @@
   "Uninstall failed": "卸载失败",
   "Uninstall custom skill \"{name}\"? Export any local edits first. A bundled copy, if present, will remain available.": "卸载自定义技能“{name}”？请先导出需要保留的本地修改；若有内置副本，内置副本仍可使用。",
   "This links your local skill to the reviewed marketplace entry and installs that version.": "这会将本地技能关联到已核对的技能市场条目，并安装该版本。",
-  "Interface and answer language": "界面和回答语言"
+  "Interface and answer language": "界面和回答语言",
+  "Listening stopped — sign in to continue": "监听已停止，请登录后继续",
+  "Hosted sign-in could not be restored. The agent has stopped listening and taking actions. Sign in again in Settings, then send Continue. The website customer-service chat may still be connected.": "Hosted 登录无法恢复。Agent 已停止监听和操作。请在设置中重新登录，再发送“继续”。网站的客服聊天可能仍保持连接。"
 }

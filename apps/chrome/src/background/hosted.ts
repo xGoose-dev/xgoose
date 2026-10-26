@@ -1,3 +1,4 @@
+import {withHostedSession} from './hostedSession';
 import { apiFetch } from "@/shared/account";
 import { hostedBlocker, type HostedQuota } from "@/shared/hosted";
 import { getFreshAccount } from "./account";
@@ -7,9 +8,9 @@ export async function hostedStatus(claim = false, useHosted = false) {
   const account = await getFreshAccount();
   if (!account) throw new Error("Sign in with email in Settings → Free AI & account.");
   const [quota, consent] = await Promise.all([
-    apiFetch<HostedQuota>(claim ? "/me/trial/claim" : "/me/quota", {
-      method: claim ? "POST" : "GET", bearer: account.accessToken,
-    }),
+    withHostedSession(a=>apiFetch<HostedQuota>(claim ? "/me/trial/claim" : "/me/quota", {
+      method: claim ? "POST" : "GET", bearer: a.accessToken,
+    }),{accountId:account.user.id}),
     getConsent(),
   ]);
   if (!quota.ok) throw new Error(quota.error);
@@ -25,10 +26,10 @@ export async function testHosted(model = "luna") {
     if (state.blocker) return {ok:false as const,error:state.blocker};
     const account = await getFreshAccount();
     if (!account) throw new Error("Sign in before testing Hosted AI.");
-    const result = await apiFetch<{choices?: unknown[]}>("/ai/v1/chat/completions", {
-      method:"POST", bearer:account.accessToken, signal:AbortSignal.timeout(210000),
+    const result = await withHostedSession(a=>apiFetch<{choices?: unknown[]}>("/ai/v1/chat/completions", {
+      method:"POST", bearer:a.accessToken, signal:AbortSignal.timeout(210000),
       body:JSON.stringify({model,messages:[{role:"user",content:"Reply with OK."}],stream:false,max_tokens:16}),
-    });
+    }),{accountId:account.user.id});
     if (!result.ok) return {ok:false as const,error:result.error};
     if (!result.data.choices?.length) throw new Error("Hosted AI returned no model response. Please try again.");
     return {ok:true as const,message:`${model} responded successfully. Hosted AI is ready.`,modelCount:null};

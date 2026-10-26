@@ -1,4 +1,6 @@
-import {isSafari,providerHeaders} from "@/shared/host";
+import {withHostedSession} from './hostedSession';
+import {providerFetch} from './providerFetch';
+import {isSafari} from "@/shared/host";
 import {prepareHost,nativeCommand} from "@/shared/platformBridge";
 import {extensionDetailsUrl} from '@/shared/browser';
 import {assertLiveDocument,executableSkillsForUrl, injectPackagedSkills, reconcileSkills, skillSnapshot, pageTarget} from "./packagedSkills";
@@ -117,11 +119,7 @@ registerRouter({
   // ── provider fetch proxy ────────────────────────────────────────────
   "sw:proxy_fetch": async (payload) => {
     try {
-      const resp = await fetch(payload.url, {
-        method: payload.method,
-        headers: providerHeaders(payload.headers),
-        body: payload.body,
-      });
+      const resp = await providerFetch(payload);
       const body = await resp.text();
       const headers: Record<string, string> = {};
       resp.headers.forEach((v, k) => (headers[k] = v));
@@ -369,10 +367,10 @@ registerRouter({
       return { ok: false, error: "Not signed in", signedIn: false };
     }
     const path = `/ai/v1/models${refresh ? "?refresh=1" : ""}`;
-    const res = await apiFetch<{ data?: Array<{ id?: unknown; context_window?: unknown }> }>(path, {
+    const res = await withHostedSession(a=>apiFetch<{ data?: Array<{ id?: unknown; context_window?: unknown }> }>(path, {
       method: "GET",
-      bearer: account.accessToken,
-    });
+      bearer: a.accessToken,
+    }),{accountId:account.user.id});
     if (!res.ok) {
       return {
         ok: false,
@@ -510,12 +508,7 @@ async function runStream(
 
   let resp: Response;
   try {
-    resp = await fetch(req.url, {
-      method: req.method,
-      headers: providerHeaders(req.headers),
-      body: req.body,
-      signal: ac.signal,
-    });
+    resp = await providerFetch(req,ac.signal);
   } catch (err: any) {
     safePost(port, {
       kind: "error",

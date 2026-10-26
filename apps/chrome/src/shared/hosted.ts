@@ -40,3 +40,6 @@ export async function normalizeHostedError(response: Response): Promise<Response
   headers.delete("content-encoding");
   return new Response(JSON.stringify({error:{message,code,type:code,...(context?{context}:{})}}), {status:response.status,headers});
 }
+
+export const HOSTED_AUTH_STOPPED="Hosted sign-in could not be restored. The agent has stopped listening and taking actions. Sign in again in Settings, then send Continue. The website customer-service chat may still be connected.";
+export const isHostedAuthStopped=(text:string)=>/Hosted sign-in could not be restored|Hosted 登录无法恢复|No se pudo restablecer la sesión de Hosted/.test(text);
