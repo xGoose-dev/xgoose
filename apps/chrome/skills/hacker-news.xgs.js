@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         hacker-news
 // @namespace    hn
-// @version      0.1.2
+// @version      0.1.4
 // @description  Hacker News search, all six feeds, stories, comments, threads, polls, users, submissions and updates. Bounded, cached, rate-limited reads with original-source cards.
 // @match        https://news.ycombinator.com/*
 // @match        https://hn.algolia.com/*
@@ -23,11 +23,11 @@ import { z } from 'zod';
 const READER_VERSION = 1;
 const readerStates = globalThis[Symbol.for('xgoose.reader.states')] ??= new Map();
 const count = (n = 10, max = 30) => z.number().int().min(1).max(max).default(n);
-const offset = z.number().int().min(0).max(100000).default(0);
+const offset = z.number().int().min(0).default(0);
 const identifier = z.union([z.string().min(1).max(300), z.number().int().positive()]);
 const empty = z.object({});
-const reading = z.object({ offset: offset, maxChars: count(8000, 16000) });
-const readOptions = { offset: offset, maxChars: count(8000, 16000) };
+const reading = z.object({ offset: offset, maxChars: z.number().int().positive().optional() });
+const readOptions = { offset: offset, maxChars: z.number().int().positive().optional() };
 
 function siteFn(summary, input, handler, examples = []) {
   return fn({ summary, input, examples, handler: (raw = {}) => {
@@ -45,6 +45,7 @@ function fault(code, message, extra = {}) {
 
 function safeUrl(value, base = globalThis.location?.href) {
   try {
+    if (typeof value !== 'string' || !value.trim()) return null;
     if (String(value).length > 4096) return null;
     const url = new URL(String(value), base);
     if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return null;
@@ -75,7 +76,7 @@ function source(data, options = {}) {
   if (!url) throw fault('invalid_source_url', 'Source must have an HTTP(S) original URL.');
   const full = String(data.text ?? data.excerpt ?? '');
   const start = options.offset ?? 0;
-  const end = start + (options.maxChars ?? 8000);
+  const end = options.maxChars === undefined ? full.length : start + options.maxChars;
   const fragment = full.slice(start, end);
   const nextOffset = start + fragment.length < full.length ? start + fragment.length : null;
   return {
@@ -93,23 +94,7 @@ function source(data, options = {}) {
 }
 
 function result(sources = [], extra = {}) {
-  const output = { readerVersion: READER_VERSION, sources, ...extra };
-  // Keep the envelope parseable under js_exec's 30 KB character cap. Truncating
-  // whole JSON there would destroy source cards and continuation information.
-  let size = JSON.stringify(output).length;
-  for (let round = 0; size > 25000 && round < 8; round++) {
-    let changed = false;
-    for (const s of output.sources) {
-      if (s.text.length > 100) {
-        s.text = s.text.slice(0, Math.max(100, Math.floor(s.text.length * 0.6)));
-        s.complete = false; s.nextOffset = s.offset + s.text.length; changed = true;
-      }
-      if (s.excerpt.length > 100) s.excerpt = s.excerpt.slice(0, 100);
-    }
-    size = JSON.stringify(output).length;
-    if (!changed) break;
-  }
-  return output;
+  return {readerVersion:READER_VERSION,sources,...extra};
 }
 
 function currentPage(selectors, options = {}) {
@@ -125,7 +110,7 @@ function currentPage(selectors, options = {}) {
     publishedAt: document.querySelector('time[datetime]')?.getAttribute('datetime'),
     text, scope: 'loaded_page', method: 'dom', complete: false,
     access: document.querySelector('[data-testid="paywall"],.paywall,.paywall-title') ? 'preview' : 'session',
-  }, options)], { coverage: 'Only the currently loaded page. Hidden, unloaded, and paywalled content is not included.' });
+  }, options)], { coverage:'loaded_page' });
 }
 
 function walkJson(value, visit, maxNodes = 12000) {
@@ -165,13 +150,7 @@ function observedHeaders(request) {
   return headers;
 }
 
-function boundedRaw(data) {
-  const json = JSON.stringify(data);
-  return json.length <= 22000 ? { data } : {
-    truncated: true, preview: json.slice(0, 22000),
-    instruction: 'Raw JSON was truncated. Use a typed reader with pagination before making claims about its content.',
-  };
-}
+function boundedRaw(data) { return {data}; }
 
 function createClient(site, policy, allowed) {
   const key = `xgoose.reader.limits.${site}.v1`;
@@ -228,6 +207,8 @@ function createClient(site, policy, allowed) {
     state.queued++;
     const run = state.tail.catch(() => {}).then(async () => {
       await reserve(options.signal);
+      const method = options.method ?? 'GET';
+      if (method !== 'GET' && !(method === 'POST' && typeof isSduiReadUrl === 'function' && isSduiReadUrl(url))) throw fault('invalid_endpoint','Only the declared read-only LinkedIn search/profile APIs accept POST.');
       const controller = new AbortController();
       const abort = () => controller.abort();
       if (options.signal?.aborted) abort();
@@ -237,10 +218,18 @@ function createClient(site, policy, allowed) {
         const usePublicRelay = url.origin !== location.origin &&
           ['hacker-news.firebaseio.com','hn.algolia.com','www.sov2ex.com','sov2ex.com'].includes(url.hostname) &&
           typeof globalThis.__xgoose?.publicReaderFetch === 'function';
-        const response = usePublicRelay ? await globalThis.__xgoose.publicReaderFetch(url.href, { signal: controller.signal }) : await fetch(url.href, {
-          method: 'GET', credentials: url.origin === location.origin ? 'include' : 'omit',
-          headers: options.headers, signal: controller.signal, redirect: 'error',
-        });
+        const usePublicationRelay = url.origin !== location.origin && options.publicationSubdomain;
+        let publicationResponse;
+        if(usePublicationRelay) {
+          if(typeof globalThis.__xgoose?.substackRead!=='function')throw fault('reader_unavailable','Reload this page after updating the extension to enable cross-publication API reads.');
+          const reply=await globalThis.__xgoose.substackRead({subdomain:options.publicationSubdomain,path:url.pathname+url.search},{signal:controller.signal});
+          if(!reply.ok)throw fault('publication_read_failed',reply.error);
+          publicationResponse=new Response(reply.body,{status:reply.status,headers:reply.headers});
+        }
+        const response = publicationResponse || (usePublicRelay ? await globalThis.__xgoose.publicReaderFetch(url.href, { signal: controller.signal }) : await fetch(url.href, {
+          method, ...(options.body?{body:options.body}:{}), credentials: url.origin === location.origin ? 'include' : 'omit',
+          headers: options.headers, signal: controller.signal, redirect: 'error', cache: options.cache,
+        }));
         const retry = response.headers.get('retry-after');
         const reset = response.headers.get('x-rate-limit-reset') || response.headers.get('x-ratelimit-reset');
         const remaining = response.headers.get('x-rate-limit-remaining') ?? response.headers.get('x-ratelimit-remaining');
@@ -253,7 +242,7 @@ function createClient(site, policy, allowed) {
         }
         if (!response.ok) throw fault(response.status === 429 ? 'rate_limited' : response.status === 401 ? 'login_required' : response.status === 403 ? 'access_denied' : 'http_error',
           `${site} returned HTTP ${response.status}. No automatic retry was made.`, { status: response.status, retryAfterMs: Math.max(0, state.blockedUntil - Date.now()) });
-        const value = options.type === 'text' ? await response.text() : await response.json();
+        const value = options.parseResponse ? await options.parseResponse(response) : options.type === 'text' ? await response.text() : await response.json();
         if (ttl) {
           if (state.cache.size >= 80) state.cache.delete(state.cache.keys().next().value);
           state.cache.set(cacheKey, { value, until: Date.now() + ttl });
@@ -336,7 +325,7 @@ const skill = {
     const data = await algolia(a.order === 'date' ? 'search_by_date' : 'search', {
       query: a.query, tags: tags.join(','), numericFilters: filters.join(','), page: String(a.page), hitsPerPage: String(a.limit),
     }, a);
-    return result(data.hits.map(h => hnSource(h, { maxChars: 500, scope: 'snippet', complete: false })), {
+    return result(data.hits.map(h => hnSource(h, { scope: 'snippet', complete: false })), {
       total: data.nbHits, page: data.page, nextPage: data.page + 1 < data.nbPages ? data.page + 1 : null,
       provider: 'Algolia HN Search',
     });
@@ -347,7 +336,7 @@ const skill = {
     const ids = await firebase(`${a.feed}stories`, a);
     const selected = ids.slice(a.offset, a.offset + a.limit);
     const data = await items(selected, a);
-    return result(data.filter(v => !v.deleted && !v.dead).map(v => hnSource(v, { maxChars: 600 })), {
+    return result(data.filter(v => !v.deleted && !v.dead).map(v => hnSource(v, {})), {
       total: ids.length, nextOffset: a.offset + selected.length < ids.length ? a.offset + selected.length : null,
     });
   }),
@@ -359,7 +348,7 @@ const skill = {
   }),
   getItems: siteFn('Batch-read up to five explicit IDs; deleted items are reported, not treated as empty readable sources.', z.object({ ids: z.array(identifier).min(1).max(5) }), async a => {
     const found = await items(a.ids.map(numericId), a);
-    return result(found.filter(i => !i.deleted && !i.dead).map(i => hnSource(i, { maxChars: 2000 })), {
+    return result(found.filter(i => !i.deleted && !i.dead).map(i => hnSource(i, {})), {
       unavailableIds: a.ids.filter(id => !found.some(i => String(i.id) === String(id) && !i.deleted && !i.dead)),
     });
   }),
@@ -368,7 +357,7 @@ const skill = {
     if (!item || item.deleted) return result([], { status: 'not_found' });
     const ids = item.kids ?? []; const selected = ids.slice(a.offset, a.offset + a.limit);
     const found = await items(selected, a);
-    return result(found.filter(i => !i.deleted && !i.dead).map(i => hnSource(i, { maxChars: 1000 })), {
+    return result(found.filter(i => !i.deleted && !i.dead).map(i => hnSource(i, {})), {
       children: found.map(i => ({ id: i.id, parentId: i.parent, childIds: i.kids ?? [] })),
       totalDirectChildren: ids.length, nextOffset: a.offset + selected.length < ids.length ? a.offset + selected.length : null,
     });
@@ -385,7 +374,7 @@ const skill = {
       if(!left||!right)return left?-1:right?1:0;
       return (Date.parse(left)-Date.parse(right))*(a.order==='new'?-1:1);
     });
-    return result([hnSource(data, { maxChars: 3000 }), ...flat.slice(a.offset, a.offset + a.limit).filter(i => i.text).map(i => hnSource(i, { maxChars: 700 }))], {
+    return result([hnSource(data, {}), ...flat.slice(a.offset, a.offset + a.limit).filter(i => i.text).map(i => hnSource(i, {}))], {
       order:a.order,
       provider: 'Algolia snapshot; can lag the live thread', totalLoadedComments: flat.length,
       nextOffset: a.offset + a.limit < flat.length ? a.offset + a.limit : null, complete: stack.length === 0 && a.offset === 0 && flat.length <= a.limit,
@@ -402,7 +391,7 @@ const skill = {
     const user = await firebase(`user/${encodeURIComponent(a.username)}`, a);
     if (!user) return result([], { status: 'not_found' });
     const ids = user.submitted ?? [];
-    return result((await items(ids.slice(a.offset, a.offset + a.limit), a)).filter(i => !i.deleted && !i.dead).map(i => hnSource(i, { maxChars: 600 })),
+    return result((await items(ids.slice(a.offset, a.offset + a.limit), a)).filter(i => !i.deleted && !i.dead).map(i => hnSource(i, {})),
       { nextOffset: a.offset + a.limit < ids.length ? a.offset + a.limit : null });
   }),
   getUpdates: siteFn('Read the official changed item/profile IDs; no automatic polling.', empty, async a => firebase('updates', a)),

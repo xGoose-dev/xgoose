@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discourse-forum
 // @namespace    discourse
-// @version      0.2.9
+// @version      0.2.11
 // @description  Search Discourse forums, read topics and replies, and research community insights.
 // @match        *://meta.discourse.org/*
 // @match        *://*.discourse.org/*
@@ -111,7 +111,7 @@ function compactSearchResult(raw) {
   if (!raw || typeof raw !== 'object') return raw;
   if (raw.httpStatus) return raw;
   const topics = Array.isArray(raw.topics)
-    ? raw.topics.slice(0, 8).map((t) => ({
+    ? raw.topics.map((t) => ({
         id: t.id,
         title: t.title,
         slug: t.slug,
@@ -124,14 +124,14 @@ function compactSearchResult(raw) {
       }))
     : [];
   const posts = Array.isArray(raw.posts)
-    ? raw.posts.slice(0, 8).map((p) => ({
+    ? raw.posts.map((p) => ({
         id: p.id,
         topic_id: p.topic_id,
         post_number: p.post_number,
         username: p.username,
         created_at: p.created_at,
         like_count: p.like_count,
-        blurb: typeof p.blurb === 'string' ? p.blurb.slice(0, 350) : p.blurb,
+        blurb: p.blurb,
       }))
     : [];
   return {
@@ -140,6 +140,7 @@ function compactSearchResult(raw) {
     posts,
     total_topics: Array.isArray(raw.topics) ? raw.topics.length : undefined,
     total_posts: Array.isArray(raw.posts) ? raw.posts.length : undefined,
+    ...(raw.grouped_search_result?{grouped_search_result:raw.grouped_search_result}:{}),
     hint: 'Search snippets only. Read relevant posts with readTopicPosts({topicId}); getTopic returns a five-post preview.',
   };
 }
@@ -151,7 +152,7 @@ function htmlToText(html) {
   return (div.innerText || div.textContent || '').replace(/\s+/g, ' ').trim();
 }
 
-function compactTopicResult(raw, maxChars = 4000) {
+function compactTopicResult(raw, maxChars) {
   if (!raw || typeof raw !== 'object') return raw;
   if (raw.httpStatus) return raw;
   const postsRaw = raw.post_stream?.posts || raw.posts || [];
@@ -163,8 +164,8 @@ function compactTopicResult(raw, maxChars = 4000) {
         created_at: p.created_at,
         like_count: p.like_count,
         reply_count: p.reply_count,
-        text: htmlToText(p.cooked || p.blurb || p.raw).slice(0, maxChars),
-        text_truncated: htmlToText(p.cooked || p.blurb || p.raw).length > maxChars,
+        text: maxChars === undefined ? htmlToText(p.cooked || p.blurb || p.raw) : htmlToText(p.cooked || p.blurb || p.raw).slice(0, maxChars),
+        text_truncated: maxChars !== undefined && htmlToText(p.cooked || p.blurb || p.raw).length > maxChars,
         url: `${location.origin}/t/${p.topic_id ?? raw.id}/${p.post_number}`,
       }))
     : [];
@@ -249,11 +250,9 @@ async function summaryTopic(topicId, firstReplies=30, latestReplies=100) {
     const result = await forumJson(`/t/${id}/posts.json?${params}`);
     for (const post of result.post_stream?.posts || []) posts.set(post.id,post);
   }
-  // Keep all selected floors represented while bounding the model context.
-  const perPost = Math.max(60, Math.min(6000, Math.floor(24000/selected.length)));
   const result = selected.map(postId=>posts.get(postId)).filter(Boolean).map(post=>{
     const text=postText(post);
-    return {post_number:post.post_number,username:post.username,created_at:post.created_at,text:text.slice(0,perPost),text_truncated:text.length>perPost,url:`${topicLink(id)}/${post.post_number}`};
+    return {post_number:post.post_number,username:post.username,created_at:post.created_at,text,text_truncated:false,url:`${topicLink(id)}/${post.post_number}`};
   });
   return {title:topic.title,url:topicLink(id),posts_count:topic.posts_count,highest_post_number:topic.highest_post_number,
     selection:selected.length===stream.length?'all visible posts':`first post, first ${firstReplies} replies and latest ${latestReplies} replies`,selected_count:selected.length,read_count:result.length,
@@ -271,7 +270,7 @@ async function recentTopics(kind='new') {
   const topics=[];
   for(const item of candidates.slice(0,kind==='random'?5:8)) {
     try {
-      const detail=compactTopicResult(await forumJson(`/t/${item.id}.json`),2500);
+      const detail=compactTopicResult(await forumJson(`/t/${item.id}.json`));
       topics.push({id:item.id,title:item.title,url:topicLink(item.id),created_at:item.created_at,last_posted_at:item.last_posted_at,posts:detail.posts || []});
     } catch(error) { topics.push({id:item.id,title:item.title,url:topicLink(item.id),read_error:String(error)}); }
   }
@@ -287,8 +286,9 @@ const TopicReadInput = z.object({
   topicId: z.number().int().positive(),
   fromPostNumber: z.number().int().positive().optional().describe('Inclusive floor; deleted floors are skipped. Default 1.'),
   cursor: z.string().max(1000).optional().describe('Pass next_cursor unchanged to continue the same visible-post snapshot.'),
-  limit: z.number().int().min(1).max(300).default(100).describe('Maximum posts per call; the 24 KB model-output budget can return fewer.'),
-  maxChars: z.number().int().min(100).max(20000).default(1000).describe('Characters per post; truncation and next_text_offset are explicit.'),
+  limit: z.number().int().min(1).max(300).default(100).describe('Maximum posts per call.'),
+  maxChars: z.number().int().positive().optional().describe('Optional characters per post; omitted returns the full body.'),
+  maxTotalChars: z.number().int().positive().optional().describe('Optional total body character budget. Stops between posts and returns next_cursor; a single oversized post is returned whole.'),
   textOffset: z.number().int().min(0).default(0).describe('To recover a long post, set fromPostNumber to that floor, limit:1 and this offset.'),
 }).strict().superRefine((value, ctx) => {
   if (value.cursor && (value.fromPostNumber !== undefined || value.textOffset)) ctx.addIssue({code:'custom',message:'Use cursor alone, or fromPostNumber/textOffset.'});
@@ -340,7 +340,7 @@ function rangeCursor(state, offset) {
 }
 function rangePost(post, maxChars, textOffset=0) {
   const text = htmlToText(post.cooked || post.raw || post.blurb || '');
-  const end = Math.min(text.length, textOffset+maxChars);
+  const end = maxChars === undefined ? text.length : Math.min(text.length, textOffset+maxChars);
   const likes = post.like_count ?? post.actions_summary?.find(action => action.id === 2)?.count ?? null;
   return {id:post.id,post_number:post.post_number,username:post.username,created_at:post.created_at,
     like_count:likes,reply_count:post.reply_count,url:`${location.origin}/t/${post.topic_id}/${post.post_number}`,
@@ -372,13 +372,13 @@ async function readTopicRange(rawArgs) {
     }
   }
   const start=offset, end=Math.min(state.ids.length,start+args.limit), posts=[], missing=[];
-  let failure=null, outputLimited=false;
+  let failure=null, outputLimited=false, totalChars=0;
   const makeResult=() => ({id:args.topicId,title:String(state.topic.title || '').slice(0,500),url:`${location.origin}/t/${args.topicId}`,origin:location.origin,
     status:failure?.status || 'ok',...(failure?{httpStatus:failure.httpStatus,message:failure.message,retry_after_ms:failure.retry_after_ms}:{}),
     posts_count:state.topic.posts_count,highest_post_number:state.topic.highest_post_number,visible_post_count:state.ids.length,
     requested_from_post_number:args.fromPostNumber ?? null,first_post_number:posts[0]?.post_number ?? null,last_post_number:posts.at(-1)?.post_number ?? null,
     read_count:posts.length,missing_post_ids:missing,output_limited:outputLimited,
-    range_complete:!failure && !outputLimited && !missing.length,text_complete:posts.every(post=>!post.text_truncated),
+    range_complete:!failure && !missing.length && !outputLimited,text_complete:posts.every(post=>!post.text_truncated),
     complete:start===0 && offset===state.ids.length && !failure && !missing.length && posts.every(post=>!post.text_truncated),
     next_cursor:offset<state.ids.length?rangeCursor(state,offset):null,
     next_post_number:offset<state.ids.length?(state.posts.get(state.ids[offset])?.post_number ?? (posts.at(-1)?.post_number !== undefined?posts.at(-1).post_number+1:args.fromPostNumber || 1)):null,
@@ -397,22 +397,16 @@ async function readTopicRange(rawArgs) {
     const post=state.posts.get(id);
     if(!post){missing.push(id);offset++;continue;}
     const entry=rangePost({...post,topic_id:args.topicId},args.maxChars,args.textOffset);
+    if(args.maxTotalChars !== undefined && posts.length && totalChars+entry.text.length>args.maxTotalChars){outputLimited=true;break;}
+    totalChars+=entry.text.length;
     posts.push(entry);offset++;
-    if(new TextEncoder().encode(JSON.stringify(makeResult())).length>24000){
-      if(posts.length>1){posts.pop();offset--;outputLimited=true;break;}
-      // Even one unusually long post must leave a usable continuation.
-      while(new TextEncoder().encode(JSON.stringify(makeResult())).length>24000 && entry.text.length>1){
-        entry.text=entry.text.slice(0,Math.max(1,Math.floor(entry.text.length*0.75)));
-        entry.text_truncated=true;entry.next_text_offset=entry.text_offset+entry.text.length;
-      }
-    }
   }
   return makeResult();
 }
 
 export default defineSkill({
   readTopicPosts: fn({
-    summary: 'Read a topic range with automatic batching. Returns posts, counts and coverage within 24 KB; follow next_cursor for more.',
+    summary: 'Read full post bodies in a topic range with automatic batching; follow next_cursor for more posts.',
     input: TopicReadInput,
     output: TopicReadResult,
     examples: [{args:{topicId:541783,fromPostNumber:632,limit:100}},{args:{topicId:541783,fromPostNumber:632,limit:1,maxChars:6000}}],
@@ -453,7 +447,7 @@ export default defineSkill({
 
   getTopic: fn({
     summary: 'Preview topic metadata and its first five posts. Use readTopicPosts for replies.',
-    input: z.object({ id: z.number().int().positive(), maxChars: z.number().int().min(500).max(20000).optional().describe("Maximum characters per post; default 4000. Increase to recover a truncated body.") }),
+    input: z.object({ id: z.number().int().positive(), maxChars: z.number().int().positive().optional().describe('Optional characters per post; omitted returns the full body.') }),
     output: TopicResultSchema,
     examples: [{ args: { id: 12345 } }],
     handler: async ({ id, maxChars }) => compactTopicResult(await getJson(`/t/${id}.json`), maxChars),
@@ -463,12 +457,12 @@ export default defineSkill({
     summary: 'Read five posts at or after postNumber. Use readTopicPosts for larger ranges.',
     input: z.object({
       topicId: z.number().int().positive(),
-      maxChars: z.number().int().min(500).max(20000).optional(),
+      maxChars: z.number().int().positive().optional(),
       postNumber: z.number().int().min(1).optional().describe('1-indexed. Default 1.'),
     }),
     output: TopicReadResult,
     handler: async ({ topicId, postNumber, maxChars }) =>
-      readTopicRange({topicId,fromPostNumber:postNumber ?? 1,limit:5,maxChars:maxChars ?? 4000}),
+      readTopicRange({topicId,fromPostNumber:postNumber ?? 1,limit:5,maxChars}),
   }),
 
   getCategories: fn({

@@ -1,3 +1,4 @@
+import { pageToolOutput } from './outputPages';
 import type { z } from "zod";
 
 export type XgooseToolContentPart =
@@ -45,7 +46,11 @@ export function defineTool<S extends z.ZodTypeAny>(
 ): XgooseBuiltTool {
   return {
     name: def.name,
-    definition: def as unknown as XgooseToolDef<z.ZodTypeAny>,
+    definition: {...def,toModelOutput:(output:any,input:z.infer<S>)=>{
+      const projected=def.toModelOutput?.(output,input);
+      const parts=projected?.length?projected:[{type:'text' as const,text:typeof output==='string'?output:JSON.stringify(output??null)}];
+      return def.name==='read_tool_output'?parts:pageToolOutput(parts);
+    }} as unknown as XgooseToolDef<z.ZodTypeAny>,
     meta: {
       isReadOnly: def.isReadOnly ?? false,
       isConcurrencySafe:

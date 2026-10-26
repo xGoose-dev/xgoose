@@ -1,3 +1,4 @@
+import {pageToolOutput} from '@xgoose/core';
 import {HOSTED_AUTH_STOPPED,isHostedAuthStopped} from '@/shared/hosted';
 import {initializeLocale,localizeRoot,languageReminder,translate} from "@/shared/locale";
 import {isSafari,safariExecutionReminder} from "@/shared/host";
@@ -1160,7 +1161,7 @@ async function bootstrap(): Promise<void> {
       "skills are available on this page, use `skill_call` for the relevant " +
       "helper (or `read_page` for current-page-only summaries). " +
       "Answer from the information actually available; useful partial results " +
-      "are welcome. State limited coverage briefly instead of requiring exhaustive verification."
+      "are welcome."
     );
   }
 
@@ -1224,12 +1225,7 @@ async function bootstrap(): Promise<void> {
     } finally {
       panel.setLoadingStatus(null);
     }
-    // Thread shortcuts may include hundreds of floors; the old 8K cut
-    // discarded the latest posts. Bound UTF-8 bytes for the Hosted request cap.
-    const actionBytes = new TextEncoder().encode(resultText);
-    if (actionBytes.length > 140000) {
-      resultText = new TextDecoder().decode(actionBytes.slice(0, 140000)) + "…(truncated; do not claim complete coverage)";
-    }
+    resultText=pageToolOutput([{type:'text',text:resultText}]).filter(part=>part.type==='text').map(part=>part.text).join('\n');
     const composed =
       `${action.prompt}\n\n` +
       `<action-result label=${JSON.stringify(action.label)}>\n${resultText}\n</action-result>`;

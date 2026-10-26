@@ -1,8 +1,6 @@
 import { z } from "zod";
 import { defineTool, type XgooseBuiltTool } from "@xgoose/core";
 
-const READ_PAGE_MAX_BYTES = 30_000;
-
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;
   return s.slice(0, n - 1) + "…";
@@ -17,39 +15,27 @@ function safeJson(value: unknown): string {
   }
 }
 
-// Truncate large array results by counting bytes prefix-wise so the agent
-// always gets a well-formed array (not a half-serialised JSON string). The
-// `totalCount` field lets the agent decide whether to narrow the selector
-// and re-call rather than guess.
-function paginateArray(
-  format: string,
-  items: unknown[],
-  maxBytes: number,
-): {
-  ok: true;
-  format: string;
-  truncated?: boolean;
-  totalCount: number;
-  returnedCount: number;
-  items: unknown[];
-} {
-  let acc = 2;
-  const out: unknown[] = [];
-  for (const it of items) {
-    const itJson = safeJson(it);
-    if (acc + itJson.length + 1 > maxBytes) break;
-    out.push(it);
-    acc += itJson.length + 1;
+// Explicit budgets stop at record boundaries and expose the next row offset.
+function paginateArray(format:string,items:unknown[],maxBytes:number,offset:number) {
+  let bytes=2;
+  const out:unknown[]=[];
+  for(const item of items.slice(offset)){
+    const size=new TextEncoder().encode(safeJson(item)).length+1;
+    if(out.length && bytes+size>maxBytes)break;
+    out.push(item);bytes+=size;
   }
-  const truncated = out.length < items.length;
-  return {
-    ok: true,
-    format,
-    ...(truncated ? { truncated: true } : {}),
-    totalCount: items.length,
-    returnedCount: out.length,
-    items: out,
-  };
+  const nextOffset=offset+out.length<items.length?offset+out.length:null;
+  return {ok:true,format,totalCount:items.length,returnedCount:out.length,offset,nextOffset,
+    ...(nextOffset!==null?{truncated:true}:{}),items:out};
+}
+
+function paginateText(format:string,value:string,maxBytes:number,offset:number) {
+  const remaining=value.slice(offset),bytes=new TextEncoder().encode(remaining);
+  // Streaming decoding holds an incomplete UTF-8 character for the next read.
+  const text=bytes.length>maxBytes?new TextDecoder().decode(bytes.subarray(0,maxBytes),{stream:true}):remaining;
+  const nextOffset=offset+text.length<value.length?offset+text.length:null;
+  return {ok:true,format,[format]:text,offset,nextOffset,
+    ...(nextOffset!==null?{truncated:true}:{}),sizeBytes:new TextEncoder().encode(value).length};
 }
 
 /**
@@ -77,15 +63,15 @@ export function createReadPageTool(): XgooseBuiltTool {
         .optional()
         .describe(
           'CSS selector to scope the read (defaults to "body"). Pass a tighter selector on large ' +
-            'pages — e.g. "#search" on Google, "main" on most articles — to stay under the byte cap.',
+            'pages — e.g. "#search" on Google, "main" on most articles.',
         ),
       maxBytes: z
         .number()
         .int()
         .min(500)
-        .max(100_000)
         .optional()
-        .describe("Max output size; truncated past this. Defaults to 30000."),
+        .describe("Optional content byte budget; omitted returns all content. Continue with nextOffset as offset."),
+      offset:z.number().int().min(0).optional().describe('Character offset for text/HTML, row offset for links/outline. Pass nextOffset to continue.'),
     }),
     isReadOnly: true,
     isConcurrencySafe: () => true,
@@ -94,8 +80,8 @@ export function createReadPageTool(): XgooseBuiltTool {
       const sel = i?.selector ? ` ${truncate(String(i.selector), 28)}` : "";
       return `Read page ${fmt}${sel}`;
     },
-    execute: async ({ format, selector, maxBytes }) => {
-      const max = maxBytes ?? READ_PAGE_MAX_BYTES;
+    execute: async ({ format, selector, maxBytes, offset=0 }) => {
+      const max = maxBytes ?? Infinity;
       const sel = selector ?? "body";
       let root: Element | null = null;
       try {
@@ -111,31 +97,10 @@ export function createReadPageTool(): XgooseBuiltTool {
       }
 
       if (format === "text") {
-        const text = (root as HTMLElement).innerText ?? root.textContent ?? "";
-        if (text.length > max) {
-          return {
-            ok: true,
-            format,
-            truncated: true,
-            sizeBytes: text.length,
-            preview: text.slice(0, max) + "\n…[truncated]",
-          };
-        }
-        return { ok: true, format, text };
+        return paginateText(format,(root as HTMLElement).innerText ?? root.textContent ?? "",max,offset);
       }
-
       if (format === "html") {
-        const html = root.outerHTML;
-        if (html.length > max) {
-          return {
-            ok: true,
-            format,
-            truncated: true,
-            sizeBytes: html.length,
-            preview: html.slice(0, max) + "\n…[truncated]",
-          };
-        }
-        return { ok: true, format, html };
+        return paginateText(format,root.outerHTML,max,offset);
       }
 
       if (format === "links") {
@@ -168,7 +133,7 @@ export function createReadPageTool(): XgooseBuiltTool {
           if (ariaLabel) item.ariaLabel = ariaLabel;
           links.push(item);
         }
-        return paginateArray("links", links, max);
+        return paginateArray("links", links, max, offset);
       }
 
       if (format === "outline") {
@@ -188,7 +153,7 @@ export function createReadPageTool(): XgooseBuiltTool {
           if (hEl.id) item.id = hEl.id;
           outline.push(item);
         }
-        return paginateArray("outline", outline, max);
+        return paginateArray("outline", outline, max, offset);
       }
 
       return { ok: false, error: `Unknown format: ${format}` };

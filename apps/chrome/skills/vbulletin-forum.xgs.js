@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         vbulletin-forum
 // @namespace    vbulletin
-// @version      0.1.1
+// @version      0.1.3
 // @description  Generic helpers for vBulletin 3.x/4.x forums (search posts/threads, summarize threads, fetch recent threads, getForum).
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*
@@ -178,7 +178,7 @@ async function getThreadPage(threadId, page) {
   return { url, doc: parseHtml(text) };
 }
 
-function extractPostList(doc, start=0, maxChars=400) {
+function extractPostList(doc, start=0, maxChars) {
   const posts = [];
   doc.querySelectorAll('div[id^="edit"], li.postbitlegacy, table[id^="post"], div.post').forEach((el, idx) => {
     const counter = el.querySelector('.postcounter');
@@ -192,8 +192,8 @@ function extractPostList(doc, start=0, maxChars=400) {
       postId,
       author: txt(author),
       date: txt(date),
-      snippet: txt(body).slice(0, maxChars),
-      text_truncated: txt(body).length > maxChars,
+      snippet: maxChars === undefined ? txt(body) : txt(body).slice(0, maxChars),
+      text_truncated: maxChars !== undefined && txt(body).length > maxChars,
     });
   });
   return posts;
@@ -256,11 +256,11 @@ export default defineSkill({
       mode: z.enum(['latest', 'first', 'first+last', 'full', 'tldr']).optional(),
       firstReplies: z.number().int().min(0).max(300).default(30),
       latestReplies: z.number().int().min(0).max(300).default(100),
-      maxChars: z.number().int().min(80).max(6000).default(400),
+      maxChars: z.number().int().positive().optional(),
       page: z.number().int().optional().describe('Specific page; negative is from end (-1=last, -2=second-to-last).'),
       maxPosts: z.number().int().min(1).max(601).optional(),
     }),
-    handler: async ({ threadId, mode, page, maxPosts, firstReplies=30, latestReplies=100, maxChars=400 }) => {
+    handler: async ({ threadId, mode, page, maxPosts, firstReplies=30, latestReplies=100, maxChars }) => {
       const m = mode ?? 'first+last';
       const cap = maxPosts ?? (m==='first+last'||m==='tldr'?1+firstReplies+latestReplies:10);
       let perPage=0;
@@ -289,13 +289,6 @@ export default defineSkill({
         out.posts=[...new Map(selected.map(post=>[post.postNumber,post])).values()].slice(0,cap);
         out.selection=`original post, first ${firstReplies} replies and latest ${latestReplies} replies`;
         out.pagesRead=[...cache.keys()].sort((a,b)=>a-b);
-        // Preserve both reply windows if UTF-8 bodies exceed the host budget.
-        while(new TextEncoder().encode(JSON.stringify(out)).length>110000 && out.posts.some(post=>post.snippet.length>80)){
-          for(const post of out.posts)if(post.snippet.length>80){
-            post.snippet=post.snippet.slice(0,Math.max(80,Math.floor(post.snippet.length*0.7)));
-            post.text_truncated=true;
-          }
-        }
         return out;
       }
       if (m === 'full') {

@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         v2ex
 // @namespace    v2ex
-// @version      0.2.3
+// @version      0.2.4
 // @description  V2EX public v1 and token-authenticated v2 read APIs: configurable search, topics, replies, node directory and node topics, profiles and notifications. Browser-session identity and explicit pagination.
 // @match        https://www.v2ex.com/*
 // @match        https://v2ex.com/*
@@ -14,7 +14,7 @@
 // @keyword      v2ex
 // @keyword      v站
 // @keyword      程序员社区
-// @action       概括这个帖子 | 概括当前帖的主帖、开头约 30 条回复及最新约 100 条回复，重叠去重，附来源链接。自行选择函数和分页参数；说明实际范围，用户指定范围优先。
+// @action       概括这个帖子 | 概括当前帖的主帖、开头约 30 条回复及最新约 100 条回复，重叠去重，附来源链接。自行选择函数和分页参数；用户指定范围优先。
 // @action       热帖 | 使用 v2ex.getHotTopics 获取当前热门主题，挑选值得关注的讨论，给出简短看点和原帖链接。列表是摘要，不要声称已读正文或全部回复。
 // @action       新帖 | 使用 v2ex.getLatestTopics 获取最新主题；若用户当前在具体节点，可用 getNodeTopics 读取该节点近期主题。标明范围和时间，给出看点与链接。
 // @action       随便看看 | 使用 v2ex skill，从热门或最新主题中选择一个有趣且与当前话题不重复的帖子；读取正文和相关回复后介绍有意思的观点并附来源。明确选择范围，不要反复搜索同一快照。
@@ -29,11 +29,11 @@ import { z } from 'zod';
 const READER_VERSION = 1;
 const readerStates = globalThis[Symbol.for('xgoose.reader.states')] ??= new Map();
 const count = (n = 10, max = 30) => z.number().int().min(1).max(max).default(n);
-const offset = z.number().int().min(0).max(100000).default(0);
+const offset = z.number().int().min(0).default(0);
 const identifier = z.union([z.string().min(1).max(300), z.number().int().positive()]);
 const empty = z.object({});
-const reading = z.object({ offset: offset, maxChars: count(8000, 16000) });
-const readOptions = { offset: offset, maxChars: count(8000, 16000) };
+const reading = z.object({ offset: offset, maxChars: z.number().int().positive().optional() });
+const readOptions = { offset: offset, maxChars: z.number().int().positive().optional() };
 
 function siteFn(summary, input, handler, examples = []) {
   return fn({ summary, input, examples, handler: (raw = {}) => {
@@ -82,7 +82,7 @@ function source(data, options = {}) {
   if (!url) throw fault('invalid_source_url', 'Source must have an HTTP(S) original URL.');
   const full = String(data.text ?? data.excerpt ?? '');
   const start = options.offset ?? 0;
-  const end = start + (options.maxChars ?? 8000);
+  const end = options.maxChars === undefined ? full.length : start + options.maxChars;
   const fragment = full.slice(start, end);
   const nextOffset = start + fragment.length < full.length ? start + fragment.length : null;
   return {
@@ -100,23 +100,7 @@ function source(data, options = {}) {
 }
 
 function result(sources = [], extra = {}) {
-  const output = { readerVersion: READER_VERSION, sources, ...extra };
-  // Keep the envelope parseable under js_exec's 30 KB character cap. Truncating
-  // whole JSON there would destroy source cards and continuation information.
-  let size = JSON.stringify(output).length;
-  for (let round = 0; size > 25000 && round < 8; round++) {
-    let changed = false;
-    for (const s of output.sources) {
-      if (s.text.length > 100) {
-        s.text = s.text.slice(0, Math.max(100, Math.floor(s.text.length * 0.6)));
-        s.complete = false; s.nextOffset = s.offset + s.text.length; changed = true;
-      }
-      if (s.excerpt.length > 100) s.excerpt = s.excerpt.slice(0, 100);
-    }
-    size = JSON.stringify(output).length;
-    if (!changed) break;
-  }
-  return output;
+  return {readerVersion:READER_VERSION,sources,...extra};
 }
 
 function currentPage(selectors, options = {}) {
@@ -132,7 +116,7 @@ function currentPage(selectors, options = {}) {
     publishedAt: document.querySelector('time[datetime]')?.getAttribute('datetime'),
     text, scope: 'loaded_page', method: 'dom', complete: false,
     access: document.querySelector('[data-testid="paywall"],.paywall,.paywall-title') ? 'preview' : 'session',
-  }, options)], { coverage: 'Only the currently loaded page. Hidden, unloaded, and paywalled content is not included.' });
+  }, options)], { coverage:'loaded_page' });
 }
 
 function walkJson(value, visit, maxNodes = 12000) {
@@ -172,13 +156,7 @@ function observedHeaders(request) {
   return headers;
 }
 
-function boundedRaw(data) {
-  const json = JSON.stringify(data);
-  return json.length <= 22000 ? { data } : {
-    truncated: true, preview: json.slice(0, 22000),
-    instruction: 'Raw JSON was truncated. Use a typed reader with pagination before making claims about its content.',
-  };
-}
+function boundedRaw(data) { return {data}; }
 
 function createClient(site, policy, allowed) {
   const key = `xgoose.reader.limits.${site}.v1`;
@@ -235,6 +213,8 @@ function createClient(site, policy, allowed) {
     state.queued++;
     const run = state.tail.catch(() => {}).then(async () => {
       await reserve(options.signal);
+      const method = options.method ?? 'GET';
+      if (method !== 'GET' && !(method === 'POST' && typeof isSduiReadUrl === 'function' && isSduiReadUrl(url))) throw fault('invalid_endpoint','Only the declared read-only LinkedIn search/profile APIs accept POST.');
       const controller = new AbortController();
       const abort = () => controller.abort();
       if (options.signal?.aborted) abort();
@@ -244,10 +224,18 @@ function createClient(site, policy, allowed) {
         const usePublicRelay = url.origin !== location.origin &&
           ['hacker-news.firebaseio.com','hn.algolia.com','www.sov2ex.com','sov2ex.com'].includes(url.hostname) &&
           typeof globalThis.__xgoose?.publicReaderFetch === 'function';
-        const response = usePublicRelay ? await globalThis.__xgoose.publicReaderFetch(url.href, { signal: controller.signal }) : await fetch(url.href, {
-          method: 'GET', credentials: url.origin === location.origin ? 'include' : 'omit',
-          headers: options.headers, signal: controller.signal, redirect: 'error',
-        });
+        const usePublicationRelay = url.origin !== location.origin && options.publicationSubdomain;
+        let publicationResponse;
+        if(usePublicationRelay) {
+          if(typeof globalThis.__xgoose?.substackRead!=='function')throw fault('reader_unavailable','Reload this page after updating the extension to enable cross-publication API reads.');
+          const reply=await globalThis.__xgoose.substackRead({subdomain:options.publicationSubdomain,path:url.pathname+url.search},{signal:controller.signal});
+          if(!reply.ok)throw fault('publication_read_failed',reply.error);
+          publicationResponse=new Response(reply.body,{status:reply.status,headers:reply.headers});
+        }
+        const response = publicationResponse || (usePublicRelay ? await globalThis.__xgoose.publicReaderFetch(url.href, { signal: controller.signal }) : await fetch(url.href, {
+          method, ...(options.body?{body:options.body}:{}), credentials: url.origin === location.origin ? 'include' : 'omit',
+          headers: options.headers, signal: controller.signal, redirect: 'error', cache: options.cache,
+        }));
         const retry = response.headers.get('retry-after');
         const reset = response.headers.get('x-rate-limit-reset') || response.headers.get('x-ratelimit-reset');
         const remaining = response.headers.get('x-rate-limit-remaining') ?? response.headers.get('x-ratelimit-remaining');
@@ -260,7 +248,7 @@ function createClient(site, policy, allowed) {
         }
         if (!response.ok) throw fault(response.status === 429 ? 'rate_limited' : response.status === 401 ? 'login_required' : response.status === 403 ? 'access_denied' : 'http_error',
           `${site} returned HTTP ${response.status}. No automatic retry was made.`, { status: response.status, retryAfterMs: Math.max(0, state.blockedUntil - Date.now()) });
-        const value = options.type === 'text' ? await response.text() : await response.json();
+        const value = options.parseResponse ? await options.parseResponse(response) : options.type === 'text' ? await response.text() : await response.json();
         if (ttl) {
           if (state.cache.size >= 80) state.cache.delete(state.cache.keys().next().value);
           state.cache.set(cacheKey, { value, until: Date.now() + ttl });
@@ -389,7 +377,7 @@ const skill = {
       const data=await client.request(`https://www.sov2ex.com/api/search?${params}`,{signal:a.signal});
       return result((data.hits || []).map(hit => topicSource({ ...hit._source, id:hit._source?.id ?? hit._id,
         created:typeof hit._source?.created==='string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$/.test(hit._source.created) ? `${hit._source.created}Z` : hit._source?.created,
-      }, { scope:'snippet',complete:false,maxChars:500 })),
+      }, { scope:'snippet',complete:false})),
         { total:typeof data.total==='object' ? data.total.value : data.total,provider:'Sov2ex third-party index',providerId:'sov2ex',scope:'third_party_full_index',offset:a.offset,
           nextOffset: data.hits?.length === a.limit ? a.offset + a.limit : null,
           coverage:'Third-party index results are snippets; indexing may lag or omit topics. Read original topic/replies for evidence.' });
@@ -401,7 +389,7 @@ const skill = {
       const text = `${t.title} ${t.content || ''}`.toLocaleLowerCase();
       return a.operator === 'or' ? terms.some(q => text.includes(q)) : terms.every(q => text.includes(q));
     });
-    return result(matches.slice(a.offset, a.offset + a.limit).map(t => topicSource(t, { maxChars: 500, scope: 'snippet', complete: false })), {
+    return result(matches.slice(a.offset, a.offset + a.limit).map(t => topicSource(t, { scope: 'snippet', complete: false })), {
       provider:'recent',operator:a.operator ?? 'and',query:a.query,
       scope: a.node ? 'recent_node_topics' : a.username ? 'recent_member_topics' : `${a.feed}_topics`,
       scanned: topics.length, totalMatchesInScannedTopics: matches.length,
@@ -412,8 +400,8 @@ const skill = {
       instruction:'This is one bounded snapshot, not full-history search. AND keywords can exclude relevant topics. Choose operator, feed, keywords or provider for the task; no fallback ran automatically.',
     });
   }),
-  getLatestTopics: siteFn('Read the public latest-topic list.', z.object({ limit: count(10,20) }), async a => result((await api('topics/latest', {}, a)).slice(0,a.limit).map(t => topicSource(t, { maxChars: 700 })))),
-  getHotTopics: siteFn('Read the public hot-topic list.', z.object({ limit: count(10,20) }), async a => result((await api('topics/hot', {}, a)).slice(0,a.limit).map(t => topicSource(t, { maxChars: 700 })))),
+  getLatestTopics: siteFn('Read the public latest-topic list.', z.object({ limit: count(10,20) }), async a => result((await api('topics/latest', {}, a)).slice(0,a.limit).map(t => topicSource(t, {})))),
+  getHotTopics: siteFn('Read the public hot-topic list.', z.object({ limit: count(10,20) }), async a => result((await api('topics/hot', {}, a)).slice(0,a.limit).map(t => topicSource(t, {})))),
   getTopic: siteFn('GET topics/show (v1) or topics/:id (v2): topic body slice, author and reply count. Replies are a separate getReplies call.', z.object({ id:numeric, authenticated:tokenMode, ...readOptions }), async a => {
     let data;
     try { data = a.authenticated ? await v2(`topics/${a.id}`, {}, a) : (await api('topics/show', { id: a.id }, a))[0]; }
@@ -427,7 +415,7 @@ const skill = {
       replies:{function:'getReplies',args:{id:a.id,authenticated:a.authenticated}},
     }) : result([], { status:'not_found' });
   }),
-  getReplies: siteFn('GET replies/show (v1) or topics/:id/replies (v2). Choose page, reply offset/limit (up to 100) and text size. nextOffset continues this page; nextPage is a candidate. source.nextOffset continues long reply text.', z.object({ id:numeric, page:paging.page, limit:count(20,100), offset:offset.describe('Reply index within this server page, not characters.'), authenticated:tokenMode, textOffset:offset.describe('Character offset in the first selected reply only; use limit:1 to continue a long reply.'), maxChars:count(1000,4000) }), async a => {
+  getReplies: siteFn('GET replies/show (v1) or topics/:id/replies (v2). Choose page, reply offset/limit (up to 100) and text size. nextOffset continues this page; nextPage is a candidate. source.nextOffset continues long reply text.', z.object({ id:numeric, page:paging.page, limit:count(20,100), offset:offset.describe('Reply index within this server page, not characters.'), authenticated:tokenMode, textOffset:offset.describe('Character offset in the first selected reply only; use limit:1 to continue a long reply.'), maxChars:z.number().int().positive().optional() }), async a => {
     const data = a.authenticated ? await v2(`topics/${a.id}/replies`, { p: a.page }, a) : await api('replies/show', { topic_id: a.id, page: a.page }, a);
     const replies = Array.isArray(data) ? data : data?.replies ?? [];
     const sources=[];
@@ -438,7 +426,6 @@ const skill = {
         url:`https://www.v2ex.com/t/${a.id}#r_${r.id}`,author:r.member?.username,parentId:a.id,
         text:textOf(r.content_rendered || r.content),publishedAt:r.created,scope:'reply',
       },{maxChars:a.maxChars,offset:i===0 ? a.textOffset : 0}),replyIndex:a.offset+i};
-      if (new TextEncoder().encode(JSON.stringify([...sources,s])).length>23000) break;
       sources.push(s);
     }
     const nextOffset=a.offset+sources.length<replies.length ? a.offset+sources.length : null;
@@ -463,10 +450,10 @@ const skill = {
     const nodes = await api('nodes/all',{},a);
     const filtered=nodes.filter(n=>(!a.parent || n.parent_node_name===a.parent) &&
       (!a.query || [n.name,n.title,n.title_alternative,...(Array.isArray(n.aliases)?n.aliases:[n.aliases])].filter(Boolean).join(' ').toLocaleLowerCase().includes(a.query.toLocaleLowerCase())));
-    return result(filtered.slice(a.offset,a.offset+a.limit).map(n=>({...source({id:n.id,kind:'node',title:n.title,url:`https://www.v2ex.com/go/${n.name}`,text:textOf(n.header).slice(0,300)}),
+    return result(filtered.slice(a.offset,a.offset+a.limit).map(n=>({...source({id:n.id,kind:'node',title:n.title,url:`https://www.v2ex.com/go/${n.name}`,text:textOf(n.header)}),
       name:n.name,parent:n.parent_node_name ?? null,root:n.root ?? null})), {total:filtered.length,directoryTotal:nodes.length,nextOffset:a.offset+a.limit<filtered.length?a.offset+a.limit:null});
   }),
-  getNodeTopics: siteFn('GET topics/show?node_name (v1 recent board snapshot) or nodes/:name/topics?p (v2 paginated board topics). Choose name, API authentication, page, offset/limit and body size.', z.object({name:slug,...paging,offset,authenticated:tokenMode,maxChars:count(600,4000)}), async a => {
+  getNodeTopics: siteFn('GET topics/show?node_name (v1 recent board snapshot) or nodes/:name/topics?p (v2 paginated board topics). Choose name, API authentication, page, offset/limit and body size.', z.object({name:slug,...paging,offset,authenticated:tokenMode,maxChars:z.number().int().positive().optional()}), async a => {
     if (!a.authenticated && a.page !== 1) throw fault('pagination_requires_v2','The public v1 recent-node list does not support page traversal; use API v2.');
     const data = a.authenticated ? await v2(`nodes/${a.name}/topics`,{p:a.page},a) : await api('topics/show',{node_name:a.name},a);
     const topics = Array.isArray(data)?data:data?.topics??[];
@@ -481,7 +468,7 @@ const skill = {
   }),
   getMemberTopics: siteFn('GET topics/show?username: member’s public recent topics. offset/limit slice this snapshot, not full member history.', z.object({username:slug,offset,limit:count(10,20)}), async a => {
     const topics=await api('topics/show',{username:a.username},a);
-    return result(topics.slice(a.offset,a.offset+a.limit).map(t=>topicSource(t,{maxChars:700})),{scope:'recent_member_topics',nextOffset:a.offset+a.limit<topics.length ? a.offset+a.limit : null});
+    return result(topics.slice(a.offset,a.offset+a.limit).map(t=>topicSource(t,{})),{scope:'recent_member_topics',nextOffset:a.offset+a.limit<topics.length ? a.offset+a.limit : null});
   }),
   getSiteInfo: siteFn('Read V2EX site information and counters.', empty, async a => ({ info:await api('site/info',{},a), stats:await api('site/stats',{},a) })),
   getSession:siteFn('Inspect the browser-session username from current page navigation and token-configured status. No network call; never infer the viewer from a topic author or viewed profile.',empty,sessionInfo),
@@ -506,7 +493,7 @@ const skill = {
       fullIndex:{provider:'sov2ex',thirdParty:true,availableOnThisTab:!!globalThis.__xgoose?.publicReaderFetch || /^(www\.)?sov2ex\.com$/.test(location.hostname),filters:'query, node, username, operator, sort, order, gte, lte, offset, limit'},
       recent:{feeds:['latest','hot'],scopes:['feed','node','username'],operator:['and','or'],defaultOperator:'and',history:'One API snapshot only; neither full history nor semantic search'},
       fallback:'Agent chooses provider/feed/operator; no automatic search fallback'},
-    reads:{topicBody:'getTopic',replies:'getReplies',maxRepliesPerCall:100,maxReplyChars:4000,replyOutputUtf8Bytes:24000},
+    reads:{topicBody:'getTopic',replies:'getReplies',maxRepliesPerCall:100,defaultReplyText:'full'},
     publicEndpoints:['site/info.json','site/stats.json','nodes/all.json','nodes/show.json','topics/latest.json','topics/hot.json','topics/show.json','replies/show.json','members/show.json'],
     tokenGetEndpoints:v2GetEndpoints,tokenGetCoverage:'7 of 7 documented GET endpoint families; personal token required; not probed by this call',
     profile:{functions:['getSession','getMember','getMyProfile','getMemberTopics'],fields:'Identity, bio/tagline, location, website/social handles, avatars, created/modified timestamps, pro (when returned)',

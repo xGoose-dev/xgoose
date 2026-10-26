@@ -1,3 +1,4 @@
+import {createReadToolOutputTool} from './readToolOutput';
 // Public surface of `@xgoose/core/tools` — the host's tool-composition
 // file imports these factories, calls them with its port adapters, and
 // merges the result with the page-controller tools and any host-specific
@@ -38,5 +39,8 @@ export function buildCoreTools(deps: MemoryToolDeps): XgooseBuiltTool[] {
     createTodoWriteTool(),
     createRememberTool(deps),
     createForgetTool(deps),
+    createReadToolOutputTool(),
   ];
 }
+
+export {pageToolOutput} from './outputPages';

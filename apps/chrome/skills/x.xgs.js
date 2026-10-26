@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         x
 // @namespace    x
-// @version      0.1.2
+// @version      0.1.4
 // @description  X/Twitter session reader: search, posts/conversations, profiles, user timelines/replies/media/likes, followers/following, home, bookmarks, lists and communities. Reuses observed read-only GraphQL requests; no hardcoded query hashes. Includes rate limits and source cards.
 // @match        https://x.com/*
 // @match        https://www.x.com/*
@@ -24,11 +24,11 @@ import { z } from 'zod';
 const READER_VERSION = 1;
 const readerStates = globalThis[Symbol.for('xgoose.reader.states')] ??= new Map();
 const count = (n = 10, max = 30) => z.number().int().min(1).max(max).default(n);
-const offset = z.number().int().min(0).max(100000).default(0);
+const offset = z.number().int().min(0).default(0);
 const identifier = z.union([z.string().min(1).max(300), z.number().int().positive()]);
 const empty = z.object({});
-const reading = z.object({ offset: offset, maxChars: count(8000, 16000) });
-const readOptions = { offset: offset, maxChars: count(8000, 16000) };
+const reading = z.object({ offset: offset, maxChars: z.number().int().positive().optional() });
+const readOptions = { offset: offset, maxChars: z.number().int().positive().optional() };
 
 function siteFn(summary, input, handler, examples = []) {
   return fn({ summary, input, examples, handler: (raw = {}) => {
@@ -46,6 +46,7 @@ function fault(code, message, extra = {}) {
 
 function safeUrl(value, base = globalThis.location?.href) {
   try {
+    if (typeof value !== 'string' || !value.trim()) return null;
     if (String(value).length > 4096) return null;
     const url = new URL(String(value), base);
     if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return null;
@@ -76,7 +77,7 @@ function source(data, options = {}) {
   if (!url) throw fault('invalid_source_url', 'Source must have an HTTP(S) original URL.');
   const full = String(data.text ?? data.excerpt ?? '');
   const start = options.offset ?? 0;
-  const end = start + (options.maxChars ?? 8000);
+  const end = options.maxChars === undefined ? full.length : start + options.maxChars;
   const fragment = full.slice(start, end);
   const nextOffset = start + fragment.length < full.length ? start + fragment.length : null;
   return {
@@ -94,23 +95,7 @@ function source(data, options = {}) {
 }
 
 function result(sources = [], extra = {}) {
-  const output = { readerVersion: READER_VERSION, sources, ...extra };
-  // Keep the envelope parseable under js_exec's 30 KB character cap. Truncating
-  // whole JSON there would destroy source cards and continuation information.
-  let size = JSON.stringify(output).length;
-  for (let round = 0; size > 25000 && round < 8; round++) {
-    let changed = false;
-    for (const s of output.sources) {
-      if (s.text.length > 100) {
-        s.text = s.text.slice(0, Math.max(100, Math.floor(s.text.length * 0.6)));
-        s.complete = false; s.nextOffset = s.offset + s.text.length; changed = true;
-      }
-      if (s.excerpt.length > 100) s.excerpt = s.excerpt.slice(0, 100);
-    }
-    size = JSON.stringify(output).length;
-    if (!changed) break;
-  }
-  return output;
+  return {readerVersion:READER_VERSION,sources,...extra};
 }
 
 function currentPage(selectors, options = {}) {
@@ -126,7 +111,7 @@ function currentPage(selectors, options = {}) {
     publishedAt: document.querySelector('time[datetime]')?.getAttribute('datetime'),
     text, scope: 'loaded_page', method: 'dom', complete: false,
     access: document.querySelector('[data-testid="paywall"],.paywall,.paywall-title') ? 'preview' : 'session',
-  }, options)], { coverage: 'Only the currently loaded page. Hidden, unloaded, and paywalled content is not included.' });
+  }, options)], { coverage:'loaded_page' });
 }
 
 function walkJson(value, visit, maxNodes = 12000) {
@@ -166,13 +151,7 @@ function observedHeaders(request) {
   return headers;
 }
 
-function boundedRaw(data) {
-  const json = JSON.stringify(data);
-  return json.length <= 22000 ? { data } : {
-    truncated: true, preview: json.slice(0, 22000),
-    instruction: 'Raw JSON was truncated. Use a typed reader with pagination before making claims about its content.',
-  };
-}
+function boundedRaw(data) { return {data}; }
 
 function createClient(site, policy, allowed) {
   const key = `xgoose.reader.limits.${site}.v1`;
@@ -229,6 +208,8 @@ function createClient(site, policy, allowed) {
     state.queued++;
     const run = state.tail.catch(() => {}).then(async () => {
       await reserve(options.signal);
+      const method = options.method ?? 'GET';
+      if (method !== 'GET' && !(method === 'POST' && typeof isSduiReadUrl === 'function' && isSduiReadUrl(url))) throw fault('invalid_endpoint','Only the declared read-only LinkedIn search/profile APIs accept POST.');
       const controller = new AbortController();
       const abort = () => controller.abort();
       if (options.signal?.aborted) abort();
@@ -238,10 +219,18 @@ function createClient(site, policy, allowed) {
         const usePublicRelay = url.origin !== location.origin &&
           ['hacker-news.firebaseio.com','hn.algolia.com','www.sov2ex.com','sov2ex.com'].includes(url.hostname) &&
           typeof globalThis.__xgoose?.publicReaderFetch === 'function';
-        const response = usePublicRelay ? await globalThis.__xgoose.publicReaderFetch(url.href, { signal: controller.signal }) : await fetch(url.href, {
-          method: 'GET', credentials: url.origin === location.origin ? 'include' : 'omit',
-          headers: options.headers, signal: controller.signal, redirect: 'error',
-        });
+        const usePublicationRelay = url.origin !== location.origin && options.publicationSubdomain;
+        let publicationResponse;
+        if(usePublicationRelay) {
+          if(typeof globalThis.__xgoose?.substackRead!=='function')throw fault('reader_unavailable','Reload this page after updating the extension to enable cross-publication API reads.');
+          const reply=await globalThis.__xgoose.substackRead({subdomain:options.publicationSubdomain,path:url.pathname+url.search},{signal:controller.signal});
+          if(!reply.ok)throw fault('publication_read_failed',reply.error);
+          publicationResponse=new Response(reply.body,{status:reply.status,headers:reply.headers});
+        }
+        const response = publicationResponse || (usePublicRelay ? await globalThis.__xgoose.publicReaderFetch(url.href, { signal: controller.signal }) : await fetch(url.href, {
+          method, ...(options.body?{body:options.body}:{}), credentials: url.origin === location.origin ? 'include' : 'omit',
+          headers: options.headers, signal: controller.signal, redirect: 'error', cache: options.cache,
+        }));
         const retry = response.headers.get('retry-after');
         const reset = response.headers.get('x-rate-limit-reset') || response.headers.get('x-ratelimit-reset');
         const remaining = response.headers.get('x-rate-limit-remaining') ?? response.headers.get('x-ratelimit-remaining');
@@ -254,7 +243,7 @@ function createClient(site, policy, allowed) {
         }
         if (!response.ok) throw fault(response.status === 429 ? 'rate_limited' : response.status === 401 ? 'login_required' : response.status === 403 ? 'access_denied' : 'http_error',
           `${site} returned HTTP ${response.status}. No automatic retry was made.`, { status: response.status, retryAfterMs: Math.max(0, state.blockedUntil - Date.now()) });
-        const value = options.type === 'text' ? await response.text() : await response.json();
+        const value = options.parseResponse ? await options.parseResponse(response) : options.type === 'text' ? await response.text() : await response.json();
         if (ttl) {
           if (state.cache.size >= 80) state.cache.delete(state.cache.keys().next().value);
           state.cache.set(cacheKey, { value, until: Date.now() + ttl });
@@ -328,7 +317,7 @@ function xSources(data,options={}) {
       id:entry.rest_id,kind:'profile',title:legacy?.name||entry.core?.name||username,
       url:`https://x.com/${encodeURIComponent(username)}`,author:username,
       text:legacy?.description||entry.profile_bio?.description||'',method:'browser_graphql',access:'session',scope:'profile',
-    },{maxChars:1000}));
+    },{}));
   });
   return result([...tweets.values(),...users.values()].slice(0,20),{nextCursor,
     coverage:'Only entities returned by this session and page of the timeline. ',
@@ -387,7 +376,7 @@ const skill={
   readObserved:siteFn('Advanced access to the allowlisted observed read operations, including evolving community feeds. Reuses current feature flags and query IDs.',z.object({
     operation:z.enum(operations),variables:z.record(z.union([z.string().max(2000),z.number(),z.boolean(),z.array(z.string().max(100)).max(20)])).default({}),
   }),a=>query(a.operation,a.variables,a)),
-  readCurrent:siteFn('Read only the currently loaded posts/conversation without a captured API operation. Loaded-page coverage is explicit.',reading,a=>{
+  readCurrent:siteFn('Read only the currently loaded posts/conversation without a captured API operation.',reading,a=>{
     const articles=[...document.querySelectorAll('article[data-testid="tweet"]')].slice(0,20);
     if(!articles.length)return currentPage(['main','[data-testid="primaryColumn"]'],a);
     return result(articles.map(article=>{
