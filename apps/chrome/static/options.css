@@ -1596,3 +1596,5 @@ a.btn { text-decoration:none; display:inline-flex; align-items:center; justify-c
   .website-grid { grid-template-columns:1fr; }
   .onboarding .onboarding-finish { align-items:flex-start; gap:18px; }
 }
+
+.skill-row-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.skill-row-actions .skill-edit{margin:0}

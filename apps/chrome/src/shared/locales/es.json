@@ -357,5 +357,10 @@
   "Add your own tools when you are ready.": "Añade tus propias herramientas cuando quieras.",
   "Sign-in could not load. Open Settings to try again.": "No se pudo cargar el inicio de sesión. Abre Ajustes para intentarlo de nuevo.",
   "Choose the language for the interface and AI answers together. Automatic follows your browser for the interface and your conversation for answers. You can change them separately in Settings.": "Elige el idioma de la interfaz y de las respuestas de IA a la vez. En modo automático, la interfaz sigue el navegador y las respuestas siguen la conversación. Puedes ajustarlos por separado en Configuración.",
-  "In Microsoft Edge, open the Edge address above. The Chrome image is a reference for locating Allow User Scripts.": "En Microsoft Edge, abre la dirección de Edge indicada arriba. La imagen de Chrome sirve de referencia para encontrar Allow User Scripts."
+  "In Microsoft Edge, open the Edge address above. The Chrome image is a reference for locating Allow User Scripts.": "En Microsoft Edge, abre la dirección de Edge indicada arriba. La imagen de Chrome sirve de referencia para encontrar Allow User Scripts.",
+  "Uninstall": "Desinstalar",
+  "Uninstall failed": "No se pudo desinstalar",
+  "Uninstall custom skill \"{name}\"? Export any local edits first. A bundled copy, if present, will remain available.": "¿Desinstalar el skill personalizado \"{name}\"? Exporta primero los cambios locales. Si existe una copia incluida, seguirá disponible.",
+  "This links your local skill to the reviewed marketplace entry and installs that version.": "Esto vincula tu skill local con la entrada revisada del catálogo e instala esa versión.",
+  "Interface and answer language": "Idioma de la interfaz y las respuestas"
 }

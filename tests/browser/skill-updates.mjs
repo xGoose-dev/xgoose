@@ -60,5 +60,22 @@ try {
  const verified=await send('sw:skill_updates',{check:true});
  assert.equal(verified.updates.some(s=>s.name==='update-test'),false);
  assert.equal(verified.updates.some(s=>s.name==='hacker-news'),true);
- console.log(JSON.stringify({passed:true,detect:true,badge:true,decline:true,update:true,preserveDisabled:true,localEditWarning:true,digestProtection:true,offline:true,mobile:true}));
+ // Legacy local Amex imports must expose an explicit, cancellable link/update.
+ const amexPin=JSON.parse(await readFile('apps/chrome/src/shared/builtinCatalog.json','utf8'))['amex-chat'];
+ const localSource="// ==XGooseSkill==\n// @name amex-chat\n// @namespace amexchat\n// @version 0.1.0\n// @match https://global.americanexpress.com/*\n// ==/XGooseSkill==\nimport {defineSkill,fn} from '@xgoose/skill';\nimport {z} from 'zod';\nexport default defineSkill({read:fn({summary:'Local fixture',input:z.object({}),handler:()=> 'local'})});";
+ const edit=await send('sw:edit_skill',{name:'amex-chat',source:localSource});assert.equal(edit.ok,true,JSON.stringify(edit));
+ await page.evaluate(async()=>{const key='xgoose.skills.user',data=await chrome.storage.local.get(key);delete data[key].find(s=>s.name==='amex-chat').identity;await chrome.storage.local.set(data);});
+ await sw.evaluate(pin=>{globalThis.updateFixture.builtin={id:pin.skillId,authorId:pin.authorId,slug:'amex-chat',name:'amex-chat',namespace:'amexchat',description:'Pinned Amex fixture',version:'99.0.0',matches:['https://global.americanexpress.com/*'],include:[],exclude:[],dependencies:[]};},amexPin);
+ await page.reload();await page.getByRole('button',{name:'Check for updates',exact:true}).click();
+ const link=page.getByRole('button',{name:'Link and update amex-chat',exact:true});await link.waitFor();
+ page.once('dialog',async d=>{assert.match(d.message(),/links your local skill/);await d.dismiss();});await link.click();
+ assert.equal((await send('sw:get_user_skill',{name:'amex-chat'})).version,'0.1.0');
+ await page.locator('#installedSkillSummary').click();
+ const uninstall=page.getByRole('button',{name:'Uninstall amex-chat',exact:true});await uninstall.waitFor();
+ page.once('dialog',d=>d.dismiss());await uninstall.click();assert.equal((await send('sw:get_user_skill',{name:'amex-chat'})).version,'0.1.0');
+ page.once('dialog',d=>d.accept());await uninstall.click();await uninstall.waitFor({state:'hidden'});
+ assert.equal(await send('sw:get_user_skill',{name:'amex-chat'}),null);
+ const restored=(await send('sw:list_skills')).find(skill=>skill.name==='amex-chat');assert.equal(restored.version,'0.4.4');assert.equal(restored.userAuthored,false);
+ await mkdir('artifacts/skill-updates',{recursive:true});await page.screenshot({path:'artifacts/skill-updates/uninstalled-restored-builtin.png',fullPage:true});
+ console.log(JSON.stringify({passed:true,legacyAmexLink:true,uninstallCancel:true,uninstallRestoresBuiltin:true,detect:true,badge:true,decline:true,update:true,preserveDisabled:true,localEditWarning:true,digestProtection:true,offline:true,mobile:true}));
 } finally {await context.close();await rm(profile,{recursive:true,force:true});}

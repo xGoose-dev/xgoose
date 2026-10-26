@@ -40,7 +40,7 @@ try{
  const onboarding=await context.newPage();await onboarding.goto(`chrome-extension://${id}/onboarding.html`);await onboarding.waitForFunction(()=>document.documentElement.lang==='es');assert.equal(await onboarding.locator('#answerLanguage').inputValue(),'auto');
  // One onboarding selection updates both stored preferences and translates this page without reload.
  await onboarding.locator('#answerLanguage').selectOption('zh-CN');await onboarding.waitForFunction(()=>document.documentElement.lang==='zh-CN');
- assert.equal(await onboarding.locator('label[for="answerLanguage"]').innerText(),'语言');assert.equal(await onboarding.locator('h1').innerText(),'欢迎使用 xgoose');assert.equal(await onboarding.locator('#checkPermission').innerText(),'重新检查');
+ assert.equal(await onboarding.locator('label[for="answerLanguage"]').innerText(),'界面和回答语言');assert.equal(await onboarding.locator('h1').innerText(),'欢迎使用 xgoose');assert.equal(await onboarding.locator('#checkPermission').innerText(),'重新检查');
  await settings.waitForFunction(()=>document.querySelector('#language').value==='zh-CN'&&document.querySelector('#answerLanguage').value==='zh-CN');
  assert.match(await onboarding.locator('.answer-language-row .hint').first().innerText(),/之后可在设置中分别调整/);
  await onboarding.screenshot({path:'artifacts/localization/onboarding-zh.png',fullPage:true});
