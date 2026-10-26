@@ -1,3 +1,4 @@
+import {userScriptsReminder} from "@/shared/userScriptsSetup";
 /// <reference types="chrome" />
 
 // `todo_write`, `remember`, and `forget` come from `@xgoose/core`.
@@ -5,8 +6,7 @@
 // from `@xgoose/page-controller`. This file owns ONLY the host-specific
 // skill registry tools (list_skills, search_skills, help, read_skill,
 // edit_skill, create_skill, skill_help) — they bridge to the background
-// SW for the skill registry. Skill *invocation* is via `js_exec` only:
-// `await xgoose.skills.<ns>.<fn>(args)`.
+// SW for the skill registry and structured skill_call invocations.
 
 import { z } from "zod";
 import { parseSkillFile, SkillHeaderError } from "@xgoose/skill-runtime";
@@ -16,7 +16,7 @@ import { originForUrl } from "@/shared/patterns";
 import { callBridge } from "@/content/pageRpc";
 import { getActiveSkills } from "@/content/state";
 import {
-  injectSkills,
+  detectActiveSkills,
   invalidateInjectedSkills,
 } from "@/content/skillInjector";
 import {
@@ -39,8 +39,7 @@ const MAX_RESULT_BYTES = 30_000;
 // This keeps the system reminder cache-warm across turns and saves
 // ~3-10 KB per skill per turn.
 //
-// There is NO `skill_call` tool — to invoke a skill function the agent
-// writes a `js_exec` snippet (`return await xgoose.skills.<ns>.<fn>(args);`).
+// Prefer structured skill_call invocations; raw js_exec requires User Scripts.
 // The schemas authored with `defineSkill`/`fn` are documentation only; the
 // runtime does not validate. `help` is how the agent discovers the input
 // shape before writing the call.
@@ -55,7 +54,7 @@ function findSkillSummary(
 const listSkillsTool = defineTool({
   name: "list_skills",
   description:
-    "Compact list of every installed skill. Returns name, namespace, description, matches (URL patterns), keywords, enabled, activeOnThisPage, primary function (signature + ready-to-paste `js_exec` invocation snippet), and a name-only list of other functions. For full per-function input/output JSON Schema + examples, call `help({ skill, function? })`. Invoke any function via `js_exec`: `return await xgoose.skills.<ns>.<fn>(args);`.",
+    "Compact list of every installed skill. Returns name, namespace, description, matches (URL patterns), keywords, enabled, activeOnThisPage, primary function (signature + ready-to-paste `js_exec` invocation snippet), and a name-only list of other functions. For full per-function input/output JSON Schema + examples, call `help({ skill, function? })`. Invoke functions with `skill_call({skill, function, args})`; packaged skills need no User Scripts permission.",
   inputSchema: z.object({
     scope: z
       .enum(["all", "page"])
@@ -211,7 +210,7 @@ const searchSkillsTool = defineTool({
 const helpTool = defineTool({
   name: "help",
   description:
-    "CLI-style `help` for a skill or a single skill function. Pass `{ skill }` for a one-line summary of every function (name + summary + signature + ready-to-paste `js_exec` invocation snippet). Pass `{ skill, function }` for full input JSON Schema, output schema (if declared), invocation snippet, and verbatim examples for that function. Call this BEFORE writing your first `js_exec` against an unfamiliar skill function — the JSON Schema is the only source of truth for the input shape (the runtime does not validate). Requires the skill to be ACTIVE on the current page; otherwise falls back to the static build-time summary stored in the registry.",
+    "CLI-style `help` for a skill or a single skill function. Pass `{ skill }` for a one-line summary of every function (name + summary + signature + ready-to-paste `js_exec` invocation snippet). Pass `{ skill, function }` for full input JSON Schema, output schema (if declared), invocation snippet, and verbatim examples for that function. Call this BEFORE using an unfamiliar skill function with `skill_call` — the JSON Schema is the only source of truth for the input shape (the runtime does not validate). Requires the skill to be ACTIVE on the current page; otherwise falls back to the static build-time summary stored in the registry.",
   inputSchema: z.object({
     skill: z
       .string()
@@ -237,32 +236,11 @@ const helpTool = defineTool({
     // gold path — same answer the agent would get from a hand-rolled
     // `js_exec` against `xgoose.skills.<ns>.__describe__(fn?)`.
     try {
-      const code = fnName
-        ? `return typeof xgoose !== 'undefined' && xgoose.skills && xgoose.skills[${JSON.stringify(
-            ns,
-          )}] && typeof xgoose.skills[${JSON.stringify(ns)}].__describe__ === 'function' ? xgoose.skills[${JSON.stringify(
-            ns,
-          )}].__describe__(${JSON.stringify(fnName)}) : { __notLoaded: true };`
-        : `return typeof xgoose !== 'undefined' && xgoose.skills && xgoose.skills[${JSON.stringify(
-            ns,
-          )}] && typeof xgoose.skills[${JSON.stringify(ns)}].__describe__ === 'function' ? xgoose.skills[${JSON.stringify(
-            ns,
-          )}].__describe__() : { __notLoaded: true };`;
-      const res = (await callBridge("exec", {
-        code,
-        args: [],
-        timeoutMs: 5000,
-        execId: Math.random().toString(36).slice(2, 12),
-      })) as { ok: boolean; result?: any; error?: string };
-      if (res.ok && res.result && !res.result.__notLoaded) {
-        return {
-          ok: true,
-          skill: meta.name,
-          namespace: ns,
-          function: fnName ?? null,
-          source: "live",
-          help: res.result,
-        };
+      const snapshot = await send("sw:skill_snapshot", undefined);
+      const info = snapshot[ns];
+      const result = fnName ? info?.functions?.[fnName] : info?.functions;
+      if (result) {
+        return {ok:true, skill:meta.name, namespace:ns, function:fnName ?? null, source:"live", help:result};
       }
     } catch {
       /* fall through to static fallback below */
@@ -324,10 +302,34 @@ const helpTool = defineTool({
   },
 });
 
-// Skill invocation is `js_exec`-only. The agent writes a snippet like
-// `return await xgoose.skills.<ns>.<fn>(args);` and the same page bridge
-// executes it. Use `help({ skill, function })` to discover the input
-// shape before writing the snippet; the runtime does not validate args.
+/** Structured calls work for packaged skills even with User Scripts disabled. */
+const skillCallTool = defineTool({
+  name: "skill_call",
+  description: "Call an exported function of an active website skill. Prefer this for ALL skill calls; built-in skills work without Allow User Scripts. Use help({skill,function}) to discover arguments. Pass the skill name or namespace, the function name and a JSON args object. User-installed or edited skills still require Allow User Scripts. Each call executes once; a timeout does not undo actions.",
+  inputSchema: z.object({
+    skill: z.string().min(1),
+    function: z.string().min(1),
+    args: z.record(z.unknown()).default({}),
+    timeoutMs: z.number().int().min(100).max(120000).optional(),
+  }),
+  isReadOnly: false,
+  isConcurrencySafe: () => false,
+  label: input => `Called ${input?.skill ?? "skill"}.${input?.function ?? ""}`,
+  execute: async ({skill,function: fn,args,timeoutMs}, opts) => {
+    opts.abortSignal?.throwIfAborted();
+    const active = getActiveSkills().find(s => s.name === skill || s.namespace === skill);
+    if (!active) throw new Error("Skill is not active on this page. Use list_skills({scope:'page'}). User-installed skills require Allow User Scripts.");
+    const result = await send("sw:skill_invoke", {namespace:active.namespace,functionName:fn,args,timeoutMs});
+    if (!result.ok) throw new Error('error' in result ? result.error : JSON.stringify(result));
+    return result.result;
+  },
+  toModelOutput: result => {
+    const text = safeJson(result);
+    const bytes = new TextEncoder().encode(text);
+    if (bytes.length <= 120000) return [{type:"text",text}];
+    return [{type:"text",text:new TextDecoder().decode(bytes.slice(0,119000))+"\n[Result truncated at 120 KB. Do not claim complete coverage. Request a narrower range or use the skill's continuation cursor.]"}];
+  },
+});
 
 /**
  * Re-inject the named skill into the current tab so its newly-bundled
@@ -351,7 +353,8 @@ async function hotReloadCurrentTab(
   if (!match) return { active: false };
   invalidateInjectedSkills([name]);
   try {
-    await injectSkills([match]);
+    const detected = await detectActiveSkills(active);
+    if (!detected.some(s => s.name === name)) return { active:false, namespace:match.namespace };
   } catch (err) {
     console.warn(`[xgoose] hot-reload failed for ${name}:`, err);
     return { active: false, namespace: match.namespace };
@@ -518,6 +521,7 @@ export function buildPageControllerTools(): XgooseBuiltTool[] {
 }
 
 const SKILL_TOOLS: XgooseBuiltTool[] = [
+  skillCallTool,
   listSkillsTool,
   readSkillTool,
   searchSkillsTool,
@@ -535,7 +539,15 @@ export function buildSkillTools(): XgooseBuiltTool[] {
 /** Combined page-controller + skill tools — used by `createAgent`
  *  alongside the core tools from `@xgoose/core`. */
 export function buildLegacyTools(): XgooseBuiltTool[] {
-  return [...buildPageControllerTools(), ...SKILL_TOOLS];
+  return [...buildPageControllerTools().map(tool=>{
+    if(tool.name!=="js_exec")return tool;
+    const execute=tool.definition.execute;
+    return {...tool,definition:{...tool.definition,execute:async(input:any,opts:any)=>{
+      const status=await send("sw:user_scripts_status",undefined);
+      if(!status.enabled){window.dispatchEvent(new Event("xgoose:user-scripts-required"));throw new Error("Allow User Scripts is disabled. Stop retrying website tools; show the setup link and steps."+userScriptsReminder(chrome.runtime.id));}
+      return execute(input,opts);
+    }}};
+  }), ...SKILL_TOOLS];
 }
 
 export const TOOL_META: Record<string, XgooseToolMeta> = Object.fromEntries(

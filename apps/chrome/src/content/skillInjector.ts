@@ -74,6 +74,8 @@ async function injectUserSkill(s: RegistrySkill): Promise<void> {
   const name = s.filePath.slice(USER_SKILL_PREFIX.length);
   const skill = await send("sw:get_user_skill", { name });
   if (!skill) throw new Error(`user-skill not found in storage: ${name}`);
+  const status = await send("sw:user_scripts_status", undefined);
+  if (!status.enabled) return; // Built-in injection and discovery remain available.
   const wrapped = skill.bundled;
   if (!wrapped || !wrapped.trim()) {
     throw new Error(`user-skill ${name} has no bundled IIFE`);
@@ -124,7 +126,7 @@ export async function injectSkills(skills: RegistrySkill[]): Promise<void> {
   for (const s of userSkills) {
     try {
       await injectUserSkill(s);
-      injectedSkills.set(s.name, fingerprintFor(s));
+      if ((await send("sw:user_scripts_status", undefined)).enabled) injectedSkills.set(s.name, fingerprintFor(s));
     } catch (err) {
       console.warn(`[xgoose] failed to inject user skill ${s.name}:`, err);
     }
@@ -146,4 +148,20 @@ export function resetInjectedSkills(): void {
 
 export function injectedSkillNames(): string[] {
   return Array.from(injectedSkills.keys());
+}
+
+/** URL matches are candidates; a bundle's @detect gate can still reject it. */
+export async function detectActiveSkills(candidates: RegistrySkill[]): Promise<RegistrySkill[]> {
+  let loaded: Awaited<ReturnType<typeof send<"sw:skill_snapshot">>>;
+  try {
+    await injectSkills(candidates);
+    loaded = await send("sw:skill_snapshot", undefined);
+  } catch { return []; }
+  const namespaces = new Set(Object.keys(loaded));
+  const byName = new Map(candidates.map(s => [s.name, s]));
+  return candidates.filter(s => namespaces.has(s.namespace) && s.requires.every(ref => {
+    const name = ref.replace(/@[^@]+$/, "");
+    const dependency = byName.get(name) ?? candidates.find(d => d.namespace === name);
+    return !!dependency && namespaces.has(dependency.namespace);
+  }));
 }

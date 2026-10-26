@@ -4,3 +4,5 @@
 // (window.__xgoose + the request/response CustomEvent listeners) lives
 // in `@xgoose/page-controller/pageBridge`.
 import "@xgoose/page-controller/pageBridge";
+import { installSubstackReadPageBridge } from "@/shared/substackReadBridge";
+installSubstackReadPageBridge((window as any).__xgoose);

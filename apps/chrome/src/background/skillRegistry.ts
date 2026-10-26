@@ -1,3 +1,4 @@
+import builtinCatalogIdentities from "@/shared/builtinCatalog.json";
 /// <reference types="chrome" />
 //
 // Chrome skill registry. Ported verbatim from
@@ -123,6 +124,7 @@ export async function listSkillsWithEnabled(): Promise<
   }));
 }
 
+/** URL candidates only. The content host must filter by the loaded @detect result. */
 export async function activeSkillsForUrl(
   url: string,
 ): Promise<RegistrySkill[]> {
@@ -287,9 +289,12 @@ export async function editSkillFromSource(args: {
     }
   }
 
+  const builtinOrigin = !existing ? (await loadBuiltinRegistry()).find(s => s.name === args.name) : undefined;
   const next: UserSkill = UserSkillSchema.parse({
     ...existing,
     ...parsed.header,
+    identity: existing?.identity ?? (builtinOrigin ? (builtinCatalogIdentities as Record<string,{authorId:string;skillId:string}>)[args.name] : undefined),
+    sourceSha: existing?.sourceSha ?? builtinOrigin?.sourceSha,
     source: args.source,
     bundled,
     functions,

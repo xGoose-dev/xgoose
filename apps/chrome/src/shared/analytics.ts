@@ -1,120 +1,56 @@
-// Anonymous, opt-out usage analytics.
-//
-// Events are funneled to the xgoose-web worker (`POST /a/collect`), which
-// forwards them to the GA4 Measurement Protocol (web data stream
-// `xgoose-extensions`, project xgoose-4ee54). We deliberately do NOT talk to
-// google-analytics.com from the extension: keeping it first-party means the
-// GA4 api_secret never ships in the bundle and Safari/iOS never hit a domain
-// on Apple's tracker list.
-//
-// Transport model: the background service worker owns the queue + network. UI
-// contexts (popup, options, content script) forward each event over the
-// `sw:track` RPC so there is a single flush path and a single consent check.
-
-import { send } from "./messages";
-import { loadAll, getSettings } from "./storage";
-import { getAccount, XGOOSE_API_URL } from "./account";
-
-export type TrackParams = Record<string, string | number | boolean>;
-
-/** Distinguishes this host in GA4 (chrome | firefox | safari_ext). */
-const PLATFORM = "chrome";
-const COLLECT_URL = `${XGOOSE_API_URL}/a/collect`;
-const FLUSH_DEBOUNCE_MS = 1500;
-const MAX_BATCH = 25;
-const CLIENT_ID_KEY = "xgoose.analytics.clientId";
-
-const browserAPI: typeof chrome =
-  (globalThis as unknown as { browser?: typeof chrome }).browser ??
-  (globalThis as unknown as { chrome: typeof chrome }).chrome;
-
-/**
- * Stable per-install GA4 client_id. Minted once and persisted in
- * `storage.local`; scopes a "browser/device" in GA4 (the cross-surface
- * User-ID join uses the signed-in account id instead, attached below).
- */
-async function getClientId(): Promise<string> {
-  const got = await browserAPI.storage.local.get(CLIENT_ID_KEY);
-  const existing = got[CLIENT_ID_KEY];
-  if (typeof existing === "string" && existing.length > 0) return existing;
-  const id = (crypto as Crypto & { randomUUID: () => string }).randomUUID();
-  await browserAPI.storage.local.set({ [CLIENT_ID_KEY]: id });
-  return id;
+// Optional product telemetry through the first-party GA4 proxy. No content or credentials.
+import {send} from './messages';
+import {loadAll,getSettings} from './storage';
+import {getAccount,XGOOSE_API_URL} from './account';
+export type TrackParams=Record<string,string|number|boolean>;
+const QUEUE='xgoose.analytics.queue-v2',CLIENT='xgoose.analytics.clientId',SESSION='xgoose.analytics.session-v2';
+const api:typeof chrome=(globalThis as any).browser??(globalThis as any).chrome;
+interface Event {name:string;at:number;ownerId?:string;params:TrackParams}
+const allowed=new Set(['platform','surface','provider','model','version','extension_version','session_id','flow_id','step','outcome','reason','error_kind','http_status','duration_ms','first_response_ms','steps','skill','count','is_fresh_convo','prompt_len','page','target','method','enabled','status','is_new','event_id','engagement_time_msec','client_id_kind']);
+function safeParams(params:TrackParams):TrackParams {return Object.fromEntries(Object.entries(params).filter(([key,value])=>allowed.has(key)&&(typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value)||typeof value==='string'&&/^[a-zA-Z0-9_./:-]{1,100}$/.test(value)&&!value.includes('://')&&!value.startsWith('sk-'))));}
+let job=Promise.resolve();let timer:ReturnType<typeof setTimeout>|undefined;
+const enqueue=(fn:()=>Promise<void>)=>{job=job.then(fn).catch(()=>{});};
+export function track(event:string,params:TrackParams={}) {
+ if(typeof window==='undefined')recordEvent(event,params);else void send('sw:track',{event,params}).catch(()=>{});
 }
-
-interface QueuedEvent {
-  name: string;
-  params: TrackParams;
+export function recordEvent(event:string,params:TrackParams={}) {
+ if(!/^[a-z][a-z0-9_]{0,39}$/.test(event))return;
+ enqueue(async()=>{
+  await loadAll();if(!getSettings().analyticsEnabled)return;
+  const saved=await api.storage.local.get([QUEUE,SESSION]);const now=Date.now();
+  let session=saved[SESSION] as {id:number;last:number}|undefined;
+  if(!session||now-session.last>1800000)session={id:Math.floor(now/1000),last:now};session.last=now;
+  const queue=(saved[QUEUE]??[]) as Event[];
+  const account=await getAccount();
+  queue.push({name:event,at:now,ownerId:account?.user.id,params:{...safeParams(params),platform:'chrome',surface:'extension',extension_version:api.runtime.getManifest().version,session_id:session.id,event_id:crypto.randomUUID()}});
+  await api.storage.local.set({[QUEUE]:queue.slice(-500),[SESSION]:session});
+ });
+ if(!timer)timer=setTimeout(()=>{timer=undefined;flush();},1500);
 }
-
-let queue: QueuedEvent[] = [];
-let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** True inside the MV3 background service worker (no DOM). */
-function isServiceWorker(): boolean {
-  return typeof window === "undefined";
+function flush(){enqueue(async()=>{
+ await loadAll();if(!getSettings().analyticsEnabled){await api.storage.local.remove(QUEUE);return;}
+ const saved=await api.storage.local.get([QUEUE,CLIENT]);const queue=(saved[QUEUE]??[]) as Event[];if(!queue.length)return;
+ const clientId=typeof saved[CLIENT]==='string'?saved[CLIENT]:crypto.randomUUID();await api.storage.local.set({[CLIENT]:clientId});
+ const account=await getAccount();const batch=queue.slice(0,25).filter((e,i,a)=>a.slice(0,i+1).every(x=>x.ownerId===a[0].ownerId));
+ const response=await fetch(`${XGOOSE_API_URL}/a/collect`,{method:'POST',headers:{'content-type':'application/json',...(account&&batch[0].ownerId===account.user.id?{authorization:`Bearer ${account.accessToken}`}:{})},body:JSON.stringify({client_id:clientId,consent:true,events:batch.map(({name,at,params})=>({name,at,params}))}),signal:AbortSignal.timeout(10000)});
+ if(response.ok){await api.storage.local.set({[QUEUE]:queue.slice(batch.length)});if(queue.length>batch.length)setTimeout(flush,0);}
+});}
+if(typeof window==='undefined'&&api?.alarms){
+ void api.alarms.get('xgoose-analytics-flush').then(a=>{if(!a)return api.alarms.create('xgoose-analytics-flush',{periodInMinutes:1});});
+ api.alarms.onAlarm.addListener(a=>{if(a.name==='xgoose-analytics-flush')flush();});
+ api.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&Object.values(changes).some(c=>(c.newValue as any)?.analyticsEnabled===false))enqueue(async()=>{await api.storage.local.remove(QUEUE);});});
+ flush();
 }
-
-/**
- * Record a funnel event. Safe to call from any extension context. UI contexts
- * forward to the background worker; the worker queues + flushes. Never throws.
- */
-export function track(event: string, params: TrackParams = {}): void {
-  if (isServiceWorker()) {
-    recordEvent(event, params);
-  } else {
-    void send("sw:track", { event, params }).catch(() => undefined);
-  }
-}
-
-/**
- * Background-side queue insert. Called directly by background code and by the
- * `sw:track` RPC handler. Batches a short burst then flushes.
- */
-export function recordEvent(event: string, params: TrackParams = {}): void {
-  queue.push({ name: event, params });
-  if (queue.length >= MAX_BATCH) {
-    void flush();
-    return;
-  }
-  if (flushTimer) return;
-  flushTimer = setTimeout(() => {
-    flushTimer = null;
-    void flush();
-  }, FLUSH_DEBOUNCE_MS);
-}
-
-async function flush(): Promise<void> {
-  if (flushTimer) {
-    clearTimeout(flushTimer);
-    flushTimer = null;
-  }
-  const events = queue.splice(0, MAX_BATCH);
-  if (events.length === 0) return;
-  try {
-    await loadAll();
-    if (getSettings().analyticsEnabled === false) {
-      queue = [];
-      return;
-    }
-    const clientId = await getClientId();
-    const account = await getAccount();
-    const body = JSON.stringify({
-      client_id: clientId,
-      ...(account?.user.id ? { user_id: account.user.id } : {}),
-      consent: true,
-      events: events.map((e) => ({
-        name: e.name,
-        params: { ...e.params, platform: PLATFORM, surface: "extension" },
-      })),
-    });
-    await fetch(COLLECT_URL, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body,
-      keepalive: true,
-    });
-  } catch {
-    // Analytics must never break a flow or surface errors to the user.
-  }
+/** Classify locally; raw error messages never enter analytics. */
+export function failureReason(error:unknown):string {
+ const e=error as {message?:string;name?:string;status?:number;statusCode?:number};const text=String(e?.message??error).toLowerCase();
+ if(/concurr|already running|still running/.test(text))return 'concurrency_limit';
+ if(/credit|balance|trial/.test(text))return /expir/.test(text)?'trial_expired':'credit_unavailable';
+ if(/429|rate|too_many/.test(text))return 'rate_limited';
+ if(/user.?scripts|permission/.test(text))return 'permission';
+ if(/sign.?in|401|token|authentic/.test(text))return 'authentication';
+ if(/timeout|timed out/.test(text)||e?.name==='TimeoutError')return 'timeout';
+ if(/network|fetch|connection/.test(text))return 'network';
+ if(/digest|identity/.test(text))return 'package_validation';
+ return 'other';
 }

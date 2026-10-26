@@ -20,10 +20,22 @@ export const KNOWN_MODELS: Record<Provider, string[]> = {
 };
 
 /** Model credentials and transport stay in the host; this object contains no secrets. */
+export function normalizeProviderBaseUrl(provider: Provider, value: string): string {
+  const google = provider !== "openai-compat";
+  let root = (value.trim() || (google ? "https://generativelanguage.googleapis.com" : "https://api.openai.com")).replace(/\/+$/, "");
+  if (google) {
+    if (!/\/v\d+(?:beta\d*|alpha\d*)?$/.test(root)) root += "/v1beta";
+  } else {
+    root = root.replace(/\/chat\/completions$/, "");
+    // Preserve versioned compatible APIs, including Gemini's /v1beta/openai.
+    if (!/\/v\d+(?:beta\d*|alpha\d*)?(?:\/openai)?$/.test(root)) root += "/v1";
+  }
+  return root;
+}
+
 export function createModel(s: CoreSettings, _fetchImpl?: HostFetcher): Model<Api> {
   const google = s.provider === "gemini" || s.provider === "gemini-litellm";
-  let baseUrl = (s.baseUrl || (google ? "https://generativelanguage.googleapis.com/v1beta" : "https://api.openai.com")).replace(/\/+$/, "");
-  if (!google && !baseUrl.endsWith("/v1")) baseUrl += "/v1";
+  const baseUrl = normalizeProviderBaseUrl(s.provider, s.baseUrl);
   return {
     id: s.model, name: s.model, provider: google ? "google" : "xgoose",
     api: google ? "google-generative-ai" : "openai-completions",

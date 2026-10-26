@@ -4,12 +4,22 @@ An open source, in-page browser agent powered by PI. This repository contains
 the Chrome extension, shared agent core, page tools, floating chat UI, skill
 runtime, and synthetic regression tests. MIT licensed.
 
-**0.2.1 is a release candidate with refreshed store assets and toolbar icons.**
-The Chrome Web Store currently serves 0.1.0; the 0.2 update is being prepared for
-review. See [the Chrome page](https://xgoose.org/chrome/) for setup and the store
-link. The documented release gate still requires three consecutive real-browser
-Hosted Luna runs and human evidence review; passing synthetic tests alone does
-not meet that gate.
+**0.3.0** adds a focused sign-in onboarding flow, separate interface and answer
+language preferences, cleaner personalization settings, and built-in website
+skills. The interface follows the browser by default. **Automatic** answer
+language adds no language directive to AI context; only an explicit preferred
+answer language sets a default. Requests in chat take priority.
+
+Getting started includes email sign-in, an illustrated optional User Scripts
+setup, and eight example websites. Skill installation and authoring live on a
+separate advanced setup page. YouTube uses basic page reading from the Chrome
+toolbar; a dedicated YouTube skill is not bundled.
+
+Gemini BYOK uses the background streaming transport, including tools, images,
+cancellation and automatic context compaction. OpenAI-compatible URLs preserve
+versioned API paths. Live Gemini native, Gemini OpenAI-compatible and OpenAI
+(gpt-4o-mini) tool round trips were tested separately from synthetic regressions.
+See [the Chrome page](https://xgoose.org/chrome/) for setup and the store link.
 
 ## Build
 
@@ -21,8 +31,8 @@ npm run check
 ```
 
 Load `apps/chrome/dist` as an unpacked extension in `chrome://extensions`.
-Open its Details page and enable **Allow User Scripts**. Arbitrary JavaScript,
-installed skills and agent-authored skills require this permission; no eval or
+Built-in skills and page reading work immediately after installation. For custom scripts, open its Details page and enable **Allow User Scripts**. Arbitrary JavaScript,
+community, edited, online-updated and agent-authored skills require this permission; no eval or
 Blob-module execution fallback is provided.
 
 The agent runs in the current document. Navigation, refresh and closing the tab
@@ -36,7 +46,7 @@ Click the confirmation link in your inbox; the extension signs in automatically.
 New accounts are created on confirmation, with no password or separate website
 registration. You can close settings while waiting, including restarting Chrome.
 Links expire after ten minutes; settings lets you change the email or request
-another link. Hosted Luna still requires explicit conversation-storage consent.
+another link. The settings disclaimer explains Hosted AI conversation storage.
 
 `npm run e2e` exercises the built extension in Chromium using synthetic provider
 and email responses, including recovery of pending login after a browser restart.
@@ -46,7 +56,7 @@ It does not replace real email delivery or the live forum release gate.
 
 BYOK supports OpenAI-compatible endpoints (including LiteLLM) and Gemini.
 Hosted inference is restricted to Luna and requires a verified account, live
-session, explicit transcript consent and available trial credit. The hosted
+session and available trial credit. The hosted
 backend, production configuration and full skills collection are private and
 are not required to build this repository.
 

@@ -1,0 +1,50 @@
+{
+  "linkedin": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "37cbd00b-5426-4586-b170-62c8cf4b8e9a"
+  },
+  "hyatt-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "45ab8d9e-b971-4ee4-ae88-4722bda70e85"
+  },
+  "vbulletin-forum": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "48058efe-1992-4053-a332-7403f8dd3278"
+  },
+  "aa-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "4c853db3-f57e-4d9b-aa07-0a721fd3b648"
+  },
+  "uscreditcardguide": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "831cf492-ab18-4955-8290-3237faa7049f"
+  },
+  "v2ex": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "833d6ddb-0f49-45bb-b11d-1925dafd30f4"
+  },
+  "substack": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "901d66f5-a18f-41ad-8aee-7d608a72c430"
+  },
+  "flyertalk": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "982bc770-373e-4c9f-a6f2-cc8afdc2c3e5"
+  },
+  "x": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "deef1332-fcef-4925-b6f8-b407c07f3d62"
+  },
+  "hacker-news": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "e8aa0907-70e3-43d2-9bb4-e7057364cf5a"
+  },
+  "uscardforum": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "ee59fb56-c34d-4154-995d-b9e5fb35faa1"
+  },
+  "discourse-forum": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "f73a8567-96a8-43be-9066-5520c03c1bd3"
+  }
+}

@@ -1,3 +1,7 @@
+import {initializeLocale,saveLanguage,mountAnswerLanguage,translate,type LanguagePreference} from "@/shared/locale";
+import { mountSkillUpdates } from "./skillUpdates";
+import { mountCatalog } from "./catalog";
+import { mountSetup } from "./setup";
 /// <reference types="chrome" />
 
 import { send } from "@/shared/messages";
@@ -20,8 +24,9 @@ import {
   findEntry,
   type ModelEntry,
 } from "@/shared/modelCatalog";
-import { ACCOUNT_KEY, onAccountChange, type Account } from "@/shared/account";
-import { track } from "@/shared/analytics";
+import { onAccountChange } from "@/shared/account";
+import {mountAccountSection} from "@/shared/accountSection";
+import { track,failureReason } from "@/shared/analytics";
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<Provider, string> = {
   ...CORE_DEFAULT_MODEL_BY_PROVIDER,
@@ -64,26 +69,11 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
 }
 
 (async function init() {
+  await initializeLocale(document.body);
   void mountAccountSection().catch(err => console.error("[xgoose] account init failed", err));
-  const privacy = document.createElement("section");
-  privacy.className = "card";
-  privacy.style.marginBottom = "100px";
-  privacy.style.scrollMarginBottom = "100px";
-  privacy.innerHTML = `<h2>Conversation privacy</h2><p>Hosted Luna saves full messages, actual tool inputs and outputs, errors and summaries for 90 days. Credentials are redacted. Staff can read a conversation only after you authorize that specific conversation. View, export and delete at <a href="https://xgoose.org/account/" target="_blank">Your account</a>.</p><p><label><input id="hostedConsent" type="checkbox" disabled> I agree to conversation storage when using Hosted Luna.</label></p><p><label><input id="byokConsent" type="checkbox" disabled> Also upload my BYOK conversations (optional; off by default).</label></p><button id="saveConsent" disabled>Save conversation preferences</button><p id="consentStatus"></p><h2>Allow User Scripts</h2><p>Open chrome://extensions → xgoose → Details and enable Allow User Scripts. Disabling skills stops future calls; existing requests and page changes may require a refresh to clear.</p>`;
-  document.querySelector(".page")!.append(privacy);
-  const hosted = privacy.querySelector<HTMLInputElement>("#hostedConsent")!;
-  const byok = privacy.querySelector<HTMLInputElement>("#byokConsent")!;
-  const status = privacy.querySelector<HTMLElement>("#consentStatus")!;
-  void (async () => {
-    try { const c = await send("sw:consent_get", undefined); hosted.checked=c.hosted;byok.checked=c.byok; } catch { status.textContent="Sign in to manage server preferences. BYOK upload is off by default."; }
-    hosted.disabled=false; byok.disabled=false;
-    privacy.querySelector<HTMLButtonElement>("#saveConsent")!.disabled=false;
-  })();
-  privacy.querySelector("#saveConsent")!.addEventListener("click",async()=>{
-    try { await send("sw:consent_set",{hosted:hosted.checked,byok:byok.checked});status.textContent="Saved. Withdrawing stops future uploads and clears pending uploads. Existing records can be deleted on your account page."; }
-    catch(error) { status.textContent=String(error); }
-  });
+  mountSetup();
   const settings = await loadSettings();
+  const connectionModeEl = $<HTMLSelectElement>("#connectionMode");
   const providerEl = $<HTMLSelectElement>("#provider");
   const modelEl = $<HTMLSelectElement>("#model");
   const modelCustomToggleEl = $<HTMLInputElement>("#modelCustomToggle");
@@ -99,6 +89,16 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   const baseUrlHintEl = $<HTMLSpanElement>("#baseUrlHint");
   const hostedStatusRowEl = $<HTMLDivElement>("#hostedStatusRow");
   const hostedStatusHintEl = $<HTMLSpanElement>("#hostedStatusHint");
+  const languageEl=$<HTMLSelectElement>("#language");
+  languageEl.value=settings.language;
+  languageEl.addEventListener("change",async()=>{
+    languageEl.disabled=true;
+    try{await saveLanguage(languageEl.value as LanguagePreference);}
+    catch{document.querySelector("#saveStatus")!.textContent=translate("Language could not be saved. Please try again.");}
+    finally{languageEl.disabled=false;}
+  });
+  chrome.storage.onChanged.addListener((changes,area)=>{if(area==="local"&&changes[SETTINGS_KEY])languageEl.value=(changes[SETTINGS_KEY].newValue as any)?.language??"auto";});
+  await mountAnswerLanguage($<HTMLSelectElement>("#answerLanguage"),document.querySelector<HTMLElement>("#answerLanguageStatus"));
   const themeEl = $<HTMLSelectElement>("#theme");
   const launcherVisibilityEl = $<HTMLSelectElement>("#launcherVisibility");
   const jsExecTimeoutMsEl = $<HTMLInputElement>("#jsExecTimeoutMs");
@@ -210,7 +210,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
 
   resetLayoutBtn.addEventListener("click", async () => {
     if (
-      !confirm("Reset the floating button position and panel size to defaults?")
+      !confirm(translate("Reset the floating button position and panel size to defaults?"))
     )
       return;
     await saveLayout({ ...DEFAULT_LAYOUT });
@@ -245,6 +245,13 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   let lastProviderForDraft: Provider = settings.provider;
 
   providerEl.value = settings.provider;
+  connectionModeEl.value = settings.provider === "xgoose-hosted" ? "hosted" : "byok";
+  let lastByokProvider: Provider = settings.provider === "xgoose-hosted" ? "gemini" : settings.provider;
+  connectionModeEl.addEventListener("change", () => {
+    if (providerEl.value !== "xgoose-hosted") lastByokProvider = providerEl.value as Provider;
+    providerEl.value = connectionModeEl.value === "hosted" ? "xgoose-hosted" : lastByokProvider;
+    providerEl.dispatchEvent(new Event("change"));
+  });
   populateModelDropdown(settings.provider, settings.model, settings.thinking);
   apiKeyEl.value = getProviderApiKey(settings);
   baseUrlEl.value = getProviderBaseUrl(settings);
@@ -346,7 +353,12 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
     // the BYO fields entirely and surface a sign-in-aware status banner.
     const isHosted = p === "xgoose-hosted";
     apiKeyRowEl.hidden = isHosted;
-    apiKeyTestRowEl.hidden = isHosted;
+    apiKeyTestRowEl.hidden = false;
+    $("#providerRow").hidden = isHosted;
+    $("#modelCustomToggleRow").hidden = isHosted;
+    $("#modelGrid").classList.toggle("two", !isHosted);
+    connectionModeEl.value = isHosted ? "hosted" : "byok";
+    testApiKeyBtn.textContent = isHosted ? "Test hosted AI" : "Test API key";
     baseUrlOuterRowEl.hidden = isHosted;
     hostedStatusRowEl.hidden = !isHosted;
     if (isHosted) {
@@ -362,7 +374,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
       testApiKeyStatus.classList.add("saved");
       testApiKeyStatus.style.color = "";
     } else if (kind === "err") {
-      testApiKeyStatus.style.color = "#f87171";
+      testApiKeyStatus.style.color = "light-dark(#b42318, #fda29b)";
     } else {
       testApiKeyStatus.style.color = "";
     }
@@ -376,34 +388,31 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   // Re-clear the test result whenever the user edits the credentials —
   // it would be misleading to keep a stale "valid" badge while the
   // input has been mutated since the test ran.
+  modelEl.addEventListener("change", clearTestStatus);
+  modelCustomEl.addEventListener("input", clearTestStatus);
   apiKeyEl.addEventListener("input", clearTestStatus);
   baseUrlEl.addEventListener("input", clearTestStatus);
 
   testApiKeyBtn.addEventListener("click", async () => {
+    const started=Date.now();
     const provider = providerEl.value as Provider;
     const apiKey = apiKeyEl.value;
     const baseUrl = baseUrlEl.value.trim();
-    if (provider === "xgoose-hosted") {
-      // UI hides the button for hosted, so this shouldn't fire — but be
-      // defensive in case the row is force-shown via DevTools.
-      setTestStatus(
-        "Hosted provider uses your account token, not an API key.",
-        "info",
-      );
-      return;
-    }
     testApiKeyBtn.disabled = true;
-    setTestStatus("Testing…", "info");
+    setTestStatus(provider === "xgoose-hosted" ? "Testing Luna… The first connection may take up to 3 minutes." : "Testing…", "info");
     track("options_api_key_test_clicked", { provider });
     try {
-      const res = await send("sw:test_api_key", { provider, apiKey, baseUrl });
+      const res = await send("sw:test_api_key", { provider, apiKey, baseUrl, model: readCurrentChoice()?.id });
       if (res.ok) {
         setTestStatus(`✓ ${res.message}`, "ok");
-        track("options_api_key_test_succeeded", { provider });
+        track("options_api_key_test_succeeded", { provider,duration_ms:Date.now()-started });
       } else {
         setTestStatus(`✗ ${res.error}`, "err");
-        track("options_api_key_test_failed", { provider });
+        track("options_api_key_test_failed", { provider,reason:failureReason(res.error),duration_ms:Date.now()-started });
       }
+    } catch (error) {
+      track("options_api_key_test_failed",{provider,reason:failureReason(error),duration_ms:Date.now()-started});
+      setTestStatus(error instanceof Error ? error.message : String(error), "err");
     } finally {
       testApiKeyBtn.disabled = false;
     }
@@ -420,17 +429,16 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   async function refreshHostedState(): Promise<void> {
     hostedStatusHintEl.textContent = "Loading available models…";
     hostedStatusHintEl.style.color = "";
-    const res = await send("sw:list_xgoose_models", {});
+    const res = await send("sw:list_xgoose_models", {}).catch(error => ({ok:false as const, signedIn:true, error:String(error)}));
     if (providerEl.value !== "xgoose-hosted") return; // Ignore results after switching providers.
     if (!res.ok) {
       if (!res.signedIn) {
         hostedStatusHintEl.innerHTML =
-          "⚠ Sign in to your xgoose account (above) to use the hosted gateway. " +
-          "The agent will refuse to run while this provider is selected and you are signed out.";
+          'Sign in above to get started with free Hosted AI. No key to copy.';
       } else {
         hostedStatusHintEl.textContent = `Could not load model list: ${res.error}`;
       }
-      hostedStatusHintEl.style.color = "#f87171";
+      hostedStatusHintEl.style.color = "light-dark(#b42318, #fda29b)";
       MODEL_ENTRIES["xgoose-hosted"] = [];
       modelEl.innerHTML = "";
       const opt = document.createElement("option");
@@ -508,6 +516,8 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
       // `providerOptionsFor` would ignore thinking anyway — force false.
       thinking: isHosted ? false : choice.thinking,
       theme: themeEl.value as Settings["theme"],
+      language: languageEl.value as Settings["language"],
+      answerLanguage: $<HTMLSelectElement>("#answerLanguage").value as Settings["answerLanguage"],
       launcherVisibility:
         launcherVisibilityEl.value as Settings["launcherVisibility"],
       // Privacy: header redaction is always on — no user-facing toggle. We
@@ -551,7 +561,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
 
   resetBtn.addEventListener("click", async () => {
     if (
-      !confirm("Reset all settings to defaults? Your API key will be cleared.")
+      !confirm(translate("Reset all settings to defaults? Your API key will be cleared."))
     )
       return;
     await persistSettings({ ...DEFAULT_SETTINGS });
@@ -571,6 +581,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   async function renderSkillList(): Promise<void> {
     const skills = await loadSkills();
     skillList.innerHTML = "";
+    $("#installedSkillSummary").textContent = `Manage ${skills.length} installed skills (${skills.filter(s => s.enabled).length} enabled)`;
     if (!skills.length) {
       skillList.innerHTML = `<div class="empty">No skills yet. Browse website skills or choose <strong>Add custom skill</strong> to create one.</div>`;
       return;
@@ -592,7 +603,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
       `;
       (row.querySelector(".skill-name") as HTMLElement).textContent = s.name;
       (row.querySelector(".skill-ns") as HTMLElement).textContent =
-        ` · ${s.namespace}`;
+        ` · ${s.namespace} · v${s.version}`;
       (row.querySelector(".skill-desc") as HTMLElement).textContent =
         s.description || "(no description)";
       (row.querySelector(".skill-matches") as HTMLElement).textContent =
@@ -612,24 +623,9 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
     }
   }
   await renderSkillList();
-  const catalogSection=document.createElement("section");catalogSection.id="catalog";catalogSection.className="card";
-  const heading=document.createElement("h2");heading.textContent="Website skills";catalogSection.append(heading);
-  document.querySelector(".page")!.append(catalogSection);
-  const selected=new Set((new URLSearchParams(location.search).get("skills")??"").split(","));
-  try {
-    const catalog=await send("sw:skill_catalog",undefined);
-    const installed=await send("sw:list_user_skills",undefined);
-    for(const item of catalog.sort((a,b)=>Number(selected.has(b.slug))-Number(selected.has(a.slug)))) {
-      const row=document.createElement("div");row.className="skill-item";
-      const label=document.createElement("span");label.textContent=`${item.name} · ${item.version} — ${item.description}`;row.append(label);
-      const existing=installed.find(s=>s.name===item.name);
-      const install=document.createElement("button");install.textContent=existing?(existing.version===item.version?"Installed":"Update explicitly"):"Install";
-      install.disabled=existing?.version===item.version;
-      install.addEventListener("click",async()=>{install.disabled=true;try{await send("sw:install_catalog_skill",{slug:item.slug,version:item.version});install.textContent="Installed";await renderSkillList();}catch(error){install.textContent=String(error);install.disabled=false;}});row.append(install);catalogSection.append(row);
-    }
-    if(location.hash==="#catalog")catalogSection.scrollIntoView();
-  }catch {const msg=document.createElement("p");msg.textContent="The skill catalog is temporarily unavailable. Installed skills remain available.";catalogSection.append(msg);}
-
+  // Remote catalog is optional; it must not delay local import/editor controls.
+  mountCatalog();
+  mountSkillUpdates();
 
   // ── Skill editor ──
 
@@ -706,7 +702,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
 
   skillDeleteBtn.addEventListener("click", async () => {
     if (!editingName) return;
-    if (!confirm(`Delete custom skill "${editingName}"? This can't be undone.`))
+    if (!confirm(translate('Delete custom skill "{name}"? This can\'t be undone.').replace("{name}",editingName!)))
       return;
     await send("sw:delete_user_skill", { name: editingName });
     closeEditor();
@@ -730,6 +726,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   // and the inline status hint so the page reflects the new auth state
   // without a manual reload.
   onAccountChange(() => {
+    clearTestStatus();
     if ((providerEl.value as Provider) === "xgoose-hosted") {
       void refreshHostedState();
     }
@@ -752,160 +749,3 @@ function escHtml(s: string): string {
 // Account section: email confirmation sign-in + signed-in profile.
 // All login state lives in the service worker (`background/account.ts`); we
 // just render whatever the SW reports, and refresh on storage.onChanged.
-// ---------------------------------------------------------------------------
-
-type LoginPhase = "idle" | "pending" | "denied" | "expired" | "error";
-interface LoginState {
-  phase: LoginPhase;
-  userCode: string | null;
-  email: string | null;
-  verificationUri: string | null;
-  expiresAt: number | null;
-  intervalMs: number;
-  error: string | null;
-}
-
-async function mountAccountSection(): Promise<void> {
-  const found = document.getElementById(
-    "accountState",
-  ) as HTMLDivElement | null;
-  if (!found) return;
-  const root: HTMLDivElement = found;
-
-  // Local UI poll handle — we tick a re-render while a login is pending so the
-  // countdown stays fresh and we pick up the SW's polling result.
-  let pendingTicker: ReturnType<typeof setInterval> | null = null;
-  let emailDraft="";
-
-  async function refresh(): Promise<void> {
-    const [account, loginState] = await Promise.all([
-      send("sw:account_get", undefined),
-      send("sw:account_login_state", undefined),
-    ]);
-    render(account, loginState as LoginState);
-    if (loginState.phase === "pending" && !pendingTicker) {
-      pendingTicker = setInterval(refresh, 2000);
-    } else if (loginState.phase !== "pending" && pendingTicker) {
-      clearInterval(pendingTicker);
-      pendingTicker = null;
-    }
-  }
-
-  function render(account: Account | null, login: LoginState): void {
-    // Clear any transient device-code/error cards we previously appended
-    // alongside the root (they live as siblings inside the section).
-    const parent = root.parentElement;
-    if (parent) {
-      Array.from(parent.querySelectorAll(".device-code-card")).forEach((el) =>
-        el.remove(),
-      );
-    }
-    root.classList.remove("account-state-loading");
-    root.innerHTML = "";
-    if (account) {
-      renderSignedIn(root, account);
-    } else {
-      renderSignedOut(root, login);
-    }
-  }
-
-  function renderSignedIn(host: HTMLElement, account: Account): void {
-    const initial = (account.user.name || account.user.email || "?")
-      .trim()
-      .charAt(0)
-      .toUpperCase();
-    const avatar = document.createElement("div");
-    avatar.className = "avatar";
-    if (account.user.avatar_url) {
-      avatar.style.backgroundImage = `url("${escAttr(account.user.avatar_url)}")`;
-      avatar.textContent = "";
-    } else {
-      avatar.textContent = initial;
-    }
-    const body = document.createElement("div");
-    body.className = "account-state-body";
-    const badges: string[] = [];
-    if (account.user.is_admin)
-      badges.push('<span class="badge admin">admin</span>');
-    if (!account.user.email_verified)
-      badges.push('<span class="badge unverified">unverified</span>');
-    const displayName = account.user.name || account.user.email;
-    body.innerHTML =
-      `<div class="name">${escHtml(displayName)}${badges.join("")}</div>` +
-      `<div class="meta">${escHtml(account.user.email)} · Connected</div>`;
-
-    const actions = document.createElement("div");
-    actions.className = "actions";
-    const logoutBtn = document.createElement("button");
-    logoutBtn.className = "btn danger";
-    logoutBtn.textContent = "Sign out";
-    logoutBtn.addEventListener("click", async () => {
-      if (!confirm(`Sign out of ${account.user.email}?`)) return;
-      logoutBtn.disabled = true;
-      await send("sw:account_logout", undefined);
-      logoutBtn.disabled = false;
-      await refresh();
-    });
-    actions.append(logoutBtn);
-    host.append(avatar, body, actions);
-  }
-
-  function renderSignedOut(host: HTMLElement, login: LoginState): void {
-    const body = document.createElement("div");
-    body.className = "account-state-body";
-    body.innerHTML = '<div class="name">Sign in with email</div>' +
-      '<div class="meta">New here? Your account is created when you confirm your email. No password or website registration needed.</div>';
-    const form=document.createElement("form");form.className="actions";
-    form.style.cssText="display:flex;gap:10px;flex-wrap:wrap;align-items:center";
-    const email=document.createElement("input");email.type="email";email.id="loginEmail";email.placeholder="you@example.com";email.autocomplete="email";email.required=true;email.setAttribute("aria-label","Email address");email.value=login.email??emailDraft;email.disabled=login.phase==="pending";
-    email.addEventListener("input",()=>{emailDraft=email.value;});
-    const signIn=document.createElement("button");signIn.type="submit";signIn.className="btn primary";signIn.textContent=login.phase==="pending"?"Check your email":"Send sign-in email";signIn.disabled=login.phase==="pending";
-    form.addEventListener("submit",async event=>{event.preventDefault();if(!email.reportValidity())return;emailDraft=email.value;signIn.disabled=true;signIn.textContent="Sending…";await send("sw:account_start_login",{email:email.value});await refresh();});
-    form.append(email,signIn);body.append(form);host.append(body);
-    if(login.phase==="pending"){
-      const card=document.createElement("div");card.className="device-code-card";
-      const remaining=Math.max(0,Math.ceil(((login.expiresAt??0)-Date.now())/60000));
-      card.textContent=`Email sent to ${login.email??"your inbox"}. Click the confirmation link and this extension will sign in automatically. The link expires in ${remaining} minutes. You can close this settings page.`;
-      const change = document.createElement("button");
-      change.type = "button"; change.className = "btn secondary";
-      change.textContent = "Change email or request another link";
-      change.addEventListener("click", async () => {
-        change.disabled = true;
-        await send("sw:account_cancel_login", undefined);
-        await refresh();
-      });
-      card.append(document.createElement("br"), change);
-      host.parentElement?.appendChild(card);
-    }
-
-    if (
-      (login.phase === "denied" ||
-        login.phase === "expired" ||
-        login.phase === "error") &&
-      login.error
-    ) {
-      const err = document.createElement("div");
-      err.className = "device-code-card err";
-      err.innerHTML =
-        `<div class="code">${escHtml(humanPhase(login.phase))}</div>` +
-        `<div class="meta">${escHtml(login.error)}</div>`;
-      host.parentElement?.appendChild(err);
-    }
-  }
-
-  await refresh();
-  // Storage-driven refresh so a sign-in finished in another window (or by the
-  // background polling loop) lights up this page without a manual reload.
-  onAccountChange(() => void refresh());
-  // Also react to changes in the inflight login flow that the SW broadcasts
-  // via the same storage key namespace (we listen to ACCOUNT_KEY since that's
-  // the only one that flips when polling resolves).
-  void ACCOUNT_KEY;
-}
-
-function humanPhase(p: LoginPhase): string {
-  if (p === "denied") return "Sign-in denied";
-  if (p === "expired") return "Sign-in expired";
-  if (p === "error") return "Sign-in error";
-  return "Sign in";
-}

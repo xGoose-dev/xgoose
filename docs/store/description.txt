@@ -1,25 +1,36 @@
 xgoose brings an AI assistant to the page you are already reading. Open the floating panel, ask a question, and use website skills to search and read relevant content without losing sight of the page.
 
 Research with sources
-Use installed skills to search a forum and read its topics. Follow links in the answer back to the original sources, compare different experiences, and ask follow-up questions. Check source material before relying on an answer.
+Use installed skills to search a forum and read its topics. Follow links in the answer back to the original sources, compare different experiences, and ask follow-up questions. On supported Discourse forums, read replies in ordered batches with source links and explicit coverage. Check source material before relying on an answer.
+
+Your language, your workspace
+The interface supports English, Chinese and Spanish. The interface follows your browser language by default. Choose a separate Preferred Answer Language in Getting started or Settings. Automatic leaves answers in the conversation’s language without adding a language instruction; an explicit choice sets your default reply language. Requests in chat take priority. The minus button minimizes chat while keeping your draft and conversation; an active response continues.
 
 Choose your tools
-Install website skills from xgoose.org and review their source. Enable or disable installed skills, edit their source, and choose when to update. JavaScript tools and skills can read or change the current page using its session; install only skills you trust.
+34 built-in website skills are included and ready to use, including V2EX, NGA, Weibo and Reddit. V2EX, NGA, Weibo and Reddit offer quick actions for summarizing the current post, hot posts, new posts and an interesting discovery. Chinese websites use Chinese shortcut labels. Structured tools expose search options, profiles, replies and pagination where supported. Website login and API access restrictions still apply. Discover more at xgoose.org, install a skill from a local file or URL, and review its source. Enable or disable installed skills, edit their source, and choose when to update. JavaScript tools and skills can read or change the current page using its session; install only skills you trust.
+
+Skill updates
+xgoose checks daily for new versions of supported catalog skills and shows an update badge. Review available versions, matching websites and source in Settings, then choose when to update. Local edits are flagged before replacement.
 
 Connect your own AI
-Bring an OpenAI-compatible endpoint, including LiteLLM, or a Gemini API key. BYOK works without an xgoose account. Hosted xgoose uses Luna and requires a verified account, available credit and explicit consent to conversation storage. Trial availability is shown in your account when the campaign is open.
+Bring an OpenAI-compatible endpoint, including LiteLLM, or a Gemini API key. BYOK works without an xgoose account. Start with xgoose Hosted AI: sign in with email and use your available account credit, without copying an API key. Hosted models are managed by your account. Choose BYOK in Settings to configure your own provider and API key. Trial availability is shown in your account when the campaign is open.
 
 Sign in from the extension
 Enter your email in settings and click the confirmation link in your inbox. Your account is created after confirmation. No password or separate website registration is needed.
 
 Set up once
-Requires Chrome 138 or newer. Open chrome://extensions, select xgoose Details, and enable Allow User Scripts to use JavaScript tools and installed skills. Visit a supported page, open the floating panel, and ask a question.
+Requires Chrome 138 or newer. Open chrome://extensions, select xgoose Details, and enable Allow User Scripts for community skills, edited or online-updated scripts, and custom JavaScript. Built-in skills and page reading work immediately without this toggle. On built-in skill websites, permission reminders stay in Settings. Settings and relevant chat errors provide a direct setup link and an illustrated guide. After confirming your email, return to the website you want to use, open xgoose in that tab, and ask there. Website skills follow the current tab.
+
+Learn and customize
+Getting started focuses on email sign-in, optional User Scripts setup and websites to try. Skills installation, writing guides and troubleshooting have their own advanced setup page. A starter .xgs.js opens in the installer for review. On xgoose.org, the built-in xgoose guide provides the same setup, installation and authoring help.
 
 Stay in control
-Stop a run at any time. xgoose works on the current page: refreshing, navigating away or closing it ends the active run. Saved chat history remains available locally. Disabling a skill prevents new calls but cannot undo earlier requests or page changes; refresh the page if necessary.
+Stop a run at any time. xgoose works on the current page: refreshing, navigating away or closing it ends the active run. Long conversations compact automatically when needed so you can continue; full chat history remains available locally. Disabling a skill prevents new calls but cannot undo earlier requests or page changes; refresh the page if necessary.
 
 Conversation privacy
-Hosted Luna saves full messages and actual tool inputs and outputs for 90 days after your explicit consent. BYOK conversation upload is off by default and can be enabled separately after signing in. View, export and delete uploaded conversations from your account. Staff can read a specific conversation only with your authorization.
+Attach up to 3 PNG, JPEG or WebP images per message, or paste an image into the chat input. Preview and remove attachments before sending. Images are resized locally and sent to the selected image-capable model. Attached images remain in local conversation history; diagnostic transcripts include attachment metadata, not image bytes.
+
+When using Hosted AI, full messages and actual tool inputs, outputs and errors are stored for 90 days as described in the privacy disclaimer. Credentials are redacted. BYOK conversations remain local and are not uploaded by the extension. Cloud transcripts include website hostnames. Only administrators can read them, and each read is audited. Optional usage analytics records setup steps, outcomes and timing; signed-in events may be linked to your account. Disable usage analytics in Settings. Messages, keys and full page URLs are excluded from analytics.
 
 Open source under the MIT license: https://github.com/xGoose-dev/xgoose
 Setup and support: https://xgoose.org/support/

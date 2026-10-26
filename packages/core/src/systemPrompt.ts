@@ -1,3 +1,4 @@
+import {clipBytes,textBytes} from "./contextWindow";
 import type { SkillRef, TodoItem } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -21,7 +22,7 @@ const BASE_PROMPT = `You are xgoose, a tool-using AI that operates the user's cu
 Skills are installable \`.xgs.js\` modules exposing helpers at \`xgoose.skills.<namespace>.<fn>()\` in the page MAIN world. **Check active skills before writing a raw \`fetch\`** — a skill is usually shorter and has auth/CSRF and site knowledge wired in.
 
 - The \`<system-reminder>\` at the top of each turn lists every active skill with each function's full input/output JSON Schema and worked examples — read it there and write the \`js_exec\`; no \`help()\` round-trip needed for active skills.
-- **Invoke via \`js_exec\`**: \`return await xgoose.skills.<ns>.<fn>(args);\`. Chain several calls in one snippet when they form a single logical step. Schemas are documentation only — the runtime does not validate args, so a bad shape throws in the handler.
+- **When the host provides \`skill_call\`, prefer \`skill_call({skill, function, args})\` for skill calls.** Otherwise invoke via \`js_exec\`: \`return await xgoose.skills.<ns>.<fn>(args);\`. Chain several calls in one snippet when they form a single logical step. Schemas are documentation only — the runtime does not validate args, so a bad shape throws in the handler.
 - Prefer a skill's ★ primary function for its most common task.
 - For skills *not* in the reminder (installed but inactive here): \`list_skills({ scope })\` to browse, \`search_skills({ query })\` to find, \`help({ skill, function? })\` for schemas. \`read_skill\` / \`edit_skill\` view and modify source (edits hot-reload into the tab if the skill's \`@match\` covers this URL).
 
@@ -73,6 +74,7 @@ export function buildSystemPrompt(reminder?: string | null): string {
 }
 
 export type SystemReminderOpts = {
+  skillInvocation?: "structured";
   pageUrl?: string;
   pageTitle?: string;
   activeSkills: SkillRef[];
@@ -81,7 +83,7 @@ export type SystemReminderOpts = {
   siteMemoryOrigin?: string | null;
 };
 
-export function buildSystemReminder(opts: SystemReminderOpts): string | null {
+export function buildSystemReminder(opts: SystemReminderOpts, compact=false): string | null {
   const sections: string[] = [];
 
   if (opts.pageUrl) {
@@ -97,7 +99,7 @@ export function buildSystemReminder(opts: SystemReminderOpts): string | null {
     const lines: string[] = [
       "# Active skills on this page",
       "",
-      "These skills' JS is loaded in the page MAIN world. Invoke any function via `js_exec` — " +
+      opts.skillInvocation === "structured" ? "Invoke skills with skill_call({skill, function, args}). Built-in skills work without Allow User Scripts. Use the schemas below; if documentation is compacted or unfamiliar, call help({skill,function}) first. JS examples describe the same functions and arguments; translate them into skill_call calls." : compact ? "Skill documentation is compacted to keep the request bounded. Invoke helpers through js_exec. Full schemas and examples are omitted: call help({skill, function}) before using unfamiliar arguments; read_skill({name}) returns full authored guidance. Never assume omitted source material was read." : "These skills' JS is loaded in the page MAIN world. Invoke any function via `js_exec` — " +
         "e.g. `return await xgoose.skills.<ns>.<fn>({...});` inside the snippet body. Each " +
         "function's full input/output JSON Schema and authored examples are listed below — " +
         "the schemas are documentation only (handlers receive raw args verbatim), so you can " +
@@ -113,7 +115,7 @@ export function buildSystemReminder(opts: SystemReminderOpts): string | null {
       if (s.instructions && s.instructions.trim()) {
         lines.push("");
         lines.push("**Instructions:**");
-        lines.push(s.instructions.trim());
+        lines.push(compact?clipBytes(s.instructions.trim(),Math.min(12000,Math.floor(24000/opts.activeSkills.length))):s.instructions.trim());
       }
       if (s.matches?.length) lines.push(`- matches: ${s.matches.join(", ")}`);
       if (s.keywords?.length)
@@ -130,24 +132,24 @@ export function buildSystemReminder(opts: SystemReminderOpts): string | null {
         const invocation =
           f.invocation || `await xgoose.skills.${s.namespace}.${f.name}({...})`;
         lines.push(`${marker}### \`${f.signature || f.name + "(args)"}\``);
-        if (f.summary) lines.push(f.summary);
+        if (f.summary) lines.push(compact?clipBytes(f.summary,400):f.summary);
         lines.push("");
-        lines.push(`invoke via \`js_exec\`: \`${invocation}\``);
-        if (f.input !== undefined) {
+        lines.push(opts.skillInvocation === "structured" ? `invoke: skill_call({skill:${JSON.stringify(s.name)}, function:${JSON.stringify(f.name)}, args:{...}})` : `invoke via \`js_exec\`: \`${invocation}\``);
+        if (!compact && f.input !== undefined) {
           lines.push("");
           lines.push("input schema:");
           lines.push("```json");
           lines.push(stringifySchema(f.input));
           lines.push("```");
         }
-        if (f.output !== undefined) {
+        if (!compact && f.output !== undefined) {
           lines.push("");
           lines.push("output schema:");
           lines.push("```json");
           lines.push(stringifySchema(f.output));
           lines.push("```");
         }
-        if (f.examples && f.examples.length) {
+        if (!compact && f.examples && f.examples.length) {
           lines.push("");
           lines.push("examples:");
           lines.push("```json");
@@ -157,7 +159,7 @@ export function buildSystemReminder(opts: SystemReminderOpts): string | null {
         // For schemas-absent (typically user skills bundled inside the SW
         // that the static introspector couldn't parse), tell the agent
         // exactly which help() call to make for this one function.
-        if (f.input === undefined) {
+        if (compact || f.input === undefined) {
           lines.push("");
           lines.push(
             `(schema unavailable inline — call \`help({ skill: '${s.name}', function: '${f.name}' })\` for the full input/output JSON Schema)`,
@@ -204,7 +206,10 @@ export function buildSystemReminder(opts: SystemReminderOpts): string | null {
   }
 
   if (!sections.length) return null;
-  return `<system-reminder>\n${sections.join("\n\n")}\n</system-reminder>`;
+  const rendered=`<system-reminder>\n${sections.join("\n\n")}\n</system-reminder>`;
+  if(textBytes(rendered)>48000&&!compact)return buildSystemReminder(opts,true);
+  if(textBytes(rendered)>48000)return clipBytes(rendered,47000)+"\n[Additional skill documentation omitted. Use help({skill,function}) or read_skill({name}) for full guidance.]\n</system-reminder>";
+  return rendered;
 }
 
 function findPrimaryFn(

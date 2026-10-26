@@ -1,3 +1,7 @@
+import {executableSkillsForUrl, injectPackagedSkills, reconcileSkills, skillSnapshot, pageTarget} from "./packagedSkills";
+import { installSkillUpdateChecks, checkSkillUpdates, skillUpdateState, updateSkill } from "./skillUpdates";
+import { hostedStatus } from "./hosted";
+import { readSubstackPublication } from "./substackReader";
 import { skillCatalog, installCatalogSkill } from "./catalog";
 import { recordJournal, getConsent, setConsent } from "./transcripts";
 import { sessionCommand } from "./sessionDb";
@@ -53,18 +57,38 @@ import { recordEvent } from "@/shared/analytics";
 // the user can audit "which device has which model selected" without
 // hopping between browsers. No-op when signed out.
 installConfigSyncListeners();
+installSkillUpdateChecks();
+
+// Serialize claims across tabs so the brief skill notice appears only once per install.
+let noticeQueue = Promise.resolve(false);
+chrome.runtime.onInstalled.addListener(({reason}) => {
+  if (reason === "install") void chrome.tabs.create({url:chrome.runtime.getURL("onboarding.html")});
+});
 
 registerRouter({
+  "sw:user_scripts_status": async () => {try{await chrome.userScripts.getScripts();return {enabled:true};}catch{return {enabled:false};}},
+  "sw:open_user_scripts_setup": async ({guide}) => {await chrome.tabs.create({url:guide?chrome.runtime.getURL("onboarding.html"):`chrome://extensions/?id=${chrome.runtime.id}`});},
+  "sw:skill_updates": ({check}) => check ? checkSkillUpdates() : skillUpdateState(),
+  "sw:update_skill": request => updateSkill(request),
+  "sw:substack_read": (request, sender) => readSubstackPublication(request, sender.url ?? ""),
+  "sw:hosted_status": ({claim, useHosted}) => hostedStatus(claim, useHosted),
+  "sw:claim_skill_notice": () => {
+    noticeQueue = noticeQueue.catch(() => false).then(async () => {
+      const key = "xgoose.skills.notice-seen-v1";
+      if ((await chrome.storage.local.get(key))[key]) return false;
+      await chrome.storage.local.set({[key]:true});
+      return true;
+    });
+    return noticeQueue;
+  },
   "sw:skill_catalog": () => skillCatalog(),
   "sw:install_catalog_skill": ({slug,version}) => installCatalogSkill(slug,version),
-  "sw:open_skill_catalog": async ({slugs}) => { await chrome.tabs.create({url:chrome.runtime.getURL(`options.html?skills=${encodeURIComponent(slugs.join(","))}#catalog`)}); },
+  "sw:open_skill_catalog": async ({slugs}) => { await chrome.tabs.create({url:"https://xgoose.org/skills/"}); },
   "sw:transcript_event": (value,sender) => recordJournal(value,sender),
   "sw:consent_get": () => getConsent(),
   "sw:consent_set": value => setConsent(value),
-  "sw:reconcile_skills": async (_payload, sender) => {
-    const allowed = (await activeSkillsForUrl(sender.url ?? "")).map(s => s.namespace);
-    await executeUserScript(sender, `(() => { const root = globalThis.xgoose?.skills; if (root) for (const ns of Object.keys(root)) if (!${JSON.stringify(allowed)}.includes(ns)) delete root[ns]; })()`);
-  },
+  "sw:reconcile_skills": async (_payload, sender) => reconcileSkills(sender),
+  "sw:skill_snapshot": async (_payload, sender) => skillSnapshot(sender),
   "sw:session": (payload) => sessionCommand(payload),
   "sw:page_exec": (payload, sender) => executePage(sender, payload),
   "sw:page_abort": async ({ execId }, sender) => {
@@ -108,12 +132,7 @@ registerRouter({
   // ── skill injection (MAIN-world via chrome.scripting) ───────────────
   "sw:inject_skill_files": async ({ files }, sender) => {
     try {
-      for (const file of files) {
-        if (file !== "skillRuntime.js" && !/^skills\/[a-zA-Z0-9_.-]+\.xgs\.js$/.test(file)) throw new Error("Invalid packaged skill path");
-        const response = await fetch(chrome.runtime.getURL(file));
-        if (!response.ok) throw new Error("Packaged skill missing");
-        await executeUserScript(sender, await response.text());
-      }
+      await injectPackagedSkills(sender, files);
       return { ok: true };
     } catch (error: any) { return { ok: false, error: error.message }; }
   },
@@ -128,11 +147,12 @@ registerRouter({
     const tabId = sender.tab?.id;
     if (typeof tabId !== "number")
       return { ok: false, error: "no tab id on sender" };
-    const active = await activeSkillsForUrl(sender.url ?? "");
+    const active = await executableSkillsForUrl(sender.url ?? "");
     if (!active.some(s => s.namespace === namespace)) return { ok: false, error: "Skill is disabled, missing a dependency, or unavailable on this page" };
+    if (!/^[A-Za-z_$][\w$]*$/.test(functionName) || functionName.startsWith("__") || ["constructor", "prototype"].includes(functionName)) return {ok:false,error:"Invalid exported skill function"};
     try {
       const results = await chrome.scripting.executeScript({
-        target: { tabId, documentIds: [sender.documentId!] },
+        target: pageTarget(sender),
         world: "MAIN",
         // `func` is serialized by Chrome's IPC, not by `new Function` —
         // the page's `script-src` CSP doesn't apply to it. That's why this
@@ -144,7 +164,7 @@ registerRouter({
           if (!skill) {
             return { __notLoaded: true } as const;
           }
-          const callable = skill[fn];
+          const callable = Object.hasOwn(skill, fn) ? skill[fn] : undefined;
           if (typeof callable !== "function") {
             return {
               __fnMissing: true,
@@ -155,8 +175,9 @@ registerRouter({
           }
           // Cap each invocation so a hung skill can't pin the SW reply
           // forever — mirrors `pageBridge.exec`'s default 30 s budget.
+          let timer: ReturnType<typeof setTimeout>;
           const racer = new Promise<{ __timeout: true }>((resolve) => {
-            setTimeout(() => resolve({ __timeout: true }), Math.max(1, t));
+            timer = setTimeout(() => resolve({ __timeout: true }), Math.max(1, t));
           });
           try {
             const out = await Promise.race([
@@ -176,9 +197,9 @@ registerRouter({
                   ? err.stack.split("\n").slice(0, 6).join("\n")
                   : undefined,
             } as const;
-          }
+          } finally { clearTimeout(timer!); }
         },
-        args: [namespace, functionName, args ?? {}, timeoutMs ?? 30_000],
+        args: [namespace, functionName, args ?? {}, Math.min(120000, Math.max(100, timeoutMs ?? 30_000))],
       });
       const raw = results[0]?.result as any;
       if (!raw) return { ok: false, error: "no result from injected script" };
@@ -211,7 +232,7 @@ registerRouter({
 
   // ── skill registry ──────────────────────────────────────────────────
   "sw:list_skills": async () => listSkillsWithEnabled(),
-  "sw:active_skills_for_url": async ({ url }) => activeSkillsForUrl(url),
+  "sw:active_skills_for_url": async ({ url }) => executableSkillsForUrl(url),
   "sw:get_disabled_skills": async () => getDisabledSkills(),
   "sw:set_skill_disabled": async ({ name, disabled }) => {
     await setSkillDisabled(name, disabled);

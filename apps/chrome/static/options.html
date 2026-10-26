@@ -15,15 +15,15 @@
         <p class="eyebrow">Settings</p>
         <h1><span class="dot" aria-hidden="true"></span>xgoose</h1>
         <p class="subtitle">
-          Floating AI chat panel for the active page, with site-specific
-          skills. Connect your provider, sync your account, and pick which
-          skills auto-attach.
+          Your assistant, ready on the websites you use.
+          Start with free hosted AI, then make it your own.
         </p>
       </header>
 
       <div class="layout">
         <nav class="settings-nav" aria-label="Settings sections">
-          <a class="nav-link" href="#section-account"><span>Account</span></a>
+          <a class="nav-link" href="onboarding.html"><span>Getting started</span></a>
+          <a class="nav-link" href="#section-account"><span>Free AI & account</span></a>
           <a class="nav-link" href="#section-connection"
             ><span>Connection</span></a
           >
@@ -40,12 +40,11 @@
         <main class="settings-main">
           <section id="section-account" aria-labelledby="account-heading">
             <div class="section-head">
-              <h2 id="account-heading">Account</h2>
+              <h2 id="account-heading">Get your free API key</h2>
             </div>
             <p class="hint">
-              Enter your email to connect this extension. New accounts are created
-              after email confirmation. Hosted Luna uses your account credit;
-              you can also configure your own provider below.
+              Sign in with email to use xgoose Hosted AI and claim your free trial credit.
+              Your connection is managed automatically; there is no API key to copy.
             </p>
             <div
               id="accountState"
@@ -63,12 +62,14 @@
               <h2 id="connection-heading">Connection</h2>
             </div>
             <p class="hint">
-              Pick a provider and model. xgoose runs your prompts against
-              whichever endpoint you choose — your key, your bill, your
-              control.
+              Use your free xgoose account, or connect a provider you already pay for.
             </p>
 
             <div class="field">
+              <label for="connectionMode" class="field-label">Connect with</label>
+              <select id="connectionMode"><option value="hosted">Free API Key · xgoose Hosted AI</option><option value="byok">Bring your own key (BYOK)</option></select>
+            </div>
+            <div class="field" id="providerRow" hidden>
               <label for="provider" class="field-label">Provider</label>
               <select id="provider">
                 <option value="xgoose-hosted">
@@ -84,12 +85,12 @@
               </select>
             </div>
 
-            <div class="field-grid two">
+            <div class="field-grid two" id="modelGrid">
               <div class="field">
                 <label for="model" class="field-label">Model</label>
                 <select id="model"></select>
               </div>
-              <label class="toggle-card">
+              <label class="toggle-card" id="modelCustomToggleRow" hidden>
                 <input id="modelCustomToggle" type="checkbox" />
                 <span class="toggle-card-body">
                   <span class="toggle-card-title">Custom model</span>
@@ -118,7 +119,7 @@
               </div>
             </div>
 
-            <div class="field" id="apiKeyRow">
+            <div class="field" id="apiKeyRow" hidden>
               <label for="apiKey" class="field-label">API key</label>
               <div class="input-with-action">
                 <input
@@ -127,23 +128,11 @@
                   autocomplete="off"
                   placeholder="sk-…"
                 />
-                <span id="apiKeyTestRow" class="inline-test">
-                  <button
-                    id="testApiKeyBtn"
-                    class="btn secondary compact"
-                    type="button"
-                  >
-                    Test
-                  </button>
-                  <span
-                    id="testApiKeyStatus"
-                    class="save-status compact"
-                  ></span>
-                </span>
+
               </div>
             </div>
 
-            <div class="field" id="baseUrlOuterRow">
+            <div class="field" id="baseUrlOuterRow" hidden>
               <label for="baseUrl" class="field-label" id="baseUrlRow">
                 Base URL
               </label>
@@ -155,23 +144,29 @@
               />
               <span class="hint" id="baseUrlHint"></span>
             </div>
+            <div id="apiKeyTestRow" class="connection-test">
+              <button id="testApiKeyBtn" class="btn secondary" type="button">Test hosted AI</button>
+              <span id="testApiKeyStatus" class="save-status" role="status" aria-live="polite"></span>
+            </div>
           </section>
 
           <section id="section-skills" aria-labelledby="skills-heading">
             <div class="section-head">
               <h2 id="skills-heading">Skills</h2>
               <button id="addSkillBtn" class="btn primary compact" type="button">
-                + Add custom skill
+                Install from file or URL
               </button>
             </div>
             <p class="hint">
-              Review the website tools available to your assistant. Enable or
-              disable installed skills below, or edit their source. Skills run
-              through Chrome's User Scripts permission and can read or change
-              the current page. Install only skills you trust.
+              Your built-in skills are ready to use. Enable or
+              disable installed skills below, or edit their source. Built-in skills work
+              without Allow User Scripts. Community skills, local edits and online
+              updates require it. Skills can read or change the current page;
+              install only skills you trust.
+              Local files and pasted source work without publishing or an account.
               <a href="https://xgoose.org/skills/" target="_blank" rel="noopener">Browse website skills</a>.
             </p>
-            <div id="skillList" class="skill-list"></div>
+            <details class="installed-skills"><summary id="installedSkillSummary">Manage installed skills</summary><div id="skillList" class="skill-list"></div></details>
           </section>
 
           <section
@@ -239,63 +234,13 @@
             <div class="section-head">
               <h2 id="personalization-heading">Personalization</h2>
             </div>
-            <div class="field-grid two">
-              <div class="field">
-                <label for="theme" class="field-label">Theme</label>
-                <select id="theme">
-                  <option value="system">Follow system</option>
-                  <option value="light">Light</option>
-                  <option value="dark">Dark</option>
-                </select>
-                <span class="hint">
-                  System mirrors your OS preference automatically.
-                </span>
-              </div>
-              <div class="field">
-                <label for="launcherVisibility" class="field-label"
-                  >Floating button</label
-                >
-                <select id="launcherVisibility">
-                  <option value="always">Show on every page</option>
-                  <option value="skill-sites">
-                    Only on sites with a matching skill
-                  </option>
-                </select>
-                <span class="hint">
-                  When limited to skill sites, the <code>✦</code> launcher
-                  stays hidden where no skill matches. An open chat is never
-                  hidden.
-                </span>
-              </div>
-              <div class="field">
-                <span class="field-label">Panel layout</span>
-                <div id="layoutInfo" class="hint"></div>
-                <button
-                  id="resetLayoutBtn"
-                  class="btn secondary compact"
-                  type="button"
-                >
-                  Reset position & size
-                </button>
-                <span class="hint">
-                  Drag the floating <code>✦</code> button to any corner and
-                  drag the panel's edge handles to resize. Saved per device.
-                </span>
-              </div>
-              <div class="field">
-                <label class="toggle-card">
-                  <input id="analyticsEnabled" type="checkbox" />
-                  <span class="toggle-card-body">
-                    <span class="toggle-card-title">
-                      Share anonymous usage analytics
-                    </span>
-                    <span class="toggle-card-hint">
-                      Helps us find where the product is confusing. Anonymous,
-                      no ad identifiers, no page content. Turn off anytime.
-                    </span>
-                  </span>
-                </label>
-              </div>
+            <div class="preference-list">
+              <div class="preference-row"><div class="preference-copy"><label for="language">Interface language</label><p class="hint">Only changes buttons, menus and settings.</p></div><select id="language"><option value="auto">Follow browser language</option><option value="zh-CN">中文（简体）</option><option value="en">English</option><option value="es">Español</option></select></div>
+              <div class="preference-row"><div class="preference-copy"><label for="answerLanguage">Preferred Answer Language</label><p class="hint">Automatic follows your conversation. Choosing a language sets a default; requests in chat take priority.</p><span id="answerLanguageStatus" class="hint" role="status">Saved automatically.</span></div><select id="answerLanguage"><option value="auto">Automatic</option><option value="zh-CN">中文（简体）</option><option value="en">English</option><option value="es">Español</option></select></div>
+              <div class="preference-row"><div class="preference-copy"><label for="theme">Theme</label><p class="hint">System mirrors your OS preference automatically.</p></div><select id="theme"><option value="system">Follow system</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+              <div class="preference-row"><div class="preference-copy"><label for="launcherVisibility">Floating button</label><p class="hint">Choose where the launcher appears. An open chat stays visible.</p></div><select id="launcherVisibility"><option value="always">Show on every page</option><option value="skill-sites">Only on sites with a matching skill</option></select></div>
+              <div class="preference-row"><div class="preference-copy"><span class="preference-label">Panel layout</span><p class="hint">Move the floating button and resize the panel on any page.</p><details class="layout-details"><summary>Current position and size</summary><div id="layoutInfo" class="hint"></div></details></div><button id="resetLayoutBtn" class="btn secondary compact" type="button">Reset position &amp; size</button></div>
+              <label class="preference-row analytics-choice" for="analyticsEnabled"><span class="preference-copy"><span class="preference-label">Share usage analytics</span><span class="hint">Share setup steps, action outcomes and timing to improve xgoose. Signed-in events can be linked to your account. No messages, keys or full page URLs. Turn off anytime.</span></span><input id="analyticsEnabled" type="checkbox"></label>
             </div>
           </section>
 
@@ -366,6 +311,10 @@
         </main>
       </div>
 
+      <aside id="privacyDisclaimer" class="hint" aria-label="Privacy disclaimer">
+        <p><strong>Privacy disclaimer.</strong> By using xgoose Hosted AI, you agree that full messages, tool inputs and outputs, errors and summaries are stored for 90 days. Credentials are redacted. Website hostnames are included to diagnose site-specific issues. Only administrators can read cloud transcripts, and every read is audited. BYOK conversations are not uploaded to xgoose by this extension.</p>
+        <p><a href="https://xgoose.org/privacy/" target="_blank" rel="noopener">Privacy policy</a> · <a href="https://xgoose.org/account/" target="_blank" rel="noopener">Manage your account</a></p>
+      </aside>
       <div class="footer">
         <span id="saveStatus" class="save-status"></span>
         <button id="resetBtn" disabled class="btn secondary" type="button">

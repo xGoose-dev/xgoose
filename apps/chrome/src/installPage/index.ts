@@ -1,3 +1,4 @@
+import {initializeLocale} from "@/shared/locale";
 /// <reference types="chrome" />
 //
 // Extension-served install page.
@@ -28,6 +29,7 @@ const $ = <T extends HTMLElement = HTMLElement>(sel: string): T =>
 void main();
 
 async function main(): Promise<void> {
+  await initializeLocale(document.body);
   const sourceInput = $<HTMLTextAreaElement>("#sourceInput");
   const fileInput = $<HTMLInputElement>("#fileInput");
   const fileLabel = $<HTMLSpanElement>("#fileLabel");
@@ -42,6 +44,19 @@ async function main(): Promise<void> {
   const resultBody = $<HTMLParagraphElement>("#resultBody");
   const openOptionsBtn = $<HTMLButtonElement>("#openOptionsBtn");
   const closeTabBtn = $<HTMLButtonElement>("#closeTabBtn");
+
+  $("#urlForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = document.querySelector<HTMLButtonElement>("#urlForm button")!;
+    const status = $("#urlStatus");
+    button.disabled = true; status.textContent = "Loading source for review…";
+    try {
+      const sourceUrl = $<HTMLInputElement>("#sourceUrl").value.trim();
+      const result = await send("sw:open_install_url", {sourceUrl,originUrl:sourceUrl});
+      if (!result.ok) throw new Error(result.error);
+    } catch(error) { status.textContent = String(error); }
+    finally { button.disabled = false; }
+  });
 
   let currentHeader: SkillHeader | null = null;
   let currentSource = "";
@@ -74,6 +89,7 @@ async function main(): Promise<void> {
   fileInput.addEventListener("change", async () => {
     const file = fileInput.files?.[0];
     if (!file) return;
+    catalogSlug = null;
     fileLabel.textContent = `loaded ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
     sourceInput.value = await file.text();
     handleSourceChange();

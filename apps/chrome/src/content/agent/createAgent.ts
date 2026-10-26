@@ -1,3 +1,4 @@
+import { normalizeHostedError } from "@/shared/hosted";
 // Chrome host wrapper around `@xgoose/core`'s `createAgent`. Composes the
 // core agent, the page-controller DOM tools, and the host-specific skill
 // tools (list_skills, skill_call, etc.) so content/index.ts can spin up
@@ -49,7 +50,7 @@ function getFetchImpl(): ReturnType<typeof createChromeProviderFetch> {
 export async function createAgent(opts: {
   settings: Settings;
   reminder?: string | null;
-  onProviderResponse?: (event: {type:"model-response";requestId:string|null;status:number;firstResponseMs:number}) => Promise<unknown>;
+  onProviderResponse?: (event: {type:"model-response";requestId:string|null;status:number;firstResponseMs:number;contextTextBytes?:number;contextLimitBytes?:number}) => Promise<unknown>;
 }): Promise<AgentBundle> {
   const tools = [
     ...buildCoreTools({ memory: chromeMemoryPort, origin: chromeOriginPort }),
@@ -62,8 +63,8 @@ export async function createAgent(opts: {
       const started=Date.now();
       const response=await getFetchImpl()(input,init);
       // Record correlation metadata, never request headers or credentials.
-      await opts.onProviderResponse?.({type:"model-response",requestId:response.headers.get("x-request-id"),status:response.status,firstResponseMs:Date.now()-started});
-      return response;
+      await opts.onProviderResponse?.({type:"model-response",requestId:response.headers.get("x-request-id"),status:response.status,firstResponseMs:Date.now()-started,...(response.headers.get("x-xgoose-context-unit")==="utf8_bytes"?{contextTextBytes:Number(response.headers.get("x-xgoose-context-text-bytes")),contextLimitBytes:Number(response.headers.get("x-xgoose-context-limit-bytes"))}:{})});
+      return opts.settings.provider === "xgoose-hosted" ? normalizeHostedError(response) : response;
     },
     tools,
     reminder: opts.reminder,
@@ -86,8 +87,8 @@ async function projectToCoreSettings(s: Settings): Promise<{
       thinking: s.thinking,
     };
   }
-  const consent = await send("sw:consent_get", undefined);
-  if (!consent.hosted) throw new Error("Hosted Luna requires consent to save full conversations for 90 days. Open Settings → Conversation privacy to review and agree. BYOK remains available without uploading.");
+  const state = await send("sw:hosted_status", {useHosted:true});
+  if (state.blocker) throw new Error(state.blocker);
   const account = await send("sw:account_get", undefined);
   if (!account) {
     throw new Error(
@@ -97,7 +98,7 @@ async function projectToCoreSettings(s: Settings): Promise<{
   return {
     provider: "openai-compat",
     apiKey: account.accessToken,
-    model: "luna",
+    model: s.model,
     baseUrl: XGOOSE_HOSTED_AI_BASE_URL,
     thinking: false,
   };
