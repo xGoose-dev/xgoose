@@ -1,3 +1,5 @@
+import {initializeLocale} from "@/shared/locale";
+void initializeLocale(document.body);
 /// <reference types="chrome" />
 //
 // Toolbar popup. Mirrors the safari layout: header / current-page status /
@@ -89,7 +91,21 @@ document.addEventListener("click", async (e) => {
   }
 });
 
+document.querySelector(".ver")!.textContent=`v${chrome.runtime.getManifest().version}`;
 track("popup_opened");
 void renderStatus();
 void renderAccount();
 onAccountChange(() => void renderAccount());
+
+async function renderSkillUpdates() {
+  try {
+    const state=await send("sw:skill_updates",{});
+    let button=document.querySelector<HTMLButtonElement>("#skillUpdateReminder");
+    if(!state.updates.length){button?.remove();return;}
+    if(!button){button=document.createElement("button");button.id="skillUpdateReminder";button.className="btn";document.querySelector(".actions")!.append(button);
+      button.addEventListener("click",()=>{void chrome.tabs.create({url:chrome.runtime.getURL("options.html#section-skills")});window.close();});}
+    button.textContent=`${state.updates.length} skill updates available →`;
+  } catch { /* The reminder must not block the popup. */ }
+}
+void renderSkillUpdates();
+chrome.storage.onChanged.addListener((changes,area)=>{if(area==="local"&&changes["xgoose.skills.updates-v1"])void renderSkillUpdates();});

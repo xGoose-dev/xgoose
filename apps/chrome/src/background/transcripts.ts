@@ -8,7 +8,8 @@ export async function getConsent():Promise<Consent> {
   const account=await getFreshAccount();if(!account)return {hosted:false,byok:false};
   const response=await apiFetch<any>("/me/transcript-consent",{bearer:account.accessToken});
   if(!response.ok)throw new Error(response.error);
-  const consent={hosted:!!response.data.hosted,byok:!!response.data.byok};
+  // BYOK conversations stay local in the Chrome extension.
+  const consent={hosted:!!response.data.hosted,byok:false};
   await chrome.storage.local.set({[key(account.user.id)]:consent});
   for(const provider of ["hosted","byok"] as const)if(!consent[provider])await clearPending(account.user.id,provider);
   return consent;
@@ -26,8 +27,10 @@ export async function recordJournal(value:JournalEvent,sender:chrome.runtime.Mes
   const account=await getAccount();
   const cached=account?(await chrome.storage.local.get(key(account.user.id)))[key(account.user.id)] as Consent|undefined:undefined;
   // Owner comes from the extension account, never from page-supplied data.
-  const event={...value,ownerId:account?.user.id,event:redactTranscript({...value.event,tabId:sender.tab?.id,documentId:sender.documentId})};
-  await journal(event,!!account&&!!cached?.[value.provider]);
+  let site:string|undefined;
+  try {const url=new URL(sender.url??sender.tab?.url??"");if(url.protocol==="https:"||url.protocol==="http:")site=url.hostname;}catch{}
+  const event={...value,ownerId:account?.user.id,event:redactTranscript({...value.event,site,tabId:sender.tab?.id,documentId:sender.documentId})};
+  await journal(event,value.provider==="hosted"&&!!account&&!!cached?.hosted);
 }
 let flushing=false;
 export async function flushTranscripts() {

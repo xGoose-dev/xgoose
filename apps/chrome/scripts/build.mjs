@@ -25,6 +25,8 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
 const entries = [
+  { in: 'src/onboarding/index.ts', out: 'onboarding', format: 'iife' },
+  { in: 'src/onboarding/skillsHelp.ts', out: 'skillsHelp', format: 'iife' },
   { in: 'src/background/index.ts', out: 'background', format: 'esm' },
   { in: 'src/content/index.ts', out: 'content', format: 'iife' },
   { in: 'src/page/pageBridgeEntry.ts', out: 'pageBridge', format: 'iife' },
@@ -101,6 +103,9 @@ function copyStatics() {
       'popup.html',
       'popup.css',
       'options.html',
+      'onboarding.html',
+      'skills-help.html',
+      'starter-skill.xgs.js',
       'options.css',
       'install.html',
       'install.css',

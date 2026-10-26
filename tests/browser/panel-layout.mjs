@@ -17,6 +17,19 @@ try{
    panel.addUserMessage('延误险怎么报销');const bubble=panel.addAssistantBubble();bubble.updateMarkdown('先查论坛里的理赔流程、所需材料和常见拒赔／补件情况，再比较不同卡种。\n\n'+ 'https://example.com/'+ 'long-evidence-'.repeat(20));bubble.finalize();
    panel.addToolCard('js_exec',{purpose:'搜索论坛中的理赔流程与补件案例',code:'return await Promise.allSettled([]);',parallel_safe:true});panel.setGenerating(true);
   });
+  // Model output arrives a few characters at a time. A table header without
+  // its separator must not lock the content-script thread during streaming.
+  await page.evaluate(()=>{
+   const answer=panel.addAssistantBubble();
+   const text='| Card | Coverage |\n| --- | --- |\n| A | B |';
+   for(let i=1;i<=text.length;i++)answer.updateMarkdown(text.slice(0,i));
+   answer.finalize();
+   const code=panel.addAssistantBubble();
+   code.updateMarkdown('```js" data-injected="true\nexample\n```');code.finalize();
+  });
+  assert.equal(await page.locator('#xgoose-root table tbody td').allTextContents().then(cells=>cells.join(',')),'A,B');
+  assert.equal(await page.locator('#xgoose-root [data-injected]').count(),0,'fence metadata must not create HTML attributes');
+  assert.equal(await page.locator('#xgoose-root code').getAttribute('class'),'lang-js" data-injected="true');
   await page.locator('#xgoose-root .in-text').fill('检查输入框焦点和窄窗口');
   await page.evaluate(()=>{panel.setSending(true);for(const a of document.querySelector('#xgoose-root').shadowRoot.querySelector('.panel').getAnimations({subtree:true}))if(a.animationName==='halo')a.currentTime=3500;document.querySelector('#xgoose-root').shadowRoot.querySelector('.panel').scrollLeft=24;document.querySelector('#xgoose-root').shadowRoot.querySelector('.in-text').focus();});
   const metrics=await page.evaluate(()=>{

@@ -19,6 +19,16 @@ import type { Provider, RegistrySkill, UserSkill } from "./types";
 export type HeaderBag = Record<string, string>;
 
 export type MessageMap = {
+  "sw:user_scripts_status": {request:void;response:{enabled:boolean}};
+  "sw:open_user_scripts_setup": {request:{guide?:boolean};response:void};
+  "sw:substack_read": {
+    request: import("./substackReadBridge").SubstackReadRequest;
+    response: import("./substackReadBridge").SubstackReadReply;
+  };
+  "sw:hosted_status": { request: { claim?: boolean; useHosted?: boolean }; response: Awaited<ReturnType<typeof import("@/background/hosted").hostedStatus>> };
+  "sw:claim_skill_notice": { request: void; response: boolean };
+  "sw:skill_updates": {request:{check?:boolean};response:import("@/background/skillUpdates").UpdateState};
+  "sw:update_skill": {request:import("@/background/skillUpdates").SkillUpdate;response:void};
   "sw:skill_catalog": {request:void;response:import("@/background/catalog").CatalogSkill[]};
   "sw:install_catalog_skill": {request:{slug:string;version:string};response:void};
   "sw:open_skill_catalog": {request:{slugs:string[]};response:void};
@@ -168,10 +178,11 @@ export type MessageMap = {
    * Returns the model count on success so the UI can confirm we hit a real
    * provider (and not e.g. a 200 from a captive-portal page). The
    * `xgoose-hosted` provider has no user-supplied key — its credential is
-   * the signed-in account token — so the UI hides this control for hosted.
+   * the signed-in account token. Its test sends a small chat request to verify
+   * actual inference and trial readiness, not just model discovery.
    */
   "sw:test_api_key": {
-    request: { provider: Provider; apiKey: string; baseUrl: string };
+    request: { provider: Provider; apiKey: string; baseUrl: string; model?: string };
     response:
       | { ok: true; message: string; modelCount: number | null }
       | { ok: false; error: string };
@@ -192,13 +203,16 @@ export type MessageMap = {
   // ── skill injection (Chrome-specific) ────────────────────────────────
   // Files are extension-relative paths (e.g. 'skills/aa-awards.xgs.js')
   // that the SW resolves with chrome.scripting.executeScript({world:'MAIN'}).
+  "sw:skill_snapshot": {
+    request: void;
+    response: Record<string, {functions?: Record<string, any>; instructions?: string}>;
+  };
   "sw:inject_skill_files": {
     request: { files: string[] };
     response: { ok: true } | { ok: false; error: string };
   };
-  // For user skills: the SW evaluates the bundled IIFE source string in
-  // the sender tab's MAIN world via chrome.scripting.executeScript({func,
-  // args:[code]}). Subject to the page's `script-src 'unsafe-eval'` CSP.
+  // User skills always use chrome.userScripts.execute in the sender document;
+  // enabling Allow User Scripts is required for dynamic source.
   "sw:inject_skill_code": {
     request: { code: string };
     response: { ok: true } | { ok: false; error: string };

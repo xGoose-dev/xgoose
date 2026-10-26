@@ -1,3 +1,5 @@
+import { testHosted } from "./hosted";
+import { normalizeProviderBaseUrl } from "@xgoose/core";
 // Provider API-key validator. Powers the "Test" button on the options page.
 //
 // We deliberately hit a *list-models* endpoint instead of a chat completion
@@ -13,7 +15,6 @@
 
 import type { MessageMap } from "@/shared/messages";
 
-const GEMINI_NATIVE_BASE = "https://generativelanguage.googleapis.com";
 const DEFAULT_TIMEOUT_MS = 12_000;
 
 /** One-shot API-key validation. See the `sw:test_api_key` envelope docs in
@@ -24,24 +25,14 @@ export async function testApiKey(
   const apiKey = (req.apiKey ?? "").trim();
   const baseUrl = (req.baseUrl ?? "").trim();
 
-  if (req.provider === "xgoose-hosted") {
-    // The hosted provider has no user-supplied key — the UI hides the
-    // Test button for this case, but we keep a sensible message in the
-    // wire response so a hand-rolled call still gets a useful error.
-    return {
-      ok: false,
-      error:
-        "xgoose Hosted uses your signed-in account token, not an API key. " +
-        "Use the account section above to sign in.",
-    };
-  }
+  if (req.provider === "xgoose-hosted") return testHosted(req.model);
 
   if (!apiKey) {
     return { ok: false, error: "API key is empty." };
   }
 
   if (req.provider === "gemini") {
-    const url = `${GEMINI_NATIVE_BASE}/v1beta/models`;
+    const url = `${normalizeProviderBaseUrl(req.provider, baseUrl)}/models`;
     const res = await safeFetch(url, {
       method: "GET",
       headers: { "x-goog-api-key": apiKey },
@@ -56,8 +47,7 @@ export async function testApiKey(
         error: "Base URL is required for the LiteLLM-Gemini proxy.",
       };
     }
-    const root = baseUrl.replace(/\/+$/, "");
-    const url = `${root}/v1beta/models`;
+    const url = `${normalizeProviderBaseUrl(req.provider, baseUrl)}/models`;
     const res = await safeFetch(url, {
       method: "GET",
       headers: { "x-goog-api-key": apiKey },
@@ -68,8 +58,7 @@ export async function testApiKey(
   if (req.provider === "openai-compat") {
     // Same normalisation as `createModel` in @xgoose/core so the test hits
     // the same URL the agent would later POST to.
-    let root = (baseUrl || "https://api.openai.com").replace(/\/+$/, "");
-    if (!/\/v1$/.test(root)) root += "/v1";
+    const root = normalizeProviderBaseUrl(req.provider, baseUrl);
     const url = `${root}/models`;
     const res = await safeFetch(url, {
       method: "GET",

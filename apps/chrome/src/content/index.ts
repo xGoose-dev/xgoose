@@ -1,4 +1,9 @@
+import {initializeLocale,localizeRoot,languageReminder} from "@/shared/locale";
+import {mountUserScriptsGuide} from "./userScriptsGuide";
+import {userScriptsReminder} from "@/shared/userScriptsSetup";
+import {resetBridgeReadiness} from "./pageRpc";
 import { showRecommendations } from "./recommendations";
+import { installSubstackReadContentBridge } from "@/shared/substackReadBridge";
 // Content-script orchestrator: spins up the shadow-DOM panel, keeps active
 // skills in sync, and drives the ToolLoopAgent streaming loop.
 //
@@ -22,7 +27,7 @@ import { showRecommendations } from "./recommendations";
 /// <reference types="chrome" />
 
 import { registerRouter, send } from "@/shared/messages";
-import { track } from "@/shared/analytics";
+import { track,failureReason } from "@/shared/analytics";
 import {
   clearResumeGlobal,
   deleteConversation,
@@ -41,10 +46,10 @@ import {
   setPanelOpenForOrigin,
 } from "@/shared/storage";
 import { getProviderApiKey } from "@/shared/types";
-import { createPanel, type Panel } from "@xgoose/ui";
+import { createPanel, type Panel, type ImageAttachment } from "@xgoose/ui";
 // Side-effect import: registers per-tool labels for skill_call, list_skills, …
 import "./ui/toolLabels";
-import { injectSkills, resetInjectedSkills } from "./skillInjector";
+import { detectActiveSkills, resetInjectedSkills } from "./skillInjector";
 import { installBridgeLoader, installPageExecutor } from "@xgoose/page-controller";
 import { callBridge } from "@/content/pageRpc";
 import { chromeBridgeLoader } from "./hostPorts";
@@ -79,6 +84,7 @@ if (location.protocol.startsWith("http")) {
 }
 
 async function bootstrap(): Promise<void> {
+  installSubstackReadContentBridge(request => send("sw:substack_read", request));
   // Install the page-controller's bridge-loader adapter before any tool
   // can dispatch `callBridge`. Idempotent; safe to call multiple times.
   installBridgeLoader(chromeBridgeLoader);
@@ -88,7 +94,10 @@ async function bootstrap(): Promise<void> {
   installOneClickSkillLinks();
 
   await loadAll();
-  const panel = createPanel();
+  await initializeLocale();
+  const panel = createPanel({imageUploads:true});
+  localizeRoot(document.querySelector("#xgoose-root")!.shadowRoot!);
+  const permissionGuide=mountUserScriptsGuide(()=>{resetBridgeReadiness();resetInjectedSkills();void refreshSkills();});
   const origin = getCurrentOrigin();
 
   // Apply saved layout (button position + panel size) before deciding whether
@@ -134,6 +143,7 @@ async function bootstrap(): Promise<void> {
 
   panel.onOpen(async () => {
     track("panel_opened");
+    void permissionGuide.check();
     if (origin) await setPanelOpenForOrigin(origin, true);
   });
   panel.onClose(async () => {
@@ -198,11 +208,13 @@ async function bootstrap(): Promise<void> {
   const refreshSkills = async (): Promise<void> => {
     panel.setLoadingStatus("Loading skills…");
     try {
-      const [active, all] = await Promise.all([
+      const [candidates, all] = await Promise.all([
         send("sw:active_skills_for_url", { url: getCurrentPageUrl() }),
         send("sw:list_skills", undefined),
       ]);
+      const active = await detectActiveSkills(candidates);
       setActiveSkills(active);
+      permissionGuide.setBuiltinSite(active.some(s=>!s.filePath.startsWith("user-skill:")));
       lastActiveSkillCount = active.length;
       applyLauncherVisibility();
       const meta = new Map(all.map((s) => [s.name, s]));
@@ -224,13 +236,13 @@ async function bootstrap(): Promise<void> {
         prompt: string;
         js?: string;
       }> = [];
+      // Use the same detected set for chips, shortcuts and agent context.
       for (const s of active) {
         for (const a of meta.get(s.name)?.actions ?? []) {
           if (a?.label && a?.prompt) skillActions.push(a);
         }
       }
       panel.setSkillActions(skillActions);
-      if (active.length) await injectSkills(active);
     } finally {
       panel.setLoadingStatus(null);
     }
@@ -255,7 +267,9 @@ async function bootstrap(): Promise<void> {
   // in flight is parked here and drained automatically once the current
   // turn finishes. `agentLoopActive` covers the gap *between* turns in the
   // drain loop so concurrent submissions don't kick off a second loop.
-  const queuedMessages: string[] = [];
+  type PendingPrompt={text:string;images:ImageAttachment[]};
+  const queuedMessages: PendingPrompt[] = [];
+  const queueLabel=(item:PendingPrompt)=>item.text+(item.images.length?` [${item.images.length} image(s)]`:"");
   let agentLoopActive = false;
   // Per-conversation rolling token / cost / cache metrics. Webagent-style:
   // accumulated on every turn-end and persisted with the conversation so
@@ -469,7 +483,7 @@ async function bootstrap(): Promise<void> {
   panel.onCancelQueued((index) => {
     if (index < 0 || index >= queuedMessages.length) return;
     queuedMessages.splice(index, 1);
-    panel.setQueuedMessages([...queuedMessages]);
+    panel.setQueuedMessages(queuedMessages.map(queueLabel));
   });
 
   // ── Todos: dedicated UI ──
@@ -593,9 +607,10 @@ async function bootstrap(): Promise<void> {
   //                          adding a user bubble so the UI stays clean).
   async function runAgentTurn(
     prompt: string,
-    opts: { hidden?: boolean } = {},
+    opts: { hidden?: boolean; images?: ImageAttachment[] } = {},
   ): Promise<void> {
     if (running) return;
+    const turnStarted=Date.now(),turnFlow=crypto.randomUUID();let firstResponse=false;
     const settings = getSettings();
     // Hosted provider: account-token auth, handled inside createAgent.
     // Every other provider needs an explicit per-provider API key.
@@ -606,7 +621,7 @@ async function bootstrap(): Promise<void> {
     }
 
     if (!opts.hidden) {
-      track("chat_message_sent", {
+      track("chat_message_sent", {flow_id:turnFlow,
         provider: settings.provider,
         model: settings.model,
         is_fresh_convo: !currentConvoId,
@@ -619,7 +634,9 @@ async function bootstrap(): Promise<void> {
       currentConvoId = newConversationId();
       currentConvoTitle = prompt.slice(0, 80);
     }
-    const visibleUserMessage = { role: "user", content: prompt };
+    const images=opts.images??[];
+    const content=images.length?[{type:"text",text:prompt},...images.map(image=>({type:"image",data:image.data,mimeType:image.mimeType}))]:prompt;
+    const visibleUserMessage = { role: "user", content };
     conversationMessages.push(visibleUserMessage);
     // For brand-new conversations we MUST flush the "last conversation"
     // pointer + the initial save to storage BEFORE any tool can navigate
@@ -647,7 +664,7 @@ async function bootstrap(): Promise<void> {
       persistCurrentConvo();
     }
 
-    if (!opts.hidden) panel.addUserMessage(prompt);
+    if (!opts.hidden) panel.addUserMessage(prompt,images);
     panel.setSending(true);
     panel.setStatus("");
     panel.setGenerating(true);
@@ -695,24 +712,27 @@ async function bootstrap(): Promise<void> {
     try {
       // Refresh consent before queuing the first message of a Hosted session.
       if (journalProvider === "hosted") await send("sw:consent_get", undefined);
-      await record({type:"user-message",content:prompt});
-      const skillsForReminder = (
-        await send("sw:active_skills_for_url", { url: getCurrentPageUrl() })
-      ).map((s) => ({ ...s, enabled: true }));
+      await record({type:"user-message",content:prompt,...(images.length?{attachments:images.map(image=>({type:"image",mimeType:image.mimeType,width:image.width,height:image.height}))}:{})});
+      const scriptsEnabled=await permissionGuide.check();
+      const candidates = await send("sw:active_skills_for_url", { url: getCurrentPageUrl() });
+      const skillsForReminder = (await detectActiveSkills(candidates)).map(s => ({...s, enabled:true}));
+      setActiveSkills(skillsForReminder);
+      const builtinSite=skillsForReminder.some(s=>!s.filePath.startsWith("user-skill:"));
+      permissionGuide.setBuiltinSite(builtinSite);
 
       // Read documentation only from installed, enabled skills in this document.
       // Static parsing cannot recover computed schemas or defineSkill options.
-      await injectSkills(skillsForReminder);
       if (skillsForReminder.length) {
-        const described = await callBridge("exec", {code: `return Object.fromEntries(args[0].map(ns => { const s=window.xgoose?.skills?.[ns]; return [ns,s ? {functions:s.__describe__?.(),instructions:s.__meta__?.instructions} : null]; }));`,args:[skillsForReminder.map(s=>s.namespace)],timeoutMs:5000,execId:crypto.randomUUID()},7000) as any;
-        if(described.ok)for(const skill of skillsForReminder){
-          const info=described.result?.[skill.namespace];
+        const described = await send("sw:skill_snapshot", undefined);
+        for(const skill of skillsForReminder){
+          const info=described[skill.namespace];
           if(info?.functions&&typeof info.functions==="object")skill.functions=Object.entries(info.functions).map(([name,details])=>({name,...details as any}));
           if(typeof info?.instructions==="string")skill.instructions=info.instructions;
         }
       }
 
       const baseReminder = buildSystemReminder({
+        skillInvocation: "structured",
         pageUrl: getCurrentPageUrl(),
         pageTitle: getCurrentPageTitle(),
         activeSkills: skillsForReminder,
@@ -722,6 +742,9 @@ async function bootstrap(): Promise<void> {
       });
       const reminder =
         baseReminder +
+        languageReminder(settings.answerLanguage) +
+        "\n# Chrome skill execution\nUse skill_call({skill,function,args}) for all website skill calls. This structured tool works for bundled skills without Allow User Scripts. Examples using xgoose.skills.ns.fn(args) describe the same function and arguments; translate them to skill_call instead of js_exec. Raw js_exec requires Allow User Scripts.\n" +
+        (scriptsEnabled?"":userScriptsReminder(chrome.runtime.id,builtinSite))+
         sourceGroundedToolUseReminder(prompt, skillsForReminder.length > 0);
 
       // Heal any orphaned tool-call / tool-result parts that survived from a
@@ -729,7 +752,7 @@ async function bootstrap(): Promise<void> {
       // Zod validation rejects the conversation with "Invalid prompt: The
       // messages do not match the ModelMessage[] schema." and the user
       // has no way to recover except deleting the conversation.
-      const messagesForModel = modelContext ? [...modelContext,{role:"user",content:prompt}] : conversationMessages;
+      const messagesForModel = modelContext ? [...modelContext,visibleUserMessage] : conversationMessages;
       const { sanitized: cleanMessages, healed } = sanitizeMessages(messagesForModel);
       if (healed > 0) {
         console.info(
@@ -755,7 +778,7 @@ async function bootstrap(): Promise<void> {
       // Reminder content changes (navigation, new todos, new memory) DO
       // invalidate the whole prefix — but that was already true before, and
       // those events are rare relative to "user types another question".
-      const bundle = await createAgent({ settings, reminder, onProviderResponse: record });
+      const bundle = await createAgent({ settings, reminder, onProviderResponse: async event=>{if(event.contextTextBytes!==undefined&&event.contextLimitBytes)panel.setContextUsage({textBytes:event.contextTextBytes,limitBytes:event.contextLimitBytes});await record(event);} });
       bundle.agent.subscribe(async event => {
         if (event.type === "text-delta" || event.type === "reasoning-delta") return;
         await record(event);
@@ -767,6 +790,16 @@ async function bootstrap(): Promise<void> {
 
       for await (const part of result.fullStream as AsyncIterable<any>) {
         switch (part.type) {
+          case "context-compacting": {
+            panel.setLoadingStatus("Compacting conversation…");
+            break;
+          }
+          case "context-summary": {
+            modelContext=part.modelContext;
+            persistCurrentConvo();
+            panel.setLoadingStatus("Context compacted · continuing…");
+            break;
+          }
           case "start-step": {
             stepCount++;
             if (reasoningBlock) {
@@ -802,6 +835,7 @@ async function bootstrap(): Promise<void> {
             break;
           }
           case "text-delta": {
+            if(!firstResponse){firstResponse=true;track("chat_first_response",{provider:settings.provider,first_response_ms:Date.now()-turnStarted,flow_id:turnFlow,duration_ms:Date.now()-turnStarted});}
             panel.removeThinking();
             if (reasoningBlock) {
               reasoningBlock.finalize();
@@ -833,7 +867,10 @@ async function bootstrap(): Promise<void> {
           }
           case "tool-result": {
             const card = toolCards.get(part.toolCallId);
-            if (card) card.setResult(part.output);
+            if (card) {
+              if(part.output?.ok===false)card.setResult(undefined,String(part.output.error??"Tool failed"));
+              else card.setResult(part.output);
+            }
             if (inFlight) {
               inFlight.toolOutputs.set(part.toolCallId, {
                 output: part.output,
@@ -936,7 +973,9 @@ async function bootstrap(): Promise<void> {
 
       accumulateUsage(usage as any);
       panel.setStatus(`${stepCount} step${stepCount === 1 ? "" : "s"}`);
-      track("chat_turn_finished", {
+      track(turnErrorDisplay?"chat_turn_failed":"chat_turn_finished", {
+        flow_id:turnFlow,duration_ms:Date.now()-turnStarted,
+        ...(turnErrorDisplay?{reason:failureReason(turnErrorDisplay)}:{}),
         steps: stepCount,
         provider: getSettings().provider,
         model: getSettings().model,
@@ -961,6 +1000,7 @@ async function bootstrap(): Promise<void> {
         accumulateUsage(null);
         panel.setStatus(wasNav ? "Navigation stopped the turn" : "Stopped");
         track(wasNav ? "chat_turn_navigated" : "chat_turn_stopped_by_user", {
+          flow_id:turnFlow,duration_ms:Date.now()-turnStarted,provider:getSettings().provider,
           steps: stepCount,
         });
       } else {
@@ -986,6 +1026,7 @@ async function bootstrap(): Promise<void> {
         }
         console.error("[xgoose] turn failed", err, { causes: causeChain });
         track("chat_turn_failed", {
+          reason:failureReason(err),flow_id:turnFlow,duration_ms:Date.now()-turnStarted,
           steps: stepCount,
           provider: getSettings().provider,
           model: getSettings().model,
@@ -1093,18 +1134,19 @@ async function bootstrap(): Promise<void> {
   // pill above the input; the drain loop below picks them up between
   // turns. `agentLoopActive` covers the brief gap *between* runAgentTurn
   // calls, so a second onSend can't accidentally start a parallel loop.
-  async function processQueue(initial?: string): Promise<void> {
+  async function processQueue(initial?: string,images:ImageAttachment[]=[]): Promise<void> {
+    const item=initial?{text:initial,images}:undefined;
     if (agentLoopActive) {
       if (initial && initial.trim()) {
-        queuedMessages.push(initial);
-        panel.setQueuedMessages([...queuedMessages]);
+        queuedMessages.push(item!);
+        panel.setQueuedMessages(queuedMessages.map(queueLabel));
       }
       return;
     }
     agentLoopActive = true;
     try {
       if (initial && initial.trim()) {
-        await runAgentTurn(initial, { hidden: false });
+        await runAgentTurn(initial, { hidden: false,images });
       }
       // Drain anything the user queued while we were running. Joining
       // multiple queued items with a blank line keeps them as a single
@@ -1113,20 +1155,19 @@ async function bootstrap(): Promise<void> {
       while (queuedMessages.length > 0) {
         const batch = queuedMessages.splice(0, queuedMessages.length);
         panel.setQueuedMessages([]);
-        const joined = batch.join("\n\n");
-        await runAgentTurn(joined, { hidden: false });
+        for(const item of batch) await runAgentTurn(item.text, { hidden: false,images:item.images });
       }
     } finally {
       agentLoopActive = false;
     }
   }
 
-  panel.onSend((prompt) => {
-    void processQueue(prompt);
+  panel.onSend((prompt,images) => {
+    void processQueue(prompt,images);
   });
 
   panel.onSkillActionRun(async (action) => {
-    if (!action.js) {
+    if (!action.js || !await permissionGuide.check()) {
       void processQueue(action.prompt);
       return;
     }
@@ -1148,8 +1189,11 @@ async function bootstrap(): Promise<void> {
     } finally {
       panel.setLoadingStatus(null);
     }
-    if (resultText.length > 8000) {
-      resultText = resultText.slice(0, 8000) + "…(truncated)";
+    // Thread shortcuts may include hundreds of floors; the old 8K cut
+    // discarded the latest posts. Bound UTF-8 bytes for the Hosted request cap.
+    const actionBytes = new TextEncoder().encode(resultText);
+    if (actionBytes.length > 140000) {
+      resultText = new TextDecoder().decode(actionBytes.slice(0, 140000)) + "…(truncated; do not claim complete coverage)";
     }
     const composed =
       `${action.prompt}\n\n` +
@@ -1169,58 +1213,11 @@ async function bootstrap(): Promise<void> {
 
   // SW push messages.
   registerRouter({
-    "cs:set_active_skills": async ({ skills }) => {
-      setActiveSkills(skills);
-      lastActiveSkillCount = skills.length;
-      applyLauncherVisibility();
-      // We can't await `sw:list_skills` here without breaking the message
-      // round-trip's synchronous reply contract; surface the minimal chip
-      // info now and let the next `refreshSkills` (which DOES enrich) catch
-      // up. Worst case the chip just lacks the user-authored badge briefly.
-      panel.setSkills(
-        skills.map((s) => ({
-          name: s.name,
-          namespace: s.namespace,
-          enabled: true,
-          activeOnThisPage: true,
-        })),
-      );
-      // CROSS-ORIGIN race guard: if `webNavigation.onCompleted` fires
-      // during an in-flight agent turn (typical for cross-origin resume
-      // where the new page is still finishing its initial load while
-      // the agent is making its first tool calls), `resetInjectedSkills`
-      // would create a brief window where `xgoose.skills.<ns>` is
-      // undefined and any in-flight `skill_call` throws. Skip the reset
-      // mid-turn; the cache stays warm and the next idle moment can
-      // rebundle. Skill source-code edits during a turn already require
-      // a page reload to take effect.
-      if (running) {
-        {
-          panel.setLoadingStatus(
-            `Loading ${skills.length} skill${skills.length === 1 ? "" : "s"}…`,
-          );
-          try {
-            await injectSkills(skills);
-          } finally {
-            panel.setLoadingStatus(null);
-          }
-        }
-        return;
-      }
-      // Reset the injected-skill cache so that user-skill edits (which keep
-      // the same name but mutated code) actually take effect; bundled skills
-      // are content-addressed by URL so re-injecting them is a no-op anyway.
-      resetInjectedSkills();
-      {
-        panel.setLoadingStatus(
-          `Loading ${skills.length} skill${skills.length === 1 ? "" : "s"}…`,
-        );
-        try {
-          await injectSkills(skills);
-        } finally {
-          panel.setLoadingStatus(null);
-        }
-      }
+    "cs:set_active_skills": async () => {
+      // Source edits need reinjection, but resetting during a turn can
+      // invalidate tools in use. Refresh always reapplies @detect filtering.
+      if (!running) resetInjectedSkills();
+      await refreshSkills();
     },
     "cs:toggle_panel": () => {
       panel.toggle();
@@ -1580,7 +1577,8 @@ function replayConversation(panel: Panel, messages: any[]): void {
                 .join("")
             : text;
       if (display.startsWith("<system-reminder>")) continue;
-      panel.addUserMessage(display);
+      const images:ImageAttachment[]=Array.isArray(msg.content)?msg.content.filter((part:any)=>part?.type==="image"&&typeof part.data==="string"&&/^image\/(jpeg|png|webp)$/.test(part.mimeType)).map((part:any)=>({...part,name:"Attached image"})):[];
+      panel.addUserMessage(display,images);
     } else if (msg.role === "assistant") {
       if (typeof msg.content === "string") {
         const bubble = panel.addAssistantBubble();

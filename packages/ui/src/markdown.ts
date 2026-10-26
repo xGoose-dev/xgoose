@@ -39,18 +39,14 @@ export function renderMarkdown(text: string): string {
         );
       } else {
         blocks.push(
-          `<pre><code class="lang-${esc(lang || "text")}">${esc(
+          `<pre><code class="lang-${escAttr(lang || "text")}">${esc(
             codeLines.join("\n"),
           )}</code></pre>`,
         );
       }
       continue;
     }
-    if (
-      /^\|.+\|/.test(line) &&
-      i + 1 < lines.length &&
-      /^\|[\s:|-]+\|$/.test(lines[i + 1]?.trim() ?? "")
-    ) {
+    if (isTableStart(lines, i)) {
       const headerCells = parseTableRow(line);
       i += 2;
       const rows: string[][] = [];
@@ -123,7 +119,7 @@ export function renderMarkdown(text: string): string {
       !/^#{1,3} /.test(lines[i]!) &&
       !/^[-*] /.test(lines[i]!) &&
       !/^\d+\. /.test(lines[i]!) &&
-      !/^\|.+\|/.test(lines[i]!) &&
+      !isTableStart(lines, i) &&
       !/^(&gt; |> )/.test(lines[i]!) &&
       lines[i]!.trim() !== "---" &&
       lines[i]!.trim() !== "***"
@@ -134,6 +130,11 @@ export function renderMarkdown(text: string): string {
     blocks.push(`<p>${paraLines.map((l) => inline(l)).join("<br>")}</p>`);
   }
   return blocks.join("\n");
+}
+
+function isTableStart(lines: string[], index: number): boolean {
+  return /^\|.+\|/.test(lines[index] ?? "") &&
+    /^\|[\s:|-]+\|$/.test(lines[index + 1]?.trim() ?? "");
 }
 
 function parseTableRow(line: string): string[] {

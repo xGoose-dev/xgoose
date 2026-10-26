@@ -25,6 +25,7 @@ export {
 } from "./systemPrompt";
 export {
   createModel,
+  normalizeProviderBaseUrl,
   providerOptionsFor,
   DEFAULT_MODEL_BY_PROVIDER,
   KNOWN_MODELS,

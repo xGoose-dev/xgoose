@@ -22,6 +22,11 @@
       </header>
 
       <section id="sourceSection">
+        <form id="urlForm" class="field">
+          <label for="sourceUrl" class="field-label">Install from URL</label>
+          <div class="input-with-action"><input id="sourceUrl" type="url" placeholder="https://example.com/skill.xgs.js" required><button class="btn secondary" type="submit">Load skill</button></div>
+          <p id="urlStatus" class="hint" role="status">Use a direct .xgs.js source URL. No account or publishing required.</p>
+        </form>
         <h2>Source</h2>
         <p class="hint" id="sourceHint">
           Drop in or paste a complete <code>.xgs.js</code> skill file. The

@@ -93,6 +93,8 @@ function redactedSnapshot(s: Settings): Record<string, unknown> {
     model: s.model,
     thinking: s.thinking,
     theme: s.theme,
+    language: s.language,
+    answerLanguage: s.answerLanguage,
     jsExecTimeoutMs: s.jsExecTimeoutMs,
     redactSensitiveHeaders: s.redactSensitiveHeaders,
     redactSensitiveHeaderKeys: s.redactSensitiveHeaderKeys,

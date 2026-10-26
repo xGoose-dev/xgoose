@@ -37,3 +37,5 @@ export {
 export { renderMarkdown } from "./markdown";
 
 export { DEFAULT_LAYOUT, type Corner, type Layout } from "./layout";
+
+export type {ImageAttachment} from "./images";

@@ -44,7 +44,7 @@ export const XGOOSE_HOSTED_AI_BASE_URL = "https://api.xgoose.org/ai";
 // ---------------------------------------------------------------------------
 
 export const SettingsSchema = z.object({
-  provider: ProviderSchema.default("gemini"),
+  provider: ProviderSchema.default("xgoose-hosted"),
   // Per-provider credentials. Each provider has its OWN slot — switching
   // the dropdown reveals the key that belongs to that provider, instead
   // of leaking (and accidentally re-using) the previous provider's key.
@@ -56,10 +56,12 @@ export const SettingsSchema = z.object({
   apiKeys: z.record(z.string(), z.string()).default({}),
   baseUrls: z.record(z.string(), z.string()).default({}),
   apiKey: z.string().default(""),
-  model: z.string().default("gemini-2.5-pro"),
+  model: z.string().default("luna"),
   baseUrl: z.string().default(""),
-  thinking: z.boolean().default(true),
+  thinking: z.boolean().default(false),
   theme: ThemeSchema.default("system"),
+  language: z.enum(["auto","en","zh-CN","es"]).default("auto"),
+  answerLanguage: z.enum(["auto","en","zh-CN","es"]).default("auto"),
   jsExecTimeoutMs: z.number().int().min(1000).max(600_000).default(30_000),
   redactSensitiveHeaders: z.boolean().default(true),
   redactSensitiveHeaderKeys: z
@@ -67,13 +69,12 @@ export const SettingsSchema = z.object({
     .default(["authorization", "x-csrf-token", "x-xsrf-token", "x-api-key"]),
   /**
    * When the floating ✦ launcher button is shown:
-   *   - "always"      → on every page (today's behaviour; the default so
-   *                     existing installs are unaffected).
+   *   - "always"      → on every page (explicit opt-in).
    *   - "skill-sites" → only on pages where at least one enabled skill
    *                     matches. An already-open chat panel is never hidden.
    * Gated by the content script via `active_skills_for_url`.
    */
-  launcherVisibility: z.enum(["always", "skill-sites"]).default("always"),
+  launcherVisibility: z.enum(["always", "skill-sites"]).default("skill-sites"),
   /**
    * Share anonymous, opt-out usage analytics (Google Analytics for Firebase).
    * On by default; flipping this off in the options page stops all event

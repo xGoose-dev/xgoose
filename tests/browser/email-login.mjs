@@ -24,7 +24,7 @@ try{
   };
  },confirmed);
  await installMock(sw);
- const options=await context.newPage();await options.goto(`chrome-extension://${sw.url().split('/')[2]}/options.html`);
+ const options=await context.newPage();await options.goto(`chrome-extension://${sw.url().split('/')[2]}/onboarding.html`);
  await options.locator('#loginEmail').waitFor();
  await mkdir(resolve('artifacts'),{recursive:true});await options.screenshot({path:resolve('artifacts/email-login-ui.png'),animations:'disabled'});
  const before=context.pages().length;
@@ -44,7 +44,7 @@ try{
  await reopened.locator('#accountState').filter({hasText:'Connected'}).waitFor({timeout:20000});assert.equal(context.pages().length,before);
  // Saving local preferences cannot wait on a slow consent network request.
  await reopened.waitForFunction(()=>document.querySelector('#saveBtn')?.disabled===false);
- await reopened.locator('#provider').selectOption('xgoose-hosted');
+ await reopened.locator('#connectionMode').selectOption('hosted');
  await reopened.locator('#saveBtn').click();await reopened.locator('#saveStatus').filter({hasText:'Saved'}).waitFor();
  assert.equal(await reopened.evaluate(async()=>(await chrome.storage.local.get('xgoose.settings'))['xgoose.settings'].provider),'xgoose-hosted');
  await sw.evaluate(()=>globalThis.releaseConsent?.());

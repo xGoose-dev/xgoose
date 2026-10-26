@@ -13,6 +13,7 @@
 //     (purpose/parallel_safe/timeout_ms) plus a syntax-highlighted code body
 //     so the user can read what the model is about to run before it runs.
 
+import {prepareImage,imageDataUrl,MAX_ATTACHMENTS,type ImageAttachment} from "./images";
 import { renderMarkdown } from "./markdown";
 import {
   describeToolCall,
@@ -426,12 +427,12 @@ const CSS = `
   width:15px;height:15px;display:block;
 }
 
-/* Close button: red affordance so accidental clicks read as destructive. */
+/* Minimizing preserves the conversation; use the same neutral hover as tools. */
 .hdr-close:hover{
-  background:rgba(239,68,68,.10);color:#f87171;
-  box-shadow:0 0 0 3px rgba(239,68,68,.10);
+  background:var(--bg-hover);color:var(--text-strong);
+  box-shadow:0 0 0 3px var(--bg-hover);
 }
-.panel.light .hdr-close:hover{color:#dc2626}
+.panel.light .hdr-close:hover{color:var(--text-strong)}
 
 /* "+ New" primary CTA — gradient pill, drops "New" label on narrow widths. */
 .btn-new{
@@ -878,6 +879,8 @@ const CSS = `
   font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   font-size:10px;
 }
+.context-meter{flex:0 0 auto;white-space:nowrap;color:var(--text-muted);font-size:9px}.context-meter[hidden]{display:none}
+.loading-status{min-width:0;overflow:hidden;flex:0 1 auto}.loading-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .metrics.active{display:inline-flex}
 .metrics .sep{opacity:.45}
 .metrics .cost{color:var(--text-strong);font-weight:600}
@@ -1121,6 +1124,16 @@ const CSS = `
   box-shadow:0 0 0 2px rgba(168,85,247,.55),0 0 0 4px rgba(168,85,247,.18);
 }
 
+.image-previews{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px 0;background:var(--bg);flex:0 0 auto}
+.image-previews[hidden],.image-error[hidden],.btn-attach[hidden]{display:none}
+.image-preview{position:relative;width:64px;height:64px}
+.image-preview img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border-strong)}
+.image-preview button{position:absolute;top:-5px;right:-5px;border:1px solid var(--border-strong);border-radius:50%;background:var(--bg);color:var(--text-strong);width:23px;height:23px;cursor:pointer}
+.image-error{padding:8px 12px;color:var(--err-text);background:var(--err-bg);font-size:12px;flex:0 0 auto}
+.btn-attach{display:grid;place-items:center;border:1px solid var(--border-input);border-radius:10px;background:var(--bg-input);color:var(--text-muted);padding:9px;min-width:36px;min-height:39px;cursor:pointer;flex:0 0 auto}
+.btn-attach:hover{color:var(--text-strong);border-color:var(--border-strong)}
+.btn-attach:focus-visible{outline:2px solid var(--gradient-via);outline-offset:2px}
+.msg-user img{max-width:100%;max-height:220px;object-fit:contain;border-radius:8px;display:block;margin-top:8px}
 /* ── input ──
  * Row: [ textarea  ][ Stop ][ Send ]
  * Stop and Send are wrapped in .input-actions so they always stay
@@ -1301,7 +1314,7 @@ const HTML = `
       </div>
       <span class="hdr-sep" aria-hidden="true"></span>
       <button class="btn-new" title="New conversation"><span class="btn-new-glyph" aria-hidden="true">+</span><span class="btn-new-label">New</span></button>
-      <button class="btn-close hdr-icon-btn hdr-close" title="Close" aria-label="Close"><svg class="hdr-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M6 18 18 6"/></svg></button>
+      <button class="btn-close hdr-icon-btn hdr-close" title="Minimize chat" aria-label="Minimize"><svg class="hdr-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M5 12h14"/></svg></button>
     </div>
   </div>
   <div class="skills-bar">
@@ -1324,11 +1337,18 @@ const HTML = `
   <div class="status-row">
     <span class="loading-status"><span class="sp"></span><span class="loading-text"></span></span>
     <span class="status"></span>
+    <span class="context-meter" hidden></span>
     <span class="metrics" title=""></span>
   </div>
   <div class="shortcuts"></div>
   <div class="queued-row"></div>
+  <div class="image-previews" aria-label="Attached images" hidden></div>
+  <div class="image-error" role="status" hidden></div>
   <div class="input-area">
+    <input class="image-file" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+    <button class="btn-attach" type="button" aria-label="Attach images" title="Attach images (PNG, JPEG, WebP)">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m4 18 5-5 4 3 4-6 4 5"/></svg>
+    </button>
     <textarea class="in-text" rows="1" placeholder="Ask anything about this page…"></textarea>
     <div class="input-actions">
       <button class="btn-stop" title="Stop the current turn">Stop</button>
@@ -1381,6 +1401,7 @@ export type TodoUiItem = {
  *  + floating button. Settings panel is always opt-in: hosts that want
  *  it set `buttons.settings = true`. */
 export type CreatePanelOpts = {
+  imageUploads?: boolean;
   branding?: {
     /** Replaces the literal "xgoose" text in the header title. */
     name?: string;
@@ -1439,7 +1460,7 @@ export type Panel = {
   setApiKeyMissing(missing: boolean, openSettings: () => void): void;
   clear(): void;
 
-  addUserMessage(text: string): HTMLElement;
+  addUserMessage(text: string, images?: ImageAttachment[]): HTMLElement;
   addAssistantBubble(): AssistantBubbleHandle;
   addToolCard(name: string, input: unknown): ToolCardHandle;
   addReasoningBlock(): ReasoningBlockHandle;
@@ -1458,6 +1479,7 @@ export type Panel = {
    *  {turns}× · ${cost}` with a tooltip breakdown for input / output /
    *  reasoning / cache. */
   setUsage(usage: import("@xgoose/core").ConversationUsage | null): void;
+  setContextUsage(usage:{textBytes:number;limitBytes:number}|null):void;
   /** Replace the visible queued-prompts tray. Pass `[]` to hide it. The
    *  panel doesn't own queue state — the content script does — this just
    *  reflects whatever the caller hands us. Each item is rendered as a
@@ -1481,7 +1503,7 @@ export type Panel = {
   onLayoutChange(cb: (layout: Layout) => void): void;
 
   // Event wiring
-  onSend(cb: (text: string) => void): void;
+  onSend(cb: (text: string, images?: ImageAttachment[]) => void): void;
   onStop(cb: () => void): void;
   /** Fires when the user clicks × on a queued-message pill. Index matches
    *  the array last passed to `setQueuedMessages`. */
@@ -1538,10 +1560,47 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   const genBar = $(".gen-bar") as HTMLDivElement;
   const statusEl = $(".status") as HTMLSpanElement;
   const metricsEl = $(".metrics") as HTMLSpanElement;
+  const contextMeter=$(".context-meter") as HTMLSpanElement;
   const loadingEl = $(".loading-status") as HTMLSpanElement;
   const loadingTextEl = $(".loading-text") as HTMLSpanElement;
   const inputEl = $(".in-text") as HTMLTextAreaElement;
   const sendBtn = $(".btn-send") as HTMLButtonElement;
+  const attachBtn=$(".btn-attach") as HTMLButtonElement;
+  const imageFile=$(".image-file") as HTMLInputElement;
+  const previewEl=$(".image-previews") as HTMLDivElement;
+  const imageError=$(".image-error") as HTMLDivElement;
+  let pendingImages:ImageAttachment[]=[];
+  let imagePreparing=false, imageGeneration=0;
+  attachBtn.hidden=!opts.imageUploads;
+  function renderImages(){
+    previewEl.replaceChildren();previewEl.hidden=!pendingImages.length;
+    pendingImages.forEach((image,index)=>{
+      const wrap=document.createElement("div");wrap.className="image-preview";
+      const img=document.createElement("img");img.src=imageDataUrl(image);img.alt=image.name;
+      const remove=document.createElement("button");remove.type="button";remove.textContent="×";remove.setAttribute("aria-label",`Remove ${image.name}`);
+      remove.onclick=()=>{pendingImages.splice(index,1);renderImages();};
+      wrap.append(img,remove);previewEl.append(wrap);
+    });
+    if(pendingImages.length){const hint=document.createElement("span");hint.style.cssText="width:100%;font-size:11px;color:var(--text-muted)";hint.textContent="Images are resized locally and sent with this message to your AI provider.";previewEl.append(hint);}
+  }
+  async function attachFiles(files:File[]){
+    if(imagePreparing||!opts.imageUploads)return;
+    const generation=imageGeneration;imagePreparing=true;attachBtn.disabled=true;sendBtn.disabled=true;imageError.hidden=true;
+    try{
+      for(const file of files){
+        if(pendingImages.length>=MAX_ATTACHMENTS)throw Error(`Attach up to ${MAX_ATTACHMENTS} images per message.`);
+        const image=await prepareImage(file);if(generation!==imageGeneration)return;
+        pendingImages.push(image);renderImages();
+      }
+    }catch(error){if(generation===imageGeneration){imageError.textContent=error instanceof Error?error.message:"Could not read this image.";imageError.hidden=false;}}
+    finally{imagePreparing=false;attachBtn.disabled=false;sendBtn.disabled=false;imageFile.value="";}
+  }
+  attachBtn.onclick=()=>imageFile.click();
+  imageFile.onchange=()=>void attachFiles(Array.from(imageFile.files??[]));
+  inputEl.addEventListener("paste",event=>{
+    const files=Array.from(event.clipboardData?.files??[]).filter(file=>file.type.startsWith("image/"));
+    if(opts.imageUploads&&files.length){event.preventDefault();void attachFiles(files);}
+  });
   const stopBtn = $(".btn-stop") as HTMLButtonElement;
   const queuedRow = $(".queued-row") as HTMLDivElement;
   const shortcutsEl = $(".shortcuts") as HTMLDivElement;
@@ -1695,7 +1754,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   }
 
   const handlers = {
-    send: null as null | ((t: string) => void),
+    send: null as null | ((t: string, images?: ImageAttachment[]) => void),
     stop: null as null | (() => void),
     cancelQueued: null as null | ((index: number) => void),
     fresh: null as null | (() => void),
@@ -2367,10 +2426,11 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   // Stop is its own dedicated button (only visible while running).
   sendBtn.addEventListener("click", () => {
     const text = inputEl.value.trim();
-    if (!text) return;
+    if (imagePreparing || (!text && !pendingImages.length)) return;
+    const images=pendingImages;pendingImages=[];renderImages();imageError.hidden=true;
     inputEl.value = "";
     inputEl.style.height = "auto";
-    handlers.send?.(text);
+    handlers.send?.(text || "What is in this image?", images);
   });
 
   stopBtn.addEventListener("click", () => {
@@ -2656,12 +2716,13 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     _thinkingEl = null;
   }
 
-  function addUserMessage(text: string): HTMLElement {
+  function addUserMessage(text: string, images:ImageAttachment[]=[]): HTMLElement {
     userScrolledUp = false;
     const wrap = el("msg-user-wrap");
     const bubble = document.createElement("div");
     bubble.className = "msg-user";
     bubble.textContent = text;
+    for(const image of images){const img=document.createElement("img");img.src=imageDataUrl(image);img.alt=image.name||"Attached image";bubble.append(img);}
     wrap.appendChild(bubble);
     return append(wrap);
   }
@@ -2799,11 +2860,13 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     },
 
     clear() {
+      imageGeneration++;pendingImages=[];renderImages();imageError.hidden=true;
       msgs.innerHTML = "";
       statusEl.textContent = "";
       metricsEl.classList.remove("active");
       metricsEl.textContent = "";
       metricsEl.title = "";
+      contextMeter.hidden=true;
       renderEmptyState();
     },
 
@@ -2887,6 +2950,12 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       }
       metricsEl.title = tip.join("\n");
       metricsEl.classList.add("active");
+    },
+    setContextUsage(usage){
+      if(!usage||!Number.isFinite(usage.textBytes)||!Number.isFinite(usage.limitBytes)||usage.limitBytes<=0){contextMeter.hidden=true;return;}
+      contextMeter.hidden=false;contextMeter.textContent=`Context ${Math.round(100*usage.textBytes/usage.limitBytes)}%`;
+      contextMeter.title=`Gateway measured current request: ${usage.textBytes.toLocaleString()} / ${usage.limitBytes.toLocaleString()} UTF-8 bytes. Image bytes are excluded. Conversation token totals are separate.`;
+      contextMeter.setAttribute("aria-label",contextMeter.title);
     },
     setSending(sending) {
       // Input stays enabled the whole time — typing while the agent is

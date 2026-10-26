@@ -1,0 +1,76 @@
+{
+  "version": "0.2.4",
+  "design": "English product feature illustrations",
+  "assets": [
+    {
+      "file": "01-research.png",
+      "width": 1280,
+      "height": 800,
+      "type": "rendered feature illustration",
+      "language": "en"
+    },
+    {
+      "file": "02-skills.png",
+      "width": 1280,
+      "height": 800,
+      "type": "rendered feature illustration",
+      "language": "en"
+    },
+    {
+      "file": "03-connection.png",
+      "width": 1280,
+      "height": 800,
+      "type": "rendered feature illustration",
+      "language": "en"
+    },
+    {
+      "file": "03-images.png",
+      "width": 1280,
+      "height": 800,
+      "type": "rendered feature illustration",
+      "language": "en"
+    },
+    {
+      "file": "04-get-started.png",
+      "width": 1280,
+      "height": 800,
+      "type": "rendered feature illustration",
+      "language": "en"
+    },
+    {
+      "file": "05-create-skills.png",
+      "width": 1280,
+      "height": 800,
+      "type": "rendered feature illustration",
+      "language": "en"
+    },
+    {
+      "file": "promo-small.png",
+      "width": 440,
+      "height": 280,
+      "type": "rendered feature illustration",
+      "language": "en"
+    },
+    {
+      "file": "promo-marquee.png",
+      "width": 1400,
+      "height": 560,
+      "type": "rendered feature illustration",
+      "language": "en"
+    },
+    {
+      "file": "social.png",
+      "width": 1200,
+      "height": 630,
+      "type": "rendered feature illustration",
+      "language": "en"
+    },
+    {
+      "file": "artwork-preview.png",
+      "width": 1600,
+      "height": 1530,
+      "type": "rendered feature illustration",
+      "language": "en"
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import {recordEvent,failureReason} from "@/shared/analytics";
 /**
  * Email-confirmation login runs in the service worker. Pending requests are
  * persisted so polling resumes after a popup closes or the worker restarts.
@@ -94,9 +95,11 @@ export async function startLogin(email?:string): Promise<LoginState> {
     const normalized=email.trim().toLowerCase();
     if(pending?.email===normalized)return getLoginState();
     cancelPending();
+    recordEvent("email_login_requested",{method:"extension_email"});
     const response=await apiFetch<{poll_token:string;expires_in:number;interval:number}>("/auth/extension/request",{method:"POST",body:JSON.stringify({email:normalized})})
       .catch(() => ({ok:false as const,status:0,error:"Could not send the email request. Check your connection and try again."}));
-    if(!response.ok){lastPhase="error";lastError=response.error;return getLoginState();}
+    if(!response.ok){recordEvent("email_login_failed",{reason:failureReason(response.error),http_status:response.status});lastPhase="error";lastError=response.error;return getLoginState();}
+    recordEvent("email_login_sent");
     pending={mode:"email",email:normalized,deviceCode:response.data.poll_token,userCode:"",clientId:CLIENT_ID,expiresAt:Date.now()+response.data.expires_in*1000,intervalMs:Math.max(5000,response.data.interval*1000),pollTimer:null};
     await chrome.storage.local.set({[PENDING_KEY]:pending});lastPhase="pending";lastError=null;schedulePoll();return getLoginState();
   }
@@ -143,7 +146,7 @@ export async function startLogin(email?:string): Promise<LoginState> {
 }
 
 export async function cancelLogin():Promise<LoginState>{
- await restored;cancelPending();lastPhase="idle";lastError=null;return getLoginState();
+ await restored;if(pending)recordEvent("email_login_cancelled");cancelPending();lastPhase="idle";lastError=null;return getLoginState();
 }
 
 /** Immediate one-shot poll. Returns the current state after the call. */
@@ -252,6 +255,7 @@ async function pollCurrent():Promise<void>{
   if (!pending) return;
   const flow=pending;
   if (Date.now() > pending.expiresAt) {
+    recordEvent("email_login_expired",{reason:"confirmation_timeout"});
     cancelPending();
     lastPhase = "expired";
     lastError = "device code expired — try signing in again";
@@ -293,6 +297,7 @@ async function pollCurrent():Promise<void>{
       lastSeenAt: Date.now(),
     };
     await setAccount(account);
+    recordEvent("email_login_succeeded",{method:flow.mode==="email"?"extension_email":"device",duration_ms:Math.max(0,Date.now()-(flow.expiresAt-600000))});
     cancelPending();
     lastPhase = "idle";
     lastError = null;
