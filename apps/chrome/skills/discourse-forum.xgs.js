@@ -1,8 +1,8 @@
 // ==XGooseSkill==
 // @name         discourse-forum
 // @namespace    discourse
-// @version      0.2.4
-// @description  Helpers for Discourse-powered forums (full-text search, read topics + posts, post replies, fetch user data via the Discourse JSON API).
+// @version      0.2.9
+// @description  Search Discourse forums, read topics and replies, and research community insights.
 // @match        *://meta.discourse.org/*
 // @match        *://*.discourse.org/*
 // @match        *://www.uscardforum.com/*
@@ -140,7 +140,7 @@ function compactSearchResult(raw) {
     posts,
     total_topics: Array.isArray(raw.topics) ? raw.topics.length : undefined,
     total_posts: Array.isArray(raw.posts) ? raw.posts.length : undefined,
-    hint: 'Compact search result. Use discourse.getTopic({ id }) or getTopicPosts({ topicId }) to read a specific thread in full.',
+    hint: 'Search snippets only. Read relevant posts with readTopicPosts({topicId}); getTopic returns a five-post preview.',
   };
 }
 
@@ -180,7 +180,7 @@ function compactTopicResult(raw, maxChars = 4000) {
     created_at: raw.created_at,
     last_posted_at: raw.last_posted_at,
     posts,
-    hint: 'Compact topic result. The post body is in posts[].text (HTML-stripped, up to maxChars per post, first 5 posts only; text_truncated flags incomplete bodies) — there is NO cooked / post_stream / raw field on this object. Use readTopicPosts({ topicId, fromPostNumber }) and follow next_cursor to read later posts.',
+    hint: 'First five posts only; bodies are in posts[].text. Use readTopicPosts for replies or truncated text.',
   };
 }
 
@@ -192,8 +192,8 @@ const TopicResultSchema = z.object({
   slug: z.string().optional(),
   category_id: z.number().optional(),
   tags: z.array(z.string()).optional(),
-  posts_count: z.number().optional(),
-  reply_count: z.number().optional(),
+  posts_count: z.number().optional().describe('Total posts including the opening post.'),
+  reply_count: z.number().optional().describe('Direct reply relationships, not total topic replies.'),
   created_at: z.string().optional(),
   last_posted_at: z.string().optional(),
   posts: z
@@ -210,11 +210,11 @@ const TopicResultSchema = z.object({
         text: z
           .string()
           .describe(
-            'Post body as HTML-stripped plain text (bounded by maxChars). READ THIS field — there is no `cooked`, `raw`, or `post_stream` on this result.',
+            'Plain-text post body, limited by maxChars.',
           ),
       }),
     )
-    .describe('Up to 5 posts at or after postNumber. Prefer readTopicPosts for large ranges and follow next_cursor.'),
+    .describe('First five posts; use readTopicPosts for replies.'),
   hint: z.string().optional(),
 });
 
@@ -235,7 +235,7 @@ async function summaryTopic(topicId, firstReplies=30, latestReplies=100) {
   if (!Number.isSafeInteger(id) || id <= 0) return {status:'not_a_topic',message:'Open a topic before using Summarize this thread.'};
   const topic = await forumJson(`/t/${id}.json`);
   const stream = topic.post_stream?.stream;
-  if (!Array.isArray(stream) || !stream.length) throw new Error('Forum did not return a readable post stream. Do not claim to have read the full topic.');
+  if (!Array.isArray(stream) || !stream.length) throw new Error('Forum did not return a readable post stream.');
   // Select actual visible replies, not arithmetic floor numbers: deleted floors
   // do not need replacement reads, and overlapping windows appear only once.
   const replies = stream.slice(1);
@@ -258,7 +258,7 @@ async function summaryTopic(topicId, firstReplies=30, latestReplies=100) {
   return {title:topic.title,url:topicLink(id),posts_count:topic.posts_count,highest_post_number:topic.highest_post_number,
     selection:selected.length===stream.length?'all visible posts':`first post, first ${firstReplies} replies and latest ${latestReplies} replies`,selected_count:selected.length,read_count:result.length,
     complete:result.length===selected.length,posts:result,
-    hint:'Read posts[].text. Counts are approximate; state the actual range and any truncation.'};
+    hint:'Read posts[].text. Counts are approximate; selection and text_truncated describe the returned data.'};
 }
 async function recentTopics(kind='new') {
   const result = await forumJson(`/latest.json?order=${kind==='random'?'latest':'created'}`);
@@ -275,7 +275,7 @@ async function recentTopics(kind='new') {
       topics.push({id:item.id,title:item.title,url:topicLink(item.id),created_at:item.created_at,last_posted_at:item.last_posted_at,posts:detail.posts || []});
     } catch(error) { topics.push({id:item.id,title:item.title,url:topicLink(item.id),read_error:String(error)}); }
   }
-  return {kind,topics,hint:'Recommend only from the bodies actually read. Include titles, short reasons, dates and clickable Markdown topic links. Identify unread or failed topics instead of inventing their contents.'};
+  return {kind,topics,hint:'Five-post previews with titles, dates and topic links.'};
 }
 
 // Range reads use the visible post-ID stream, never the first five posts of a
@@ -296,7 +296,10 @@ const TopicReadInput = z.object({
 });
 
 const TopicReadResult = z.object({
-  status:z.string(),origin:z.string(),posts:z.array(z.object({
+  status:z.string(),origin:z.string(),
+  posts_count:z.number().optional().describe('Total posts including the opening post.'),
+  highest_post_number:z.number().optional().describe('Last floor number; deleted posts can leave gaps.'),
+  posts:z.array(z.object({
     id:z.number(),post_number:z.number(),username:z.string(),url:z.string(),text:z.string(),
     like_count:z.number().nullable(),text_truncated:z.boolean(),text_offset:z.number(),total_text_chars:z.number(),next_text_offset:z.number().nullable(),
   }).passthrough()),
@@ -322,7 +325,7 @@ async function loadTopicReadState(topicId, fromPostNumber) {
       if (stream.httpStatus) return {failure:stream};
       ids = stream.post_ids;
     }
-    if (!Array.isArray(ids) || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error('Forum did not provide a visible post-ID stream; full coverage is unknown.');
+    if (!Array.isArray(ids) || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error('Forum did not provide a visible post-ID stream.');
     const state = {topic, ids:[...new Set(ids)], posts:new Map(), expires:Date.now()+60000, revision:++topicReadRevision};
     rememberTopicPosts(state, topic);
     topicReadStates.set(topicId, state);
@@ -362,7 +365,7 @@ async function readTopicRange(rawArgs) {
         if (around.httpStatus) return {...around,origin:location.origin,posts:[],complete:false,next_cursor:null};
         rememberTopicPosts(state,around);
         candidates=(around.post_stream?.posts || []).filter(post=>post.post_number>=args.fromPostNumber).sort((a,b)=>a.post_number-b.post_number);
-        if(!candidates.length && args.fromPostNumber<=(state.topic.highest_post_number || Infinity))throw new Error('Forum did not return the requested floor or a following visible floor. Coverage is unknown.');
+        if(!candidates.length && args.fromPostNumber<=(state.topic.highest_post_number || Infinity))throw new Error('Forum did not return the requested floor or a following visible floor.');
       }
       offset=candidates.length?state.ids.indexOf(candidates[0].id):state.ids.length;
       if (offset<0) throw new Error('Topic post stream changed. Restart the range read.');
@@ -379,7 +382,7 @@ async function readTopicRange(rawArgs) {
     complete:start===0 && offset===state.ids.length && !failure && !missing.length && posts.every(post=>!post.text_truncated),
     next_cursor:offset<state.ids.length?rangeCursor(state,offset):null,
     next_post_number:offset<state.ids.length?(state.posts.get(state.ids[offset])?.post_number ?? (posts.at(-1)?.post_number !== undefined?posts.at(-1).post_number+1:args.fromPostNumber || 1)):null,
-    posts,hint:'Read posts[].text. Continue with next_cursor sequentially; do not parallelize pages. Full-topic coverage requires all pages, no missing bodies, and recovery of text_truncated posts using fromPostNumber, limit:1 and next_text_offset. Scope is this origin only.'});
+    posts,hint:'Bodies: posts[].text. Continue next_cursor sequentially. missing_post_ids and text_truncated describe gaps and partial bodies.'});
   while (offset<end) {
     const id=state.ids[offset];
     if (!state.posts.has(id)) {
@@ -409,7 +412,7 @@ async function readTopicRange(rawArgs) {
 
 export default defineSkill({
   readTopicPosts: fn({
-    summary: 'Read up to 300 visible topic posts per call by real post IDs. Serialized 20-post batches, cached bodies, exact floor selection, likes, source origin, a bounded JSON result and next_cursor. Continue sequentially to cover a whole thread.',
+    summary: 'Read a topic range with automatic batching. Returns posts, counts and coverage within 24 KB; follow next_cursor for more.',
     input: TopicReadInput,
     output: TopicReadResult,
     examples: [{args:{topicId:541783,fromPostNumber:632,limit:100}},{args:{topicId:541783,fromPostNumber:632,limit:1,maxChars:6000}}],
@@ -429,8 +432,8 @@ export default defineSkill({
   searchTopics: fn({
     summary: 'Full-text search across topics and posts on the CURRENT forum origin only. ★ primary entry.',
     input: z.object({
-      query: z.string().describe('Search query, e.g. "amex platinum 175k"'),
-      page: z.number().int().min(0).optional(),
+      query: z.string().describe('Keywords and Discourse operators: in:title, @username, category:slug, #tag, after:YYYY-MM-DD, before:YYYY-MM-DD, exact phrases or -exclude.'),
+      page: z.number().int().min(0).optional().describe('Search page, starting at 1.'),
       order: z
         .enum(['relevance', 'latest', 'views', 'likes', 'activity', 'posts'])
         .optional()
@@ -449,7 +452,7 @@ export default defineSkill({
   }),
 
   getTopic: fn({
-    summary: 'Preview the first 5 posts only. Read posts[].text; use readTopicPosts for replies or full-thread coverage.',
+    summary: 'Preview topic metadata and its first five posts. Use readTopicPosts for replies.',
     input: z.object({ id: z.number().int().positive(), maxChars: z.number().int().min(500).max(20000).optional().describe("Maximum characters per post; default 4000. Increase to recover a truncated body.") }),
     output: TopicResultSchema,
     examples: [{ args: { id: 12345 } }],
@@ -457,13 +460,13 @@ export default defineSkill({
   }),
 
   getTopicPosts: fn({
-    summary: 'Read five posts from a floor. Use readTopicPosts for larger ranges.',
+    summary: 'Read five posts at or after postNumber. Use readTopicPosts for larger ranges.',
     input: z.object({
       topicId: z.number().int().positive(),
       maxChars: z.number().int().min(500).max(20000).optional(),
       postNumber: z.number().int().min(1).optional().describe('1-indexed. Default 1.'),
     }),
-    output: TopicResultSchema,
+    output: TopicReadResult,
     handler: async ({ topicId, postNumber, maxChars }) =>
       readTopicRange({topicId,fromPostNumber:postNumber ?? 1,limit:5,maxChars:maxChars ?? 4000}),
   }),
@@ -539,7 +542,7 @@ export default defineSkill({
         .int()
         .min(1)
         .optional()
-        .describe('Quote a specific post in the topic.'),
+        .describe('Reply to this post number within the topic.'),
     }),
     handler: async ({ topicId, raw, replyToPostNumber }) => {
       const body = { topic_id: topicId, raw };
@@ -557,10 +560,14 @@ export default defineSkill({
     },
   }),
 }, {
-  instructions: `Use readTopicPosts when replies can affect the answer, including short topics. getTopic is only a five-post preview, never evidence of full-thread coverage. On every continuation, check first_post_number, last_post_number, returned post IDs and next_cursor against the previous result and requested floor. If the range or cursor does not advance, stop repeating that request; recover with a targeted floor read or state exactly which replies remain unread. For current offers, inspect dated relevant replies and distinguish current verified evidence from historical posts. For large or full-thread reads, call discourse.readTopicPosts and follow next_cursor sequentially; do not write Promise.all pagination loops. Cursors expire after 60 seconds: resume from next_post_number. Recover text_truncated bodies with fromPostNumber, limit:1, textOffset:next_text_offset. Search is scoped to location.origin. Discourse shortcuts already supply fetched topic bodies in action-result. Use those results first; only fetch more when missing or truncated text affects the answer. For summaries, default to the original post plus roughly the first 30 and latest 100 replies, deduplicating overlaps. State actual coverage; user-specified ranges take precedence. Never present title-only guesses as verified content. Respond in the conversation's language, or otherwise match the forum's language.`,
+  instructions: `Find relevant discussions, read key posts and summarize community consensus and actionable data points.
+- Prioritize recent information, helpful topics with high engagement, first-hand experiences and official announcements or policy changes.
+- Use provided action-result first. Search snippets locate discussions; read bodies for content claims. Listing/count questions need the requested metadata only.
+- Check topic size before choosing reading depth. getTopic and getTopicPosts return five posts. Use readTopicPosts for larger ranges with a bounded limit; follow next_cursor sequentially. If expired, resume from next_post_number. Recover needed truncated text with fromPostNumber, limit:1 and textOffset:next_text_offset.
+- Summarize rather than quote whole threads. Describe outcomes, dates, amounts and relevant circumstances; include author, available likes and post links. Follow the user's scope and language.`,
   actions: [
-    {label:'Latest topics', prompt:"Summarize the newest topics from action-result with a short description, creation time and clickable Markdown link for each. Sort by creation time; activity on old topics does not make them new. Use the conversation's language or match the forum's language.",js:"return await xgoose.skills.discourse.getRecentTopics({kind:'new'});"},
-    {label:'Summarize this thread', prompt:"Summarize the original post, roughly the first 30 and latest 100 replies, deduplicating overlaps. Choose functions and pagination as needed. Cite sources and state actual coverage; user-specified ranges take precedence. Use the conversation's language.",js:'return await xgoose.skills.discourse.readTopicForSummary({});'},
-    {label:'Surprise me randomly', prompt:"Recommend the five randomly sampled recent topics in action-result. Give each a title, one-sentence reason, update date and clickable Markdown link. No duplicates or invented content; identify unread topics and say if fewer than five are available. Use the conversation's language or match the forum's language.",js:"return await xgoose.skills.discourse.getRecentTopics({kind:'random'});"},
+    {label:'Latest topics', prompt:"List the newest topics in action-result by creation time, with a short description and source link for each.",js:"return await xgoose.skills.discourse.getRecentTopics({kind:'new'});"},
+    {label:'Summarize this thread', prompt:"Summarize the original post, first 30 and latest 100 replies, deduplicating overlaps. Summarize community consensus and actionable DPs with authors, dates and sources. Follow user-specified ranges.",js:'return await xgoose.skills.discourse.readTopicForSummary({});'},
+    {label:'Surprise me randomly', prompt:"Recommend the sampled topics in action-result with a title, reason, update date and source link.",js:"return await xgoose.skills.discourse.getRecentTopics({kind:'random'});"},
   ],
 });

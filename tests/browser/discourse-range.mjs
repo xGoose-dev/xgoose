@@ -9,7 +9,7 @@ context.setDefaultTimeout(20000);const reads=[];
 const posts=Array.from({length:660},(_,i)=>i+1).filter(n=>n!==640).map(n=>({id:10000+n,topic_id:42,post_number:n,username:'fixture',cooked:`<p>Evidence from floor ${n}</p>`,actions_summary:[{id:2,count:n%7}]}));
 try{
  const registry=JSON.parse(await readFile(resolve(dist,'skills/registry.json'),'utf8')),skill=registry.find(s=>s.name==='discourse-forum');
- assert.equal(skill.version,'0.2.4');assert.ok(skill.functions.some(f=>f.name==='readTopicPosts'));assert.equal(skill.actions.length,3);
+ assert.equal(skill.version,'0.2.9');assert.ok(skill.functions.some(f=>f.name==='readTopicPosts'));assert.equal(skill.actions.length,3);
  const sw=context.serviceWorkers()[0]??await context.waitForEvent('serviceworker'),id=sw.url().split('/')[2];
  const settings=await context.newPage();await settings.goto(`chrome-extension://${id}/options.html`);await settings.waitForFunction(()=>!!chrome.storage?.local);
  await settings.evaluate(()=>chrome.storage.local.set({'xgoose.settings':{analyticsEnabled:false,launcherVisibility:'always'}}));

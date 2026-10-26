@@ -8,17 +8,17 @@ import assert from 'node:assert/strict';
 // Exercise actual model -> skill_call -> packaged MAIN-world file -> HTTP ->
 // model result wiring. All website/model responses are synthetic fixtures.
 const cases=[
- {name:'v2ex',version:'0.2.2',url:'https://www.v2ex.com/',fn:'getNodes',args:{query:'OpenAI'},path:'/api/nodes/all.json',
+ {name:'v2ex',version:'0.2.3',url:'https://www.v2ex.com/',fn:'getNodes',args:{query:'OpenAI'},path:'/api/nodes/all.json',
   response:[{id:1,name:'openai',title:'OpenAI fixture node',parent_node_name:'ai'}],expected:'OpenAI fixture node'},
- {name:'nga',version:'0.1.4',url:'https://bbs.nga.cn/',fn:'getForums',args:{query:'fixture'},path:'/app_api.php',
+ {name:'nga',version:'0.1.5',url:'https://bbs.nga.cn/',fn:'getForums',args:{query:'fixture'},path:'/app_api.php',
   response:{data:[{name:'Technology',groups:[{name:'Boards',forums:[{fid:-202020,name:'NGA fixture board'}]}]}]},expected:'NGA fixture board'},
- {name:'weibo',version:'0.2.3',url:'https://weibo.com/',fn:'getComments',args:{id:'123',uid:'45',count:2},path:'/ajax/statuses/buildComments',
+ {name:'weibo',version:'0.2.4',url:'https://weibo.com/',fn:'getComments',args:{id:'123',uid:'45',count:2},path:'/ajax/statuses/buildComments',
   response:{data:Array.from({length:5},(_,i)=>({id:String(i+1),text:`Weibo fixture comment ${i+1}`})),max_id:'99999999999999999',total_number:100},expected:'Weibo fixture comment 2',absent:'Weibo fixture comment 3'},
- {name:'weibo',version:'0.2.3',url:'https://weibo.com/',fn:'searchStatuses',args:{query:'济南 居民养老保险',sortBy:'time',count:3},path:'/ajax/statuses/search',
+ {name:'weibo',version:'0.2.4',url:'https://weibo.com/',fn:'searchStatuses',args:{query:'济南 居民养老保险',sortBy:'time',count:3},path:'/ajax/statuses/search',
   response:{ok:1,statuses:[{idstr:'123',mblogid:'abc',text:'济南居民养老保险搜索命中',user:{id:456,screen_name:'Fixture publisher'}}]},expected:'济南居民养老保险搜索命中'},
- {name:'nga',version:'0.1.4',url:'https://bbs.nga.cn/',fn:'getTopic',args:{tid:'47786615',limit:2,maxChars:1000,includeImages:true,maxImages:1},path:'/read.php',malformedFirst:true,
+ {name:'nga',version:'0.1.5',url:'https://bbs.nga.cn/',fn:'getTopic',args:{tid:'47786615',limit:2,maxChars:1000,includeImages:true,maxImages:1},path:'/read.php',malformedFirst:true,
   response:{data:{__PAGE:1,__ROWS:1,__T:{tid:47786615,subject:'Recovered NGA topic'},__R:[{pid:0,lou:0,content:'Recovered complete NGA topic body [img]./mon_202610/26/context.png[/img]'}]}},expected:'Recovered complete NGA topic body'},
- {name:'reddit',version:'0.1.2',url:'https://www.reddit.com/',fn:'getComments',args:{id:'abc'},path:'/comments/abc.json',
+ {name:'reddit',version:'0.1.3',url:'https://www.reddit.com/',fn:'getComments',args:{id:'abc'},path:'/comments/abc.json',
   response:[{kind:'Listing',data:{children:[]}},{kind:'Listing',data:{children:[
    {kind:'t1',data:{id:'def',name:'t1_def',body:'Reddit fixture comment',author:'fixture',parent_id:'t3_abc',link_id:'t3_abc',permalink:'/r/test/comments/abc/fixture/def/'}},
    {kind:'more',data:{children:['ghi','jkl'],parent_id:'t3_abc'}},
@@ -80,7 +80,7 @@ try{
   await page.locator('.btn-stop').waitFor({state:'hidden'});
   assert.equal(requests.length,3);assert.equal(apiCalls,fixture.malformedFirst?2:1);assert.equal(await page.locator('.msg-err').count(),0);
   assert.equal(page.url(),fixture.url);
-  assert.match(JSON.stringify(requests[0].messages),/use that site's skill first/);
+  assert.match(JSON.stringify(requests[0].messages),/Use the active search skill for research on the current website/);
   const toolResults=requests[2].messages.filter(m=>m.role==='tool').map(m=>typeof m.content==='string'?m.content:JSON.stringify(m.content)).join('\n');
   assert.ok(toolResults.includes(fixture.expected),toolResults);
   if(fixture.absent)assert.ok(!toolResults.includes(fixture.absent));

@@ -19,7 +19,7 @@ export function websiteEvidence(result: unknown, origin: string): unknown {
       })),
     },
     returned: topics.length,
-    coverage: 'All topics returned on this list page are preserved. Other pages and topic bodies have not been read. Use available matches; pagination is only needed for broader coverage.',
+    coverage: 'topic_list_page',
     count_semantics: 'total_replies = posts_count - 1 (excluding the original post). Discourse reply_count counts direct reply relationships, not all topic replies.',
   };
 }

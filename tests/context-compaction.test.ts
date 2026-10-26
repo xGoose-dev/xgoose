@@ -63,11 +63,11 @@ test('recent image attachments survive compaction and base64 is never summarized
  for(const req of t.requests.slice(0,-1))assert.ok(!JSON.stringify(req).includes(marker));
  assert.ok(JSON.stringify(result.response.modelContext).includes(marker));
 });
-test('summary failure produces explicit incomplete excerpts and still continues below the limit',async()=>{
+test('summary failure continues from saved history excerpts below the limit',async()=>{
  let count=0;const fetchImpl:typeof fetch=async(_input,init)=>{
   const body=JSON.parse(String(init?.body));assert.ok(textBytes(JSON.stringify(body))<190000);
   if(JSON.stringify(body).includes('Summarize this browser-agent history')){count++;return Response.json({error:{message:'Temporary summary failure'}},{status:503});}
-  assert.ok(JSON.stringify(body).includes('incomplete history excerpts'));return sse('Continuing with explicit gaps.');
+  assert.ok(JSON.stringify(body).includes('Previous request'));assert.ok(JSON.stringify(body).includes('[Middle omitted]'));return sse('Continuing from saved history.');
  };
  const result=await drain(createAgent({settings,requestBudgetBytes:175000,maxContextMessages:400,fetchImpl,tools:[]}),[{role:'user',content:'Previous request'},{role:'assistant',content:[{type:'text',text:'历史'.repeat(100000)}]},{role:'user',content:'Continue safely.'}]);
  assert.equal(count,1);assert.ok(result.events.some(e=>e.type==='context-summary'));assert.ok(!result.events.some(e=>e.type==='error'));

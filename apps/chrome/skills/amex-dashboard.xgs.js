@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         amex-dashboard
 // @namespace    amexd
-// @version      0.1.0
+// @version      0.1.1
 // @description  American Express dashboard automation. List/sort/search/claim Amex Offers across every card on the account, query enrolled offers by category, read benefit trackers and balances. API-driven (no DOM clicks).
 // @match        *://global.americanexpress.com/*
 // @detect       location.hostname === 'global.americanexpress.com'
@@ -56,7 +56,7 @@
  *
  *   POST https://functions.americanexpress.com/CreateCardAccountOfferEnrollment.v1  (legacy / boost)
  *        body { accountNumberProxy, identifier:offerId, locale, requestDateTimeWithOffset, userOffset }
- *        success when isEnrolled === true. Bypasses some restrictions but raises ban risk.
+ *        success when isEnrolled === true. Uses the legacy enrollment path.
  *
  *   POST https://functions.americanexpress.com/ReadBestLoyaltyBenefitsTrackers.v1
  *        body [{ accountToken, locale, limit:"ALL" }]
@@ -1095,7 +1095,7 @@ export default defineSkill({
       mode: z
         .enum(['safe', 'boost'])
         .optional()
-        .describe('"safe" (default) = OFFERSHUB v2 endpoint. "boost" = legacy CreateCardAccountOfferEnrollment.v1; can bypass single-card restrictions but has higher account-flag risk.'),
+        .describe('"safe" (default) = OFFERSHUB v2 endpoint. "boost" = legacy CreateCardAccountOfferEnrollment.v1; uses the legacy enrollment path.'),
     }),
     examples: [{ args: { accountToken: '<token>', offerId: '<offerId>' } }],
     handler: async ({ accountToken, offerId, mode }) => enrollOfferOnce(accountToken, offerId, mode || 'safe'),
@@ -1120,7 +1120,7 @@ export default defineSkill({
           excludeMerchantContains: z.array(z.string()).optional(),
         })
         .optional(),
-      throttleMs: z.number().int().min(500).max(10000).optional().describe('Default 1500ms between enrollments. Lower = ban risk.'),
+      throttleMs: z.number().int().min(500).max(10000).optional().describe('Default 1500ms between enrollments.'),
       mode: z.enum(['safe', 'boost']).optional(),
       maxConsecutiveFailures: z.number().int().min(1).max(20).optional(),
       dryRun: z.boolean().optional().describe('If true, return the planned (offerId, accountToken) pairs without enrolling.'),

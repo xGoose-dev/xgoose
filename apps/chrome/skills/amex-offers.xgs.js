@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         amex-offers
 // @namespace    amex
-// @version      0.2.0
+// @version      0.2.1
 // @description  American Express Offers automation — list / add / track via DOM clicks on global.americanexpress.com.
 // @match        *://global.americanexpress.com/*
 // @match        *://www.americanexpress.com/*
@@ -272,7 +272,7 @@ export default defineSkill({
       'Sequentially click every add-to-card button. Returns { added, skipped, rateLimited, status: "ok"|"rate_limited"|"session_expired"|"no_offers_found" }.',
     input: z.object({
       cardKey: z.string().optional().describe('Currently informational; defaults to whatever card the UI has selected.'),
-      throttleMs: z.number().int().min(500).max(10000).optional().describe('Default 1500. Amex hates parallel; do not push under 500.'),
+      throttleMs: z.number().int().min(500).max(10000).optional().describe('Default 1500ms between enrollments.'),
     }),
     examples: [{ args: { throttleMs: 1500 } }],
     handler: async (params = {}) => {

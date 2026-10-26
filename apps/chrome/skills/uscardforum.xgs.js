@@ -1,13 +1,13 @@
 // ==XGooseSkill==
 // @name         uscardforum
 // @namespace    uscf
-// @version      0.2.3
-// @description  美卡论坛 (uscardforum.com) helpers — categorised search + DP shortcuts on top of discourse-forum.
+// @version      0.2.8
+// @description  美卡论坛：搜索信用卡、积分与旅行讨论，汇总社区共识和实测 DP。
 // @match        *://www.uscardforum.com/*
 // @match        *://uscardforum.com/*
 // @detect       location.hostname.endsWith('uscardforum.com')
 // @run-at       document_idle
-// @require      discourse-forum@0.2.2
+// @require      discourse-forum@0.2.9
 // @primary      searchInCategory
 // @keyword      uscardforum
 // @keyword      美卡论坛
@@ -86,12 +86,11 @@ function currentRouteImpl() {
   return { type: 'unknown' };
 }
 
-
 async function recentDeals() {
   const results = await Promise.allSettled(['羊毛','offer','优惠'].map(query=>discourse().searchTopics({query,order:'latest'})));
   const found=results.flatMap(r=>r.status==='fulfilled' ? r.value.topics || [] : []);
   const candidates=[...new Map(found.filter(t=>!t.pinned && t.archetype!=='private_message').map(t=>[t.id,t])).values()];
-  if (!candidates.length) throw new Error('未获取到最新羊毛搜索结果，请稍后重试；不要编造优惠。');
+  if (!candidates.length) throw new Error('未获取到最新羊毛搜索结果。');
   candidates.sort((a,b)=>Date.parse(b.last_posted_at || b.created_at)-Date.parse(a.last_posted_at || a.created_at));
   const topics=[];
   for(const item of candidates.slice(0,8)) {
@@ -100,12 +99,12 @@ async function recentDeals() {
       topics.push({id:item.id,title:item.title,url:`${location.origin}/t/${item.id}`,created_at:item.created_at,last_posted_at:item.last_posted_at,posts:detail.posts || [],read_error:detail.httpStatus ? detail.message : undefined});
     } catch(error) { topics.push({id:item.id,title:item.title,url:`${location.origin}/t/${item.id}`,read_error:String(error)}); }
   }
-  return {kind:'deals',topics,hint:'只根据实际读到的正文总结优惠，附 Markdown 原帖链接，明确读取错误及尚未核实的条件。'};
+  return {kind:'deals',topics,hint:'每帖仅前五楼预览；按需读取后续 DP，附原帖链接。'};
 }
 
 export default defineSkill({
   getRecentDeals: fn({
-    summary: 'Read recent credit-card deals and offers from 美卡论坛, with original topic links.',
+    summary: 'Find recent deals; returns up to eight topics with five-post previews and source links.',
     input: z.object({}),
     handler: async () => recentDeals(),
   }),
@@ -126,14 +125,14 @@ export default defineSkill({
   }),
 
   searchCards: fn({
-    summary: 'Latest-ordered search for a card / topic name.',
+    summary: 'Search a card or topic name, sorted by latest. Returns snippets.',
     input: z.object({ name: z.string() }),
     handler: async ({ name }) =>
       discourse().searchTopics({ query: name, order: 'latest' }),
   }),
 
   getRecentDPs: fn({
-    summary: 'Search for recent (last 60 days) data points (DPs) about a keyword.',
+    summary: 'Search keyword + literal DP within the last 60 days. For broader results use discourse.searchTopics.',
     input: z.object({ keyword: z.string() }),
     handler: async ({ keyword }) => {
       const since = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -177,19 +176,12 @@ export default defineSkill({
     handler: async () => currentRouteImpl(),
   }),
 }, {
-  instructions: `美卡论坛 (uscardforum.com) research discipline — follow this for any forum-grounded credit-card / travel / DP question.
-
-- **快捷操作优先使用已提取的 action-result。** 最近新帖、最近羊毛、当前帖子概括和随机推荐已经读取了正文，不要再强制执行三组泛化搜索。只有正文不足或截断影响结论时才定向补读。
-- **Call tools first, talk later.** Never answer from memory, even for "simple" questions — search the forum first. For current-page asks (\`/t/...\` topic, \`/c/...\` category), \`read_page\` the page first.
-- **Fan out ≥3 searches in parallel, varied keywords.** Forum search is keyword-based, so one query misses a lot. In ONE \`js_exec\`, \`Promise.allSettled\` over 3+ variations so one failed search cannot hide other results: Chinese slang + formal name + English abbreviation, synonyms / alternate spellings, and different category scopes. E.g. for "CSR": \`Promise.all([ xgoose.skills.uscf.searchCards({name:'CSR 申卡'}), xgoose.skills.uscf.searchCards({name:'Chase Sapphire Reserve'}), xgoose.skills.uscf.getRecentDPs({keyword:'CSR 批卡'}), xgoose.skills.uscf.searchInCategory({query:'chase sapphire 被拒', categorySlug:'xinyongka'}) ])\`. Use \`getCategorySlugs()\` to scope by category.
-- **Result shape.** Discourse helpers return their data directly: topic.posts[].text, with topic.url and per-post URLs. There is no result.post_stream wrapper. text_truncated marks incomplete bodies; increase maxChars and return a narrow projection to recover the relevant passage. Preserve rate-limit/login errors and successful results separately.
-- **Read posts, not titles.** Search returns only titles/snippets (often misleading) — never answer from them. In ONE follow-up \`js_exec\`, read the top 2–3 unique topics in full *together* via \`Promise.all\` over \`xgoose.skills.discourse.getTopic({id})\` / \`getTopicPosts({topicId, postNumber})\`. Batch the reads into that single call — don't read one thread per turn (each extra turn is a slow model round-trip). Answer from what you *read*.
-- **Go wide, then deep.** Broad parallel searches → read the top hits in one batch → only do a second targeted round if the first batch is clearly insufficient (it usually isn't). Continue until the necessary evidence is read; do not stop merely to meet a tool-step target.
-- **Prefer recent DPs.** Card policies change constantly — use \`getRecentDPs(keyword)\` (last 60 days) or add \`after:YYYY-MM-DD\` to a query. Recent DPs are useful context, but do not override contractual terms. Date the evidence and say when current terms are unverified.
-- **Paginate deliberately.** Topics with 100+ posts bury valuable DPs deep. Deleted posts leave gaps in post numbers, so page with \`getTopicPosts({ topicId, postNumber: lastReceivedPostNumber + 1 })\` (last was #148 → request 149). Never reread overlapping ranges, and never refetch a topic_id + post_number range you already pulled this turn.
-- **Cross-reference + follow leads.** Compare DPs across users and threads, note contradictions, search "DP汇总" / "dp" aggregation threads, and immediately look up any card / strategy / user a post mentions with another call.
-- If a search is empty or rate-limited, reword broader or fall back to latest / hot lists, then state the limitation plainly.`,
+  instructions: `美卡论坛是美国信用卡、银行、积分、里程与财务优化社区。使用中文回复。
+- 搜索相关讨论，优先阅读近期（尽可能近 6 个月）、点赞和回复较多的有用帖子，关注真实用户经历、官方公告及政策变化，汇总社区共识与可操作的 DP。
+- 查找 DP 时重点关注近 3–6 个月，提取发生了什么、日期、金额、相关条件和用户情况；附作者、主题 ID、楼层链接及可用的点赞数，展示规律和趋势。
+- 比较信用卡时，结合社区反馈说明开卡奖励与要求、年费、权益、积分价值、适合人群及申请策略。
+- 总结长帖内容，读取与分页遵循 discourse-forum。`,
   actions: [
-    {label:'最近羊毛', prompt:'根据 action-result 读到的最新羊毛、offer 和优惠内容，总结优惠、适用条件、有效期与 DP，标明尚未核实或可能过期的信息，每项附可点击的 Markdown 原帖链接。',js:'return await xgoose.skills.uscf.getRecentDeals({});'},
+    {label:'最近羊毛', prompt:'根据 action-result 总结近期有用的羊毛和 offer，说明适用条件、社区反馈与实测 DP，附日期和原帖链接；关键正文不足时补读。',js:'return await xgoose.skills.uscf.getRecentDeals({});'},
   ],
 });

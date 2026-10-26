@@ -46,6 +46,6 @@ export function excerptSummary(messages:AgentMessage[],max=18000):string {
     const links=[...new Set(json.match(/https?:\/\/[^\s"<>\\]+/g)??[])].slice(0,12).join('\n');
     return clipBytes(json,700)+(textBytes(json)>1100?'\n[Middle omitted]\n'+clipBytes(json.slice(-700),1000):'')+(links?'\nSources: '+links:'');
   });
-  const text='Automatic summary was unavailable. These are incomplete history excerpts, not complete evidence. Previously performed actions must not be replayed. Omitted details remain unverified.\n'+rows.join('\n\n');
+  const text='Automatic summary was unavailable. History excerpts for continuation:\n'+rows.join('\n\n');
   return clipBytes(text,max);
 }

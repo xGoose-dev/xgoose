@@ -7,7 +7,7 @@ import {resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 const sha=s=>createHash('sha256').update(s).digest('hex');
-const cases=[['weibo','0.2.3',11,'weibo.com'],['nga','0.1.4',8,'bbs.nga.cn']];
+const cases=[['weibo','0.2.4',11,'weibo.com'],['nga','0.1.5',8,'bbs.nga.cn']];
 const profile=await mkdtemp(resolve(tmpdir(),'xgoose-skill-fixes-marketplace-'));
 const dist=resolve('apps/chrome/dist');
 const context=await chromium.launchPersistentContext(profile,{channel:'chromium',headless:true,args:[`--disable-extensions-except=${dist}`,`--load-extension=${dist}`]});

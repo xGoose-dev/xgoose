@@ -146,6 +146,6 @@ export function createJsExecTool(deps: JsExecToolDeps): XgooseBuiltTool {
 /** Only the model-facing representation is bounded; transcript details stay intact. */
 export function jsExecModelOutput(output:unknown) {
   const json=safeJson(output),bytes=new TextEncoder().encode(json);
-  const text=bytes.length<=MAX_RESULT_BYTES?json:JSON.stringify({truncated:true,sizeBytes:bytes.length,preview:new TextDecoder().decode(bytes.slice(0,MAX_RESULT_BYTES)),next:"Recover omitted evidence with a narrower read-only projection. Do not repeat mutations."});
+  const text=bytes.length<=MAX_RESULT_BYTES?json:JSON.stringify({truncated:true,sizeBytes:bytes.length,preview:new TextDecoder().decode(bytes.slice(0,MAX_RESULT_BYTES)),next:"Continue with a narrower result projection."});
   return [{type:"text" as const,text}];
 }
