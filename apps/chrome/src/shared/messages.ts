@@ -12,13 +12,31 @@
 // @xgoose/page-controller bridge directly rather than via SW routing,
 // so there are no `cs:page_info` / `cs:console_logs` envelopes here.
 
+import {isSafari} from "./host";
+import {prepareHost} from "./platformBridge";
 import type { Account } from "./account";
 import type { LoginState } from "@/background/account";
 import type { Provider, RegistrySkill, UserSkill } from "./types";
 
 export type HeaderBag = Record<string, string>;
 
+const contentGlobals=globalThis as typeof globalThis & {__xgooseDocumentNonce?:string;__xgooseNonceListener?:boolean};
+export const documentNonce = isSafari && typeof document !== "undefined" && /^https?:/.test(location.protocol) ? (contentGlobals.__xgooseDocumentNonce ??= crypto.randomUUID()) : "";
+if(isSafari && documentNonce){
+ document.documentElement.dataset.xgooseDocument=documentNonce;
+ // Skill discovery precedes the main content router. Respond immediately, and only once per document.
+ if(!contentGlobals.__xgooseNonceListener){contentGlobals.__xgooseNonceListener=true;chrome.runtime.onMessage.addListener((message,_sender,reply)=>{
+  if(message?.kind!=="cs:document_nonce")return false;
+  reply(documentNonce);return true;
+ });}
+}
 export type MessageMap = {
+ "sw:public_read":{request:{url:string};response:{status:number;body:string;headers:Record<string,string>}};
+  "cs:document_nonce":{request:void;response:string};
+  "sw:host_prepare":{request:void;response:void};
+  "sw:host_layout":{request:{layout:import('@xgoose/ui').Layout};response:void};
+  "sw:native_credentials":{request:{provider:string};response:{apiKey:string}};
+  "sw:host_progress":{request:{kind:"page"|"answer"|"diagnostic";error?:string};response:void};
   'sw:nga_images': {request:{urls:string[]};response:import('@/background/ngaImages').NgaImageResult[]};
   "sw:user_scripts_status": {request:void;response:{enabled:boolean}};
   "sw:open_user_scripts_setup": {request:{guide?:boolean};response:void};
@@ -278,7 +296,7 @@ export async function send<K extends MessageKey>(
   kind: K,
   payload: MessageMap[K]["request"],
 ): Promise<MessageMap[K]["response"]> {
-  const envelope: Envelope<K> = { kind, payload };
+  const envelope = { kind, payload, ...(isSafari && documentNonce ? {documentNonce} : {}) };
   const response = await chrome.runtime.sendMessage(envelope);
   if (response?.__error) throw new Error(response.__error);
   return response as MessageMap[K]["response"];
@@ -289,7 +307,7 @@ export async function sendToTab<K extends MessageKey>(
   kind: K,
   payload: MessageMap[K]["request"],
 ): Promise<MessageMap[K]["response"]> {
-  const envelope: Envelope<K> = { kind, payload };
+  const envelope = { kind, payload, ...(isSafari && documentNonce ? {documentNonce} : {}) };
   return (await chrome.tabs.sendMessage(
     tabId,
     envelope,
@@ -307,10 +325,18 @@ export function registerRouter(handlers: AnyHandlerMap): void {
   chrome.runtime.onMessage.addListener((rawMsg, sender, sendResponse) => {
     const env = rawMsg as Envelope;
     if (!env?.kind) return false;
+    if(isSafari && sender.tab)(sender as any).__xgooseDocumentNonce = (rawMsg as any).documentNonce;
     const handler = (handlers as any)[env.kind];
     if (!handler) return false;
     Promise.resolve()
-      .then(() => handler(env.payload, sender))
+      .then(async () => {
+        if (isSafari && env.kind.startsWith("sw:")) {
+          const denied = new Set(["sw:page_exec","sw:page_abort","sw:inject_skill_code","sw:edit_skill","sw:save_user_skill","sw:delete_user_skill","sw:install_catalog_skill","sw:update_skill","sw:open_install_page","sw:open_install_url","sw:stash_install_source","sw:open_user_scripts_setup"]);
+          if(denied.has(env.kind)) throw new Error("This Safari release supports packaged skills only.");
+          await prepareHost();
+        }
+        return handler(env.payload, sender);
+      })
       .then((value) => sendResponse(value))
       .catch((err) => sendResponse({ __error: err?.message ?? String(err) }));
     return true;

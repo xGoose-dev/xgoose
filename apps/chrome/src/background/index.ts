@@ -1,4 +1,6 @@
-import {executableSkillsForUrl, injectPackagedSkills, reconcileSkills, skillSnapshot, pageTarget} from "./packagedSkills";
+import {isSafari,providerHeaders} from "@/shared/host";
+import {prepareHost,nativeCommand} from "@/shared/platformBridge";
+import {assertLiveDocument,executableSkillsForUrl, injectPackagedSkills, reconcileSkills, skillSnapshot, pageTarget} from "./packagedSkills";
 import { installSkillUpdateChecks, checkSkillUpdates, skillUpdateState, updateSkill } from "./skillUpdates";
 import { hostedStatus } from "./hosted";
 import { readSubstackPublication } from "./substackReader";
@@ -57,23 +59,38 @@ import { recordEvent } from "@/shared/analytics";
 // (and once on SW boot). The website's /account page reads them back so
 // the user can audit "which device has which model selected" without
 // hopping between browsers. No-op when signed out.
-installConfigSyncListeners();
-installSkillUpdateChecks();
+if (!isSafari) installConfigSyncListeners();
+if (!isSafari) installSkillUpdateChecks();
 
 // Serialize claims across tabs so the brief skill notice appears only once per install.
 let noticeQueue = Promise.resolve(false);
 chrome.runtime.onInstalled.addListener(({reason}) => {
-  if (reason === "install") void chrome.tabs.create({url:chrome.runtime.getURL("onboarding.html")});
+  if (!isSafari && reason === "install") void chrome.tabs.create({url:chrome.runtime.getURL("onboarding.html")});
 });
 
 registerRouter({
+  "sw:public_read": async (payload,sender)=>{
+    if(!isSafari)throw new Error("Public native transport is unavailable");
+    await assertLiveDocument(sender);
+    return nativeCommand("public-read",{url:payload.url,pageUrl:sender.url});
+  },
+  "sw:host_prepare": () => prepareHost(),
+  "sw:host_layout": async payload=>{if(isSafari){await nativeCommand("patch",payload);await prepareHost();}},
+  "sw:native_credentials": payload => nativeCommand("credentials",payload),
+  "sw:host_progress": async (payload,sender) => {
+    if(!isSafari || !sender.tab || !/^https?:/.test(sender.url ?? "")) return;
+    await assertLiveDocument(sender);
+    let allWebsites=false;
+    if(payload.kind==='page')try{allWebsites=await chrome.permissions.contains({origins:['<all_urls>']});}catch{}
+    await nativeCommand("progress",{...payload,hostname:new URL(sender.url!).hostname,allWebsites});
+  },
   'sw:nga_images': (request,sender)=>readNgaImages(request.urls,sender.url??''),
   "sw:user_scripts_status": async () => {try{await chrome.userScripts.getScripts();return {enabled:true};}catch{return {enabled:false};}},
   "sw:open_user_scripts_setup": async ({guide}) => {await chrome.tabs.create({url:guide?chrome.runtime.getURL("onboarding.html"):`chrome://extensions/?id=${chrome.runtime.id}`});},
   "sw:skill_updates": ({check}) => check ? checkSkillUpdates() : skillUpdateState(),
   "sw:update_skill": request => updateSkill(request),
   "sw:substack_read": (request, sender) => readSubstackPublication(request, sender.url ?? ""),
-  "sw:hosted_status": ({claim, useHosted}) => hostedStatus(claim, useHosted),
+  "sw:hosted_status": async ({claim, useHosted}) => {if(isSafari && useHosted)await nativeCommand("hosted-ready");return hostedStatus(claim,useHosted);},
   "sw:claim_skill_notice": () => {
     noticeQueue = noticeQueue.catch(() => false).then(async () => {
       const key = "xgoose.skills.notice-seen-v1";
@@ -101,7 +118,7 @@ registerRouter({
     try {
       const resp = await fetch(payload.url, {
         method: payload.method,
-        headers: payload.headers,
+        headers: providerHeaders(payload.headers),
         body: payload.body,
       });
       const body = await resp.text();
@@ -120,8 +137,9 @@ registerRouter({
     if (typeof tabId !== "number")
       return { ok: false, error: "no tab id on sender" };
     try {
+      await assertLiveDocument(sender);
       await chrome.scripting.executeScript({
-        target: { tabId, documentIds: [sender.documentId!] },
+        target: pageTarget(sender),
         world: "MAIN",
         files: ["pageBridge.js"],
       });
@@ -153,6 +171,7 @@ registerRouter({
     if (!active.some(s => s.namespace === namespace)) return { ok: false, error: "Skill is disabled, missing a dependency, or unavailable on this page" };
     if (!/^[A-Za-z_$][\w$]*$/.test(functionName) || functionName.startsWith("__") || ["constructor", "prototype"].includes(functionName)) return {ok:false,error:"Invalid exported skill function"};
     try {
+      await assertLiveDocument(sender);
       const results = await chrome.scripting.executeScript({
         target: pageTarget(sender),
         world: "MAIN",
@@ -160,7 +179,8 @@ registerRouter({
         // the page's `script-src` CSP doesn't apply to it. That's why this
         // path works on global.americanexpress.com where the blob-URL
         // import inside `pageBridge.exec()` is blocked.
-        func: async (ns: string, fn: string, callArgs: unknown, t: number) => {
+        func: async (ns: string, fn: string, callArgs: unknown, t: number, nonce: string) => {
+          if(nonce && document.documentElement.dataset.xgooseDocument!==nonce)throw new Error("The page changed.");
           const w = window as any;
           const skill = w.xgoose && w.xgoose.skills && w.xgoose.skills[ns];
           if (!skill) {
@@ -201,8 +221,9 @@ registerRouter({
             } as const;
           } finally { clearTimeout(timer!); }
         },
-        args: [namespace, functionName, args ?? {}, Math.min(120000, Math.max(100, timeoutMs ?? 30_000))],
+        args: [namespace, functionName, args ?? {}, Math.min(120000, Math.max(100, timeoutMs ?? 30_000)), (sender as any).__xgooseDocumentNonce ?? ""],
       });
+      await assertLiveDocument(sender);
       const raw = results[0]?.result as any;
       if (!raw) return { ok: false, error: "no result from injected script" };
       if (raw.__notLoaded) {
@@ -237,6 +258,7 @@ registerRouter({
   "sw:active_skills_for_url": async ({ url }) => executableSkillsForUrl(url),
   "sw:get_disabled_skills": async () => getDisabledSkills(),
   "sw:set_skill_disabled": async ({ name, disabled }) => {
+    if(isSafari){await nativeCommand("patch",{skillToggle:{name,disabled}});await prepareHost();return {ok:true};}
     await setSkillDisabled(name, disabled);
     return { ok: true };
   },
@@ -368,6 +390,7 @@ registerRouter({
 
   // ── options / panel ─────────────────────────────────────────────────
   "sw:open_options": async () => {
+    if (isSafari) { await chrome.tabs.create({url:"xgoose://settings"}); return; }
     if (chrome.runtime.openOptionsPage) {
       await chrome.runtime.openOptionsPage();
     } else {
@@ -409,6 +432,8 @@ registerRouter({
     return { ok: true };
   },
 });
+
+if(isSafari)chrome.permissions?.onRemoved?.addListener(()=>{void nativeCommand("permissions-removed").catch(()=>{});});
 
 // Toolbar action button → toggle panel in the active tab. The popup has
 // the same behavior, but if the popup is removed from manifest (or fails
@@ -486,7 +511,7 @@ async function runStream(
   try {
     resp = await fetch(req.url, {
       method: req.method,
-      headers: req.headers,
+      headers: providerHeaders(req.headers),
       body: req.body,
       signal: ac.signal,
     });

@@ -1,3 +1,4 @@
+import {isSafari} from "@/shared/host";
 import type { StoredConversation } from "@/shared/types";
 
 // This module runs only in the extension service worker: IDB belongs to the
@@ -40,6 +41,7 @@ function migrate(): Promise<void> {
         tx.objectStore("meta").put(true, "migrated-v1");
       };
     });
+    if(isSafari && legacy["xgoose.conversations"])await chrome.storage.local.set({"xgoose.legacy.conversations":legacy["xgoose.conversations"]});
     // Keep the legacy copy until migration commits, then remove global pointers.
     await chrome.storage.local.remove(["xgoose.conversations", "xgoose.lastConvo", "xgoose.resume"]);
   })().catch(error => { migration = undefined; throw error; });

@@ -1,3 +1,4 @@
+import {isSafari} from "@/shared/host";
 import builtinCatalogIdentities from "@/shared/builtinCatalog.json";
 /// <reference types="chrome" />
 //
@@ -104,7 +105,7 @@ export async function loadRegistry(): Promise<RegistrySkill[]> {
   ]);
   const byName = new Map<string, RegistrySkill>();
   for (const s of builtin) byName.set(s.name, s);
-  for (const u of users) byName.set(u.name, userSkillAsRegistry(u));
+  for (const u of (isSafari ? [] : users)) byName.set(u.name, userSkillAsRegistry(u));
   return Array.from(byName.values());
 }
 

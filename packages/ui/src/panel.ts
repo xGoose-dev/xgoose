@@ -248,7 +248,7 @@ const CSS = `
  * card but the user can grab the corner/edge handles to resize it. When the
  * soft keyboard opens, JS pins the panel to the visual viewport so the composer
  * stays above the keyboard (see pinToVisualViewport / onVvChange). */
-@media(max-width:520px){
+@media(max-width:520px), (pointer:coarse) and (max-device-width:520px), (pointer:coarse) and (max-device-height:520px){
   .panel::before{display:none}
   .toggle{
     width:48px;height:48px;font-size:20px;border-radius:16px;
@@ -1402,6 +1402,9 @@ export type TodoUiItem = {
  *  it set `buttons.settings = true`. */
 export type CreatePanelOpts = {
   imageUploads?: boolean;
+  /** Safari keeps controls within the visible page when zoom or a keyboard changes it. */
+  visualViewport?: boolean;
+  editableSkills?: boolean;
   branding?: {
     /** Replaces the literal "xgoose" text in the header title. */
     name?: string;
@@ -1565,6 +1568,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   const loadingTextEl = $(".loading-text") as HTMLSpanElement;
   const inputEl = $(".in-text") as HTMLTextAreaElement;
   const sendBtn = $(".btn-send") as HTMLButtonElement;
+  sendBtn.disabled = true;
   const attachBtn=$(".btn-attach") as HTMLButtonElement;
   const imageFile=$(".image-file") as HTMLInputElement;
   const previewEl=$(".image-previews") as HTMLDivElement;
@@ -1593,7 +1597,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
         pendingImages.push(image);renderImages();
       }
     }catch(error){if(generation===imageGeneration){imageError.textContent=error instanceof Error?error.message:"Could not read this image.";imageError.hidden=false;}}
-    finally{imagePreparing=false;attachBtn.disabled=false;sendBtn.disabled=false;imageFile.value="";}
+    finally{imagePreparing=false;attachBtn.disabled=false;sendBtn.disabled=!handlers.send;imageFile.value="";}
   }
   attachBtn.onclick=()=>imageFile.click();
   imageFile.onchange=()=>void attachFiles(Array.from(imageFile.files??[]));
@@ -1678,12 +1682,12 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       menu.appendChild(btn);
     };
     addItem("Read source", "read");
-    addItem("Edit (open settings)", "edit");
+    if(opts.editableSkills!==false)addItem("Edit (open settings)", "edit");
     addItem(
       skill.enabled === false ? "Enable" : "Disable for all pages",
       skill.enabled === false ? "enable" : "disable",
     );
-    addItem("Publish to xgoose-web", "publish");
+    if(opts.editableSkills!==false)addItem("Publish to xgoose-web", "publish");
 
     const rect = anchor.getBoundingClientRect();
     menu.style.left = `${rect.left}px`;
@@ -1786,7 +1790,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   // ── layout: button position + panel size ──
 
   const mobileMq = matchMedia("(max-width: 520px)");
-  const isMobile = () => mobileMq.matches;
+  const isMobile = () => mobileMq.matches || Boolean(opts.visualViewport && Math.min(screen.width,screen.height)<=520);
 
   let layout: Layout = { ...DEFAULT_LAYOUT };
   const resizeHandles = Array.from(
@@ -1917,6 +1921,25 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   let keyboardPinned = false;
   const IOS_KEYBOARD_CHROME_RESERVE_PX = 92;
 
+  function applySafariViewport(): boolean {
+    const vp=window.visualViewport;
+    if(!opts.visualViewport || !vp)return false;
+    const scale=vp.scale || 1,margin=6;
+    const availableWidth=vp.width*scale,availableHeight=vp.height*scale;
+    const left=layout.buttonCorner.endsWith('l'),top=layout.buttonCorner.startsWith('t');
+    const buttonX=left?layout.buttonOffset.h:availableWidth-layout.buttonOffset.h-48;
+    const buttonY=top?layout.buttonOffset.v:availableHeight-layout.buttonOffset.v-48;
+    for(const [key,value] of Object.entries({left:'0px',top:'0px',right:'auto',bottom:'auto',transform:`translate(${vp.offsetLeft+Math.max(margin,buttonX)/scale}px, ${vp.offsetTop+Math.max(margin,buttonY)/scale}px) scale(${1/scale})`,'transform-origin':'top left'}))toggleBtn.style.setProperty(key,value,'important');
+    const compact=isMobile();
+    const defaultSize=layout.panelSize.w===DEFAULT_LAYOUT.panelSize.w&&layout.panelSize.h===DEFAULT_LAYOUT.panelSize.h;
+    const width=Math.max(1,Math.min(availableWidth-margin*2,compact&&defaultSize?availableWidth:layout.panelSize.w));
+    const height=Math.max(1,Math.min(availableHeight-margin*2,compact&&defaultSize?availableHeight:layout.panelSize.h));
+    // Dimensions are screen CSS pixels; translate in document coordinates and
+    // counter the page's zoom so native Safari chrome cannot clip the controls.
+    for(const [key,value] of Object.entries({left:'0px',top:'0px',right:'auto',bottom:'auto',width:`${width}px`,height:`${height}px`,'max-width':'none','max-height':'none',transform:`translate(${vp.offsetLeft+(availableWidth-width-margin)/scale}px, ${vp.offsetTop+margin/scale}px) scale(${1/scale})`,'transform-origin':'top left'}))panel.style.setProperty(key,value,'important');
+    return true;
+  }
+
   function pinToVisualViewport(): void {
     const vp = (window as any).visualViewport as VisualViewport | undefined;
     if (!vp) return;
@@ -1970,7 +1993,9 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   function applyLayout(next: Layout): void {
     layout = next;
     applyButtonPosition(next.buttonCorner, next.buttonOffset);
-    if (keyboardPinned && isMobile()) {
+    if (applySafariViewport()) {
+      // Safari uses the same visual bounds with and without its keyboard.
+    } else if (keyboardPinned && isMobile()) {
       // Keyboard is open: keep the panel pinned above it. Geometry is restored
       // by onVvChange once the keyboard dismisses.
       pinToVisualViewport();
@@ -2014,6 +2039,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   const vv = (window as any).visualViewport as VisualViewport | undefined;
   if (vv) {
     const onVvChange = (): void => {
+      if(applySafariViewport())return;
       const isOpen = panel.classList.contains("open");
       const overlap = window.innerHeight - (vv.height + vv.offsetTop);
       if (isOpen && isMobile() && overlap > 80) {
@@ -2314,8 +2340,9 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   function open(): void {
     panel.classList.add("open");
     toggleBtn.classList.add("panel-open");
+    if(opts.visualViewport)applyLayout(layout);
     handlers.open?.();
-    setTimeout(() => inputEl.focus(), 50);
+    if(!opts.visualViewport)setTimeout(() => inputEl.focus(), 50);
   }
   function close(): void {
     panel.classList.remove("open");
@@ -2426,7 +2453,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   // Stop is its own dedicated button (only visible while running).
   sendBtn.addEventListener("click", () => {
     const text = inputEl.value.trim();
-    if (imagePreparing || (!text && !pendingImages.length)) return;
+    if (!handlers.send || imagePreparing || (!text && !pendingImages.length)) return;
     const images=pendingImages;pendingImages=[];renderImages();imageError.hidden=true;
     inputEl.value = "";
     inputEl.style.height = "auto";
@@ -3107,6 +3134,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
 
     onSend(cb) {
       handlers.send = cb;
+      sendBtn.disabled = imagePreparing;
     },
     onStop(cb) {
       handlers.stop = cb;
@@ -3122,6 +3150,8 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     },
     onHistory(cb) {
       handlers.history = cb;
+      // A user can open history while the host is still restoring its session.
+      if (historyEl.classList.contains("open")) cb();
     },
     onTodos(cb) {
       handlers.todos = cb;

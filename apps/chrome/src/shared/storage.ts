@@ -1,4 +1,5 @@
 import { send } from "./messages";
+import {isSafari} from './host';
 // Sync-feeling chrome.storage.local mirror.
 // Ported verbatim from xgoose-safari/src/shared/storage.ts — the chrome
 // storage surface area is identical between Safari Web Extensions and
@@ -230,6 +231,7 @@ export function getLayout(): Layout {
   return mirror.layout;
 }
 export async function saveLayout(next: Layout): Promise<void> {
+  if(isSafari)await send('sw:host_layout',{layout:next});
   mirror.layout = next;
   await chrome.storage.local.set({ [LAYOUT_KEY]: next });
 }

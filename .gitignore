@@ -13,3 +13,10 @@ test-results/
 playwright-report/
 artifacts/
 *.zip
+
+# Safari build products and local Xcode state
+apps/safari/dist/
+apps/safari/Native/Shared/skills.json
+apps/safari/xgoose.xcodeproj/xcuserdata/
+apps/safari/xgoose.xcodeproj/project.xcworkspace/xcuserdata/
+apps/safari/submission/screenshots/

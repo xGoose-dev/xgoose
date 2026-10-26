@@ -1,4 +1,5 @@
 import { z } from "zod";
+import {isSafari} from "./host";
 import {
   ProviderSchema as CoreProviderSchema,
   type Provider as CoreProvider,
@@ -54,6 +55,7 @@ export const SettingsSchema = z.object({
   // `shared/storage.ts`). All runtime reads should go through the
   // `getProviderApiKey` / `getProviderBaseUrl` helpers in `./types`.
   apiKeys: z.record(z.string(), z.string()).default({}),
+  nativeConfiguredProviders: z.array(z.string()).optional(),
   baseUrls: z.record(z.string(), z.string()).default({}),
   apiKey: z.string().default(""),
   model: z.string().default("claude-haiku-5-5"),
@@ -80,7 +82,7 @@ export const SettingsSchema = z.object({
    * On by default; flipping this off in the options page stops all event
    * collection. No ad identifiers are ever collected. See `shared/analytics.ts`.
    */
-  analyticsEnabled: z.boolean().default(true),
+  analyticsEnabled: z.boolean().default(!isSafari),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});
@@ -90,6 +92,7 @@ export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});
  *  — covers the brief window between migration and the user re-saving. */
 export function getProviderApiKey(s: Settings, provider?: Provider): string {
   const p = provider ?? s.provider;
+  if(isSafari)return s.nativeConfiguredProviders?.includes(p) ? "keychain" : "";
   const fromMap = s.apiKeys?.[p];
   if (typeof fromMap === "string" && fromMap.length > 0) return fromMap;
   // Only fall back to the legacy field for the currently-selected

@@ -1,3 +1,4 @@
+import {isSafari} from "@/shared/host";
 /// <reference types="chrome" />
 //
 // Chrome skill injector. Differs from safari's DOM-injection approach:
@@ -156,7 +157,10 @@ export async function detectActiveSkills(candidates: RegistrySkill[]): Promise<R
   try {
     await injectSkills(candidates);
     loaded = await send("sw:skill_snapshot", undefined);
-  } catch { return []; }
+  } catch(error) {
+    if(isSafari)void send("sw:host_progress",{kind:"diagnostic",error:error instanceof Error?error.message:"Skill loading failed"});
+    return [];
+  }
   const namespaces = new Set(Object.keys(loaded));
   const byName = new Map(candidates.map(s => [s.name, s]));
   return candidates.filter(s => namespaces.has(s.namespace) && s.requires.every(ref => {

@@ -23,6 +23,7 @@ export interface CreateAgentOpts {
   fetchImpl: HostFetcher;
   tools: XgooseBuiltTool[];
   reminder?: string | null;
+  capabilities?: {dynamicJavaScript:boolean;customSkills:boolean};
   maxSteps?: number;
   contextBudgetChars?: number;
   requestBudgetBytes?: number;
@@ -220,7 +221,7 @@ export class PageAgentRuntime {
     };
     const pi = new Agent({
       initialState: {
-        model, systemPrompt: buildSystemPrompt(opts.reminder ?? null), messages: history,
+        model, systemPrompt: buildSystemPrompt(opts.reminder ?? null,opts.capabilities), messages: history,
         thinkingLevel: opts.settings.thinking ? "medium" : "off",
         tools: opts.tools.map(({ name, definition: def }) => ({
           name, label: name, description: def.description,

@@ -1,3 +1,4 @@
+import {hostCapabilities} from "@/shared/host";
 import {userScriptsReminder} from "@/shared/userScriptsSetup";
 /// <reference types="chrome" />
 
@@ -555,13 +556,13 @@ const SKILL_TOOLS: XgooseBuiltTool[] = [
 
 /** Host-side skill-registry tools that talk to the background SW. */
 export function buildSkillTools(): XgooseBuiltTool[] {
-  return SKILL_TOOLS;
+  return SKILL_TOOLS.filter(t=>hostCapabilities.customSkills || !["create_skill","edit_skill","skill_help","read_skill"].includes(t.name));
 }
 
 /** Combined page-controller + skill tools — used by `createAgent`
  *  alongside the core tools from `@xgoose/core`. */
 export function buildLegacyTools(): XgooseBuiltTool[] {
-  return [...buildPageControllerTools().map(tool=>{
+  return [...buildPageControllerTools().filter(t=>hostCapabilities.dynamicJavaScript || t.name!=="js_exec").map(tool=>{
     if(tool.name!=="js_exec")return tool;
     const execute=tool.definition.execute;
     return {...tool,definition:{...tool.definition,execute:async(input:any,opts:any)=>{
@@ -569,7 +570,7 @@ export function buildLegacyTools(): XgooseBuiltTool[] {
       if(!status.enabled){window.dispatchEvent(new Event("xgoose:user-scripts-required"));throw new Error("Allow User Scripts is disabled. Stop retrying website tools; show the setup link and steps."+userScriptsReminder(chrome.runtime.id));}
       return execute(input,opts);
     }}};
-  }), ...SKILL_TOOLS];
+  }), ...buildSkillTools()];
 }
 
 export const TOOL_META: Record<string, XgooseToolMeta> = Object.fromEntries(

@@ -62,7 +62,8 @@ Your final research answer must link directly to the posts you actually read (at
 - Be concise and cite specifics (URLs, dates, usernames). Use Markdown sparingly; code fences only for code.
 - When asked to do something on the page, do it via tools — don't just describe what to click.`;
 
-export function buildSystemPrompt(reminder?: string | null): string {
+export function buildSystemPrompt(reminder?: string | null, capabilities?: {dynamicJavaScript:boolean;customSkills:boolean}): string {
+  const base = capabilities?.dynamicJavaScript === false ? BASE_PROMPT.split("\n").filter(line=>!line.includes("js_exec") && !line.includes("edit_skill") && !line.includes("installable")).join("\n") + "\nUse read_page and structured skill_call for the current page. Only packaged skills are executable. Discover schemas with help. Use tools before answering source-dependent questions." : BASE_PROMPT;
   // The per-turn `<system-reminder>` (page URL + active SKILL.md bodies +
   // memory + todos) is appended to the system instructions rather than spliced
   // into the message list. This keeps Gemini's implicit prompt cache hitting
@@ -71,8 +72,8 @@ export function buildSystemPrompt(reminder?: string | null): string {
   // The previous "splice before the latest user message" layout left the prior
   // turn's reminder stranded at a now-invalid position and broke caching at
   // exactly that point on every new user turn.
-  if (!reminder) return BASE_PROMPT;
-  return `${BASE_PROMPT}\n\n${reminder}`;
+  if (!reminder) return base;
+  return `${base}\n\n${reminder}`;
 }
 
 export type SystemReminderOpts = {
