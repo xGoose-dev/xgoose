@@ -1,19 +1,41 @@
 import {readFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
+import {createSign} from 'node:crypto';
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-export const requiredSecrets={chrome:['CWS_CLIENT_ID','CWS_CLIENT_SECRET','CWS_REFRESH_TOKEN','CWS_PUBLISHER_ID','CWS_EXTENSION_ID'],edge:['EDGE_CLIENT_ID','EDGE_API_KEY','EDGE_PRODUCT_ID']};
+export const requiredSecrets={chrome:['CWS_SERVICE_ACCOUNT_JSON','CWS_PUBLISHER_ID','CWS_EXTENSION_ID'],edge:['EDGE_CLIENT_ID','EDGE_API_KEY','EDGE_PRODUCT_ID']};
+export function missingStoreSecrets(store, credentials) {
+ const names=store==='chrome'&&!credentials.CWS_SERVICE_ACCOUNT_JSON
+  ? ['CWS_CLIENT_ID','CWS_CLIENT_SECRET','CWS_REFRESH_TOKEN','CWS_PUBLISHER_ID','CWS_EXTENSION_ID']
+  : requiredSecrets[store];
+ if(!names)throw Error('Choose chrome or edge');
+ return names.filter(key=>!credentials[key]);
+}
+export async function chromeAccessToken(credentials,request) {
+ let body;
+ if(credentials.CWS_SERVICE_ACCOUNT_JSON){
+  let key;try{key=JSON.parse(credentials.CWS_SERVICE_ACCOUNT_JSON);}catch{throw Error('Invalid Chrome service account JSON');}
+  if(key.type!=='service_account'||!key.client_email||!key.private_key)throw Error('Incomplete Chrome service account JSON');
+  const encode=value=>Buffer.from(JSON.stringify(value)).toString('base64url');
+  const now=Math.floor(Date.now()/1000);
+  const unsigned=`${encode({alg:'RS256',typ:'JWT'})}.${encode({iss:key.client_email,scope:'https://www.googleapis.com/auth/chromewebstore',aud:'https://oauth2.googleapis.com/token',iat:now,exp:now+3600})}`;
+  const signature=createSign('RSA-SHA256').update(unsigned).sign(key.private_key,'base64url');
+  body=new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:jwt-bearer',assertion:`${unsigned}.${signature}`});
+ }else body=new URLSearchParams({client_id:credentials.CWS_CLIENT_ID,client_secret:credentials.CWS_CLIENT_SECRET,refresh_token:credentials.CWS_REFRESH_TOKEN,grant_type:'refresh_token'});
+ const token=(await(await request('https://oauth2.googleapis.com/token',{method:'POST',body})).json()).access_token;
+ if(!token)throw Error('OAuth response did not contain an access token');
+ return token;
+}
 export async function submitStore({store,zip,credentials,notes='',fetchImpl=fetch,wait=sleep}) {
  if(!requiredSecrets[store])throw Error('Choose chrome or edge');
- for(const key of requiredSecrets[store])if(!credentials[key])throw Error(`Missing ${key}; no upload was attempted`);
+ const missing=missingStoreSecrets(store,credentials);if(missing.length)throw Error(`Missing ${missing.join(', ')}; no upload was attempted`);
  const request=async(url,options={})=>{
   const response=await fetchImpl(url,{...options,redirect:'error',signal:AbortSignal.timeout(120000)});
   if(!response.ok)throw Error(`Store API returned HTTP ${response.status}; inspect the store dashboard. No automatic withdrawal/retry.`);
   return response;
  };
  if(store==='chrome'){
-  const tokenResponse=await request('https://oauth2.googleapis.com/token',{method:'POST',body:new URLSearchParams({client_id:credentials.CWS_CLIENT_ID,client_secret:credentials.CWS_CLIENT_SECRET,refresh_token:credentials.CWS_REFRESH_TOKEN,grant_type:'refresh_token'})});
-  const token=(await tokenResponse.json()).access_token;if(!token)throw Error('OAuth response did not contain an access token');
+  const token=await chromeAccessToken(credentials,request);
   const name=`publishers/${encodeURIComponent(credentials.CWS_PUBLISHER_ID)}/items/${encodeURIComponent(credentials.CWS_EXTENSION_ID)}`;
   const headers={authorization:`Bearer ${token}`};
   let upload=await(await request(`https://chromewebstore.googleapis.com/upload/v2/${name}:upload`,{method:'POST',headers:{...headers,'content-type':'application/zip'},body:zip})).json();
