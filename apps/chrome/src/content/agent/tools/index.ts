@@ -25,7 +25,7 @@ import {
   type XgooseBuiltTool,
   type XgooseToolMeta,
 } from "./buildTool";
-import { getTodos, type TodoItem, type XgooseToolContentPart } from "@xgoose/core";
+import { getTodos, websiteEvidence, type TodoItem, type XgooseToolContentPart } from "@xgoose/core";
 import { buildPageControllerTools as buildPageControllerCoreTools } from "@xgoose/page-controller";
 
 const MAX_RESULT_BYTES = 30_000;
@@ -347,7 +347,7 @@ const skillCallTool = defineTool({
   toModelOutput: result => {
     const images=result&&typeof result==='object'?skillImages.get(result)??[]:[];
     if(result&&typeof result==='object')skillImages.delete(result);
-    const text = safeJson(result);
+    const text = safeJson(websiteEvidence(result,location.origin));
     const bytes = new TextEncoder().encode(text);
     if (bytes.length <= 120000) return [{type:"text",text},...images];
     return [{type:"text",text:new TextDecoder().decode(bytes.slice(0,119000))+"\n[Result truncated at 120 KB. Do not claim complete coverage. Request a narrower range or use the skill's continuation cursor.]"},...images];

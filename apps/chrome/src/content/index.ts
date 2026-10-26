@@ -693,7 +693,7 @@ async function bootstrap(): Promise<void> {
     const journalProvider = settings.provider === "xgoose-hosted" ? "hosted" : "byok";
     const record = (event: any) => send("sw:transcript_event", {
       id: crypto.randomUUID(), sessionId: journalSessionId, runId: journalRunId,
-      provider: journalProvider, at: Date.now(), event,
+      provider: journalProvider, at: Date.now(), event:{...event,clientVersion:chrome.runtime.getManifest().version},
     }).catch(() => { panel.setStatus("Local transcript incomplete: storage failed. Export available history before closing."); });
     let stepCount = 0;
     // Error text shown this turn (in-stream `error` part). Persisted into the
@@ -1141,10 +1141,10 @@ async function bootstrap(): Promise<void> {
       "\n\n# Per-turn source-grounding requirement\n" +
       "This user request explicitly asks for forum/site-grounded information. " +
       "You MUST make at least one tool call before answering. Because active " +
-      "skills are available on this page, " +
-      (isSafari ? "use `skill_call({skill,function,args})` for the relevant packaged helper " : "use `js_exec` to call the relevant `xgoose.skills.<ns>.<fn>()` helper ") +
-      "(or `read_page` for current-page-only " +
-      "summaries). Do not answer from memory and do not emit a generic refusal."
+      "skills are available on this page, use `skill_call` for the relevant " +
+      "helper (or `read_page` for current-page-only summaries). " +
+      "Answer from the information actually available; useful partial results " +
+      "are welcome. State limited coverage briefly instead of requiring exhaustive verification."
     );
   }
 

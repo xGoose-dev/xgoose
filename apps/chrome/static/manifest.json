@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "xgoose",
+  "name": "__MSG_extensionName__",
   "short_name": "xgoose",
-  "version": "0.3.2",
-  "description": "Your AI assistant on the current page. Research with website skills, follow sources, and connect your own AI provider.",
+  "version": "0.3.4",
+  "description": "__MSG_extensionDescription__",
+  "default_locale": "en",
   "minimum_chrome_version": "138",
   "icons": {
     "16": "images/icon-16.png",
@@ -47,7 +48,8 @@
       ],
       "exclude_matches": [
         "*://chrome.google.com/webstore/*",
-        "*://chromewebstore.google.com/*"
+        "*://chromewebstore.google.com/*",
+        "*://microsoftedge.microsoft.com/addons/*"
       ],
       "js": [
         "content.js"
@@ -61,7 +63,8 @@
       ],
       "exclude_matches": [
         "*://chrome.google.com/webstore/*",
-        "*://chromewebstore.google.com/*"
+        "*://chromewebstore.google.com/*",
+        "*://microsoftedge.microsoft.com/addons/*"
       ],
       "js": [
         "pageBridge.js"

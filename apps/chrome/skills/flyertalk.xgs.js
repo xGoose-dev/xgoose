@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         flyertalk
 // @namespace    ft
-// @version      0.2.0
+// @version      0.2.1
 // @description  FlyerTalk site-specific helpers — WordPress article search (anonymous /wp-json), URL parsing for the vBulletin SEO routes, a curated forum-slug-to-id map (airlines, hotels, credit cards), and a parallel searchAll fan-out across articles + forum posts + threads.
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*
@@ -45,7 +45,7 @@
  *  - Default to unscoped `vbulletin.searchPosts` (no `forumIds`).
  *  - English queries only; vBulletin's index doesn't tokenize CJK.
  *  - Don't answer from snippets — follow up with
- *    `vbulletin.summarizeThread({ threadId, mode: 'latest' })` on the top 2-3
+ *    `vbulletin.summarizeThread({ threadId })` on the top 2-3
  *    hits before composing.
  */
 

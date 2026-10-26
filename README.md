@@ -4,7 +4,7 @@ An open source, in-page browser agent powered by PI. This repository contains
 the Chrome extension, shared agent core, page tools, floating chat UI, skill
 runtime, and synthetic regression tests. MIT licensed.
 
-**0.3.2** defaults Hosted AI to Haiku 5.5 and uses model-specific context windows
+**0.3.3** defaults Hosted AI to Haiku 5.5 and uses model-specific context windows
 instead of a fixed 128K window or 175 KB early-compaction threshold. Luna and
 GPT-6.1 Sol use 1,050,000 tokens; Haiku/Sonnet 5.5 use 1,000,000. Context occupancy
 is a local token estimate before a request and provider-reported usage after a
@@ -90,3 +90,14 @@ See `docs/acceptance.md` for the live forum acceptance specification. Public CI
 uses only synthetic data. Never commit API keys, browser profiles, real chats,
 forum login state, or private acceptance evidence. No provider key is bundled in
 this extension.
+
+### Microsoft Edge
+
+The Chromium host also detects Microsoft Edge for extension-details links and
+localized setup copy. The onboarding guide labels its Chrome screenshot as a
+reference on Edge. Built-in skills use the same packaged execution path.
+Run the focused regression against an official Edge executable with
+`EDGE_EXECUTABLE_PATH=/path/to/MicrosoftEdge node tests/browser/edge-compatibility.mjs`.
+The test uses a disposable profile, opens the real Edge details page from both
+setup entry points, and invokes a built-in reader against fixture website data
+while User Scripts is off. It does not make a live Hosted inference request.

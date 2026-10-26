@@ -258,3 +258,14 @@ The occupancy meter distinguishes current context from cumulative usage.
 Compaction reserves output space and retries a pre-response context rejection
 once without replaying actions. The gateway transport guards are independently
 bounded and increased alongside the model windows, with long-context billing.
+
+## 0.3.3 prepared — October 26, 2026
+
+Includes model-specific context windows and default Hosted Haiku from 0.3.2.
+Updates discussion summaries to the original post, roughly the first 30 replies
+and latest 100 replies, deduplicating overlaps. Explicit user ranges take
+precedence. Discourse and vBulletin expose configurable reply windows, HN
+exposes early/latest ordering, and other discussion readers share the same
+summary default. Summaries report actual coverage. Built-in execution and
+permissions are unchanged. 0.3.2 remains a GitHub draft; use a new version to
+preserve its existing tag and artifact identity.

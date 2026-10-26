@@ -51,7 +51,7 @@ function getFetchImpl(): ReturnType<typeof createChromeProviderFetch> {
 export async function createAgent(opts: {
   settings: Settings;
   reminder?: string | null;
-  onProviderResponse?: (event: {type:"model-response";requestId:string|null;status:number;firstResponseMs:number;contextTextBytes?:number;contextLimitBytes?:number}) => Promise<unknown>;
+  onProviderResponse?: (event: {type:"model-response";requestId:string|null;status:number;firstResponseMs:number;contextTextBytes?:number;contextLimitBytes?:number;contextWindowTokens?:number;contextTargetTokens?:number;contextTargetBytes?:number}) => Promise<unknown>;
 }): Promise<AgentBundle> {
   const tools = [
     ...buildCoreTools({ memory: chromeMemoryPort, origin: chromeOriginPort }),
@@ -64,7 +64,10 @@ export async function createAgent(opts: {
       const started=Date.now();
       const response=await getFetchImpl()(input,init);
       // Record correlation metadata, never request headers or credentials.
-      await opts.onProviderResponse?.({type:"model-response",requestId:response.headers.get("x-request-id"),status:response.status,firstResponseMs:Date.now()-started,...(response.headers.get("x-xgoose-context-unit")==="utf8_bytes"?{contextTextBytes:Number(response.headers.get("x-xgoose-context-text-bytes")),contextLimitBytes:Number(response.headers.get("x-xgoose-context-limit-bytes"))}:{})});
+      await opts.onProviderResponse?.({type:"model-response",requestId:response.headers.get("x-request-id"),status:response.status,firstResponseMs:Date.now()-started,...(response.headers.get("x-xgoose-context-unit")==="utf8_bytes"?{contextTextBytes:Number(response.headers.get("x-xgoose-context-text-bytes")),contextLimitBytes:Number(response.headers.get("x-xgoose-context-limit-bytes"))}:{ }),
+        ...(response.headers.has('x-xgoose-context-window-tokens')?{contextWindowTokens:Number(response.headers.get('x-xgoose-context-window-tokens'))}:{}),
+        ...(response.headers.has('x-xgoose-context-target-tokens')?{contextTargetTokens:Number(response.headers.get('x-xgoose-context-target-tokens'))}:{}),
+        ...(response.headers.has('x-xgoose-context-target-bytes')?{contextTargetBytes:Number(response.headers.get('x-xgoose-context-target-bytes'))}:{})});
       return opts.settings.provider === "xgoose-hosted" ? normalizeHostedError(response) : response;
     },
     tools,

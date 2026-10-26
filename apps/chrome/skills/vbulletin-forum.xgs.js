@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         vbulletin-forum
 // @namespace    vbulletin
-// @version      0.1.0
+// @version      0.1.1
 // @description  Generic helpers for vBulletin 3.x/4.x forums (search posts/threads, summarize threads, fetch recent threads, getForum).
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*
@@ -178,18 +178,22 @@ async function getThreadPage(threadId, page) {
   return { url, doc: parseHtml(text) };
 }
 
-function extractPostList(doc) {
+function extractPostList(doc, start=0, maxChars=400) {
   const posts = [];
   doc.querySelectorAll('div[id^="edit"], li.postbitlegacy, table[id^="post"], div.post').forEach((el, idx) => {
-    const num = el.querySelector('.postcounter')?.textContent ?? '';
+    const counter = el.querySelector('.postcounter');
+    const num = counter?.textContent ?? '';
+    const postId = parsePostIdFromHref(counter?.getAttribute('href')) || Number(el.id?.match(/^(?:edit|post)(\d+)$/)?.[1]) || null;
     const author = el.querySelector('.username, .bigusername, a[href*="member.php"]');
     const date = el.querySelector('.date, .postdate, .post_date');
     const body = el.querySelector('blockquote.postcontent, .post_message, .postbody');
     posts.push({
-      postNumber: parseInteger(num) || idx + 1,
+      postNumber: parseInteger(num) || start + idx + 1,
+      postId,
       author: txt(author),
       date: txt(date),
-      snippet: txt(body).slice(0, 400),
+      snippet: txt(body).slice(0, maxChars),
+      text_truncated: txt(body).length > maxChars,
     });
   });
   return posts;
@@ -246,35 +250,57 @@ export default defineSkill({
   }),
 
   summarizeThread: fn({
-    summary: 'Fetch one or more pages of a thread and return author/date/snippet rows.',
+    summary: 'Read a thread. Defaults to the original post plus first 30/latest 100 replies; counts, mode, page and text size are configurable.',
     input: z.object({
       threadId: z.number().int().positive(),
       mode: z.enum(['latest', 'first', 'first+last', 'full', 'tldr']).optional(),
+      firstReplies: z.number().int().min(0).max(300).default(30),
+      latestReplies: z.number().int().min(0).max(300).default(100),
+      maxChars: z.number().int().min(80).max(6000).default(400),
       page: z.number().int().optional().describe('Specific page; negative is from end (-1=last, -2=second-to-last).'),
-      maxPosts: z.number().int().min(1).max(50).optional(),
+      maxPosts: z.number().int().min(1).max(601).optional(),
     }),
-    handler: async ({ threadId, mode, page, maxPosts }) => {
-      const m = mode ?? 'latest';
-      const cap = maxPosts ?? 10;
-      const fetchPage = async (p) => {
+    handler: async ({ threadId, mode, page, maxPosts, firstReplies=30, latestReplies=100, maxChars=400 }) => {
+      const m = mode ?? 'first+last';
+      const cap = maxPosts ?? (m==='first+last'||m==='tldr'?1+firstReplies+latestReplies:10);
+      let perPage=0;
+      const cache=new Map();
+      const fetchPage = async (p=1) => {
+        if(cache.has(p))return cache.get(p);
         const { doc, url } = await getThreadPage(threadId, p);
-        return { doc, url, posts: extractPostList(doc), meta: extractThreadMeta(doc) };
+        const value={doc,url:new URL(url,location.origin).href,posts:extractPostList(doc,(p-1)*perPage,maxChars),meta:extractThreadMeta(doc)};
+        for(const post of value.posts)post.url=post.postId?`${value.url}#post${post.postId}`:value.url;
+        cache.set(p,value);return value;
       };
       const first = await fetchPage(undefined);
       const totalPages = first.meta.totalPages;
+      perPage=first.posts.length;
       const out = { thread: { id: threadId, title: first.meta.title, url: first.url }, totalPages, page: 1, posts: [] };
-      if (m === 'first' || m === 'tldr') {
+      if(!perPage)return {...out,coverage:'No readable posts returned.'};
+      if (m === 'first') {
         out.posts = first.posts.slice(0, cap);
         return out;
       }
-      if (m === 'first+last') {
-        const last = await fetchPage(totalPages);
-        out.posts = [...first.posts.slice(0, Math.ceil(cap / 2)), ...last.posts.slice(-Math.floor(cap / 2))];
+      if ((m === 'first+last' || m === 'tldr') && page === undefined) {
+        const head=[...first.posts],tail=[];
+        for(let p=2;p<=totalPages && head.length<1+firstReplies;p++)head.push(...(await fetchPage(p)).posts);
+        for(let p=totalPages;p>=1 && tail.length<latestReplies;p--)tail.unshift(...(await fetchPage(p)).posts);
+        const selected=[...head.slice(0,1+firstReplies),...(latestReplies?tail.filter(post=>post.postNumber!==first.posts[0]?.postNumber).slice(-latestReplies):[])];
+        out.posts=[...new Map(selected.map(post=>[post.postNumber,post])).values()].slice(0,cap);
+        out.selection=`original post, first ${firstReplies} replies and latest ${latestReplies} replies`;
+        out.pagesRead=[...cache.keys()].sort((a,b)=>a-b);
+        // Preserve both reply windows if UTF-8 bodies exceed the host budget.
+        while(new TextEncoder().encode(JSON.stringify(out)).length>110000 && out.posts.some(post=>post.snippet.length>80)){
+          for(const post of out.posts)if(post.snippet.length>80){
+            post.snippet=post.snippet.slice(0,Math.max(80,Math.floor(post.snippet.length*0.7)));
+            post.text_truncated=true;
+          }
+        }
         return out;
       }
       if (m === 'full') {
         const all = [first.posts];
-        for (let p = 2; p <= totalPages; p++) {
+        for (let p = 2; p <= totalPages && all.flat().length < cap; p++) {
           all.push((await fetchPage(p)).posts);
         }
         out.posts = all.flat().slice(0, cap);
