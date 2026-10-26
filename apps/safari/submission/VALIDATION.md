@@ -47,8 +47,16 @@ represent these as physical-device checks.
   answer. Hacker News getStories/getItems succeeds via bounded public transport.
 - iOS 26.5 iPhone: extension settings/state API, per-site-only access distinct from
   all-website permission and 2x page zoom layout verified.
-- iOS 26.5 iPad: native onboarding, provider save and live connection test pass.
-  Final Safari layout, orientation and store screenshots are in progress.
+- iOS 26.5 iPad: native onboarding, provider save/live connection test, live Hacker
+  News, NGA public hot topics and Weibo public feeds pass. Safari panel works in
+  portrait and landscape. Revoking Other Websites access clears websiteAvailable
+  while retaining firstAnswerAt. Safari does not reliably expose an all-sites
+  grant through permissions.contains; the app conservatively shows only verified
+  website availability when that query returns false.
+- iPadOS 18.6, 13 inch: native onboarding skip/resume, portrait/landscape, Dark
+  appearance and maximum accessibility XXXL text checked. Labels and controls
+  remain readable. Accessibility labels inspected through the native AX tree;
+  physical-device VoiceOver speech interaction was not performed.
 
 ## Backend evidence and release boundary
 
@@ -73,8 +81,15 @@ analytics default off and Safari parameters exclude email/keys/chat/model/prompt
   e3dec9ea-f6ce-431c-b94a-187192d267db.
 - Review Gemini key verified with actual inference and excluded from source/IPA.
   It belongs only in ASC review notes; never include the credential in this document.
-- Processing, final screenshots/listing/review notes, old iOS build 10 withdrawal,
-  replacement and Waiting for Review confirmation remain pending.
+- Build 11 processed VALID. Old iOS build 10 withdrawn, build 11 attached, listing
+  and review notes replaced, six new actual screenshots processed COMPLETE. macOS
+  remains Pending Developer Release. Existing ASC privacy URL is shared with the
+  pending macOS app-info record and cannot be edited independently; it is retained
+  at https://xgoose.org/privacy, verified to include the updated iOS policy.
+- Final interruption QA found that a suspension notice was persisted without being
+  shown immediately. Build 12 fixes the live notice, marks periodic partial
+  checkpoints for crash recovery and avoids duplicating a canonical abort response.
+  Build 12 validation/upload/replacement and final review state remain pending.
 
 Local logs: /tmp/xgoose-ios-*.log, /tmp/xgoose-chrome-e2e-final.log and
 /tmp/xgoose-safari-viewport.log. Save sanitized final status and real screenshots
