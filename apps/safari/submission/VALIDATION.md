@@ -63,14 +63,14 @@ represent these as physical-device checks.
 ## Backend evidence and release boundary
 
 113 deletion/backend tests pass, including owner isolation, session revocation,
-durable erasure and object-store retry. Backend changes are integrated into
-production master and released by GitHub Deploy run 40373988854. Read-only health
-returned commit c20ca4e155773507a87525673366ade9cb0662b7 and version
-d666acd5-524a-4b39-8e2f-60cea7b1cde0. The observed catalogue contains four models:
-luna, claude-haiku-5-5, claude-sonnet-5-5, gpt-6.1-sol. This does not satisfy the
-user's latest six-model production requirement, which additionally names DeepSeek
-Flash and GPT-6.1 Terra. Do not describe that six-model requirement as verified.
-Safari loads the current server catalogue dynamically and has no four-model cap.
+durable erasure and object-store retry. Backend changes were integrated and
+released through GitHub. Earlier health returned c20ca4e and four models. Final
+read-only verification on 2026-10-26 returned current origin/master commit
+2982b27f9091bb95c30c2c5ad25a9590f717e793, deployed version
+f00c54b9-8ccf-4705-88e2-55a3bb0f3240 and the complete approved six-model catalogue:
+luna, claude-haiku-5-5, claude-sonnet-5-5, gpt-6.1-sol, deepseek-flash and
+gpt-6.1-terra. GitHub master Deploy runs 40387996758 and 40387439845 both succeeded
+for that commit. Safari loads the current server catalogue dynamically.
 No gateway changes or deployments were performed in the final submission phase.
 Future website/API releases must preserve current master, merge and push to
 master, and use the guarded scripts/production-release.mjs workflow. Direct

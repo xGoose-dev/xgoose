@@ -2,22 +2,26 @@
   "ok": true,
   "env": "production",
   "release": {
-    "commit": "c20ca4e155773507a87525673366ade9cb0662b7",
-    "version": "d666acd5-524a-4b39-8e2f-60cea7b1cde0"
+    "commit": "2982b27f9091bb95c30c2c5ad25a9590f717e793",
+    "version": "f00c54b9-8ccf-4705-88e2-55a3bb0f3240"
   },
   "hosted_models": [
     "luna",
     "claude-haiku-5-5",
     "claude-sonnet-5-5",
-    "gpt-6.1-sol"
+    "gpt-6.1-sol",
+    "deepseek-flash",
+    "gpt-6.1-terra"
   ],
   "verification": {
-    "method": "read-only health check",
-    "sixModelRequirementVerified": false,
-    "missingRequiredModels": [
-      "DeepSeek Flash",
-      "GPT-6.1 Terra"
+    "checkedAt": "2026-10-26T19:41:23.122519+00:00",
+    "method": "read-only health, fetched origin/master, GitHub Actions deployment status",
+    "sixModelRequirementVerified": true,
+    "gatewayMutatedInFinalSubmissionPhase": false,
+    "githubDeployRuns": [
+      "https://github.com/xGoose-dev/xgoose-web/actions/runs/40387996758",
+      "https://github.com/xGoose-dev/xgoose-web/actions/runs/40387439845"
     ],
-    "gatewayMutatedInFinalSubmissionPhase": false
+    "githubDeployConclusion": "success"
   }
 }
