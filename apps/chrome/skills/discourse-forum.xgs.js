@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discourse-forum
 // @namespace    discourse
-// @version      0.2.3
+// @version      0.2.4
 // @description  Helpers for Discourse-powered forums (full-text search, read topics + posts, post replies, fetch user data via the Discourse JSON API).
 // @match        *://meta.discourse.org/*
 // @match        *://*.discourse.org/*
@@ -229,15 +229,17 @@ function postText(post) {
   return (node.innerText || node.textContent || post.raw || '').replace(/\s+/g,' ').trim();
 }
 function topicLink(id) { return `${location.origin}/t/${id}`; }
-async function summaryTopic(topicId) {
+async function summaryTopic(topicId, firstReplies=30, latestReplies=100) {
   const route = location.pathname.match(/^\/t\/(?:[^/]+\/)?(\d+)(?:\/\d+)?\/?$/);
   const id = topicId || (route ? Number(route[1]) : null);
   if (!Number.isSafeInteger(id) || id <= 0) return {status:'not_a_topic',message:'Open a topic before using Summarize this thread.'};
   const topic = await forumJson(`/t/${id}.json`);
   const stream = topic.post_stream?.stream;
   if (!Array.isArray(stream) || !stream.length) throw new Error('Forum did not return a readable post stream. Do not claim to have read the full topic.');
-  const long = (topic.highest_post_number || topic.posts_count || stream.length) > 300;
-  const selected = long ? [...new Set([stream[0], ...stream.slice(-30)])] : stream;
+  // Select actual visible replies, not arithmetic floor numbers: deleted floors
+  // do not need replacement reads, and overlapping windows appear only once.
+  const replies = stream.slice(1);
+  const selected = [...new Set([stream[0], ...replies.slice(0,firstReplies), ...(latestReplies?replies.slice(-latestReplies):[])])];
   const posts = new Map((topic.post_stream?.posts || []).map(p=>[p.id,p]));
   const missing = selected.filter(id=>!posts.has(id));
   // Sequential, bounded reads avoid turning a shortcut into a burst of forum requests.
@@ -254,9 +256,9 @@ async function summaryTopic(topicId) {
     return {post_number:post.post_number,username:post.username,created_at:post.created_at,text:text.slice(0,perPost),text_truncated:text.length>perPost,url:`${topicLink(id)}/${post.post_number}`};
   });
   return {title:topic.title,url:topicLink(id),posts_count:topic.posts_count,highest_post_number:topic.highest_post_number,
-    selection:long?'first post and latest 30 posts':'all visible posts',selected_count:selected.length,read_count:result.length,
+    selection:selected.length===stream.length?'all visible posts':`first post, first ${firstReplies} replies and latest ${latestReplies} replies`,selected_count:selected.length,read_count:result.length,
     complete:result.length===selected.length,posts:result,
-    hint:'Read posts[].text. If text_truncated=true, use discourse.getTopicPosts for a longer body. State the selected range and any truncation; never claim to have read omitted text.'};
+    hint:'Read posts[].text. Counts are approximate; state the actual range and any truncation.'};
 }
 async function recentTopics(kind='new') {
   const result = await forumJson(`/latest.json?order=${kind==='random'?'latest':'created'}`);
@@ -415,9 +417,9 @@ export default defineSkill({
   }),
 
   readTopicForSummary: fn({
-    summary: 'Read all visible posts through floor 300; for longer threads read the first post and latest 30. Includes original floor links and truncation flags.',
-    input: z.object({topicId:z.number().int().positive().optional()}),
-    handler: async ({topicId}={}) => summaryTopic(topicId),
+    summary: 'Read the original post, first 30 replies and latest 100 replies by default; deduplicate overlaps.',
+    input: z.object({topicId:z.number().int().positive().optional(),firstReplies:z.number().int().min(0).max(300).default(30),latestReplies:z.number().int().min(0).max(300).default(100)}),
+    handler: async ({topicId,firstReplies,latestReplies}={}) => summaryTopic(topicId,firstReplies,latestReplies),
   }),
   getRecentTopics: fn({
     summary: 'Read recent new topics or five randomly selected latest topics, with original links.',
@@ -455,7 +457,7 @@ export default defineSkill({
   }),
 
   getTopicPosts: fn({
-    summary: 'Fetch a topic starting from a specific post number (paginated). Read posts[].text.',
+    summary: 'Read five posts from a floor. Use readTopicPosts for larger ranges.',
     input: z.object({
       topicId: z.number().int().positive(),
       maxChars: z.number().int().min(500).max(20000).optional(),
@@ -555,10 +557,10 @@ export default defineSkill({
     },
   }),
 }, {
-  instructions: `Use readTopicPosts when replies can affect the answer, including short topics. getTopic is only a five-post preview, never evidence of full-thread coverage. On every continuation, check first_post_number, last_post_number, returned post IDs and next_cursor against the previous result and requested floor. If the range or cursor does not advance, stop repeating that request; recover with a targeted floor read or state exactly which replies remain unread. For current offers, inspect dated relevant replies and distinguish current verified evidence from historical posts. For large or full-thread reads, call discourse.readTopicPosts and follow next_cursor sequentially; do not write Promise.all pagination loops. Cursors expire after 60 seconds: resume from next_post_number. Recover text_truncated bodies with fromPostNumber, limit:1, textOffset:next_text_offset. Search is scoped to location.origin. Discourse shortcuts already supply fetched topic bodies in action-result. Use those results first; only fetch more when missing or truncated text affects the answer. For summaries, state whether all visible posts or the first and latest 30 posts were selected. Never present title-only guesses as verified content. Respond in the conversation's language, or otherwise match the forum's language.`,
+  instructions: `Use readTopicPosts when replies can affect the answer, including short topics. getTopic is only a five-post preview, never evidence of full-thread coverage. On every continuation, check first_post_number, last_post_number, returned post IDs and next_cursor against the previous result and requested floor. If the range or cursor does not advance, stop repeating that request; recover with a targeted floor read or state exactly which replies remain unread. For current offers, inspect dated relevant replies and distinguish current verified evidence from historical posts. For large or full-thread reads, call discourse.readTopicPosts and follow next_cursor sequentially; do not write Promise.all pagination loops. Cursors expire after 60 seconds: resume from next_post_number. Recover text_truncated bodies with fromPostNumber, limit:1, textOffset:next_text_offset. Search is scoped to location.origin. Discourse shortcuts already supply fetched topic bodies in action-result. Use those results first; only fetch more when missing or truncated text affects the answer. For summaries, default to the original post plus roughly the first 30 and latest 100 replies, deduplicating overlaps. State actual coverage; user-specified ranges take precedence. Never present title-only guesses as verified content. Respond in the conversation's language, or otherwise match the forum's language.`,
   actions: [
     {label:'Latest topics', prompt:"Summarize the newest topics from action-result with a short description, creation time and clickable Markdown link for each. Sort by creation time; activity on old topics does not make them new. Use the conversation's language or match the forum's language.",js:"return await xgoose.skills.discourse.getRecentTopics({kind:'new'});"},
-    {label:'Summarize this thread', prompt:"Summarize the thread in action-result: include context from the first post, recent developments, useful evidence and disagreements, with links to specific posts. Through floor 300 use all visible posts; above 300 use the first post and latest 30 posts. State the selected range and any text truncation; retrieve longer relevant bodies with discourse.getTopicPosts when needed. If not on a topic page, ask the user to open a topic. Use the conversation's language or match the forum's language.",js:'return await xgoose.skills.discourse.readTopicForSummary({});'},
+    {label:'Summarize this thread', prompt:"Summarize the original post, roughly the first 30 and latest 100 replies, deduplicating overlaps. Choose functions and pagination as needed. Cite sources and state actual coverage; user-specified ranges take precedence. Use the conversation's language.",js:'return await xgoose.skills.discourse.readTopicForSummary({});'},
     {label:'Surprise me randomly', prompt:"Recommend the five randomly sampled recent topics in action-result. Give each a title, one-sentence reason, update date and clickable Markdown link. No duplicates or invented content; identify unread topics and say if fewer than five are available. Use the conversation's language or match the forum's language.",js:"return await xgoose.skills.discourse.getRecentTopics({kind:'random'});"},
   ],
 });
