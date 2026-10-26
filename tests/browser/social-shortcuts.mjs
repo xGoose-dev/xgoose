@@ -16,7 +16,7 @@ const profile=await mkdtemp(resolve(tmpdir(),'xgoose-social-shortcuts-'));
 const context=await chromium.launchPersistentContext(profile,{channel:'chromium',headless:true,viewport:{width:1280,height:900},args:[`--disable-extensions-except=${dist}`,`--load-extension=${dist}`]});context.setDefaultTimeout(20000);
 const cases=[
  ['v2ex','https://www.v2ex.com/t/42',['概括这个帖子','热帖','新帖','随便看看']],
- ['nga','https://bbs.nga.cn/read.php?tid=42',['概括这个帖子','热帖','新帖','随便看看']],
+ ['nga','https://bbs.nga.cn/read.php?tid=42',['概括这个帖子','热帖','新帖','随便看看','看图概括此帖']],
  ['weibo','https://weibo.com/123/abc',['概括这条微博','热门微博','最新微博','随便看看']],
  ['reddit','https://www.reddit.com/r/test/comments/abc/fixture/',['Summarize this post','Hot posts','New posts','Surprise me']],
 ];
@@ -30,7 +30,7 @@ try{
  for(const[name,url,labels]of cases){
   const entry=registry.find(s=>s.name===name);assert.deepEqual(entry.actions.map(a=>a.label),labels);assert.ok(entry.actions.every(a=>a.prompt.length>70&&!a.js));
   await context.route(`${new URL(url).origin}/**`,r=>r.fulfill({contentType:'text/html',headers:{'content-security-policy':"default-src 'self'; script-src 'none'; connect-src 'self'"},body:'<!doctype html><title>Shortcut fixture</title><main>A current post</main>'}));
-  const page=await context.newPage();await page.goto(url);await page.locator('.toggle').click();
+  const page=await context.newPage();await page.goto(url);if(!await page.locator('.in-text').isVisible())await page.locator('.toggle').click();
   const buttons=page.locator('.shortcuts button');await buttons.filter({hasText:labels[0]}).waitFor();assert.deepEqual(await buttons.allTextContents(),labels);
   for(const[label,index]of labels.map((s,i)=>[s,i])){
    const before=requests.length;await buttons.filter({hasText:label}).click();
@@ -45,7 +45,7 @@ try{
   assert.equal(await page.locator('.shortcuts').evaluate(e=>e.scrollWidth<=e.clientWidth+1),true);
   await mkdir('artifacts/social-shortcuts',{recursive:true});await page.screenshot({path:`artifacts/social-shortcuts/${name}.png`});
   await settings.evaluate(()=>chrome.storage.local.get('xgoose.settings').then(d=>chrome.storage.local.set({'xgoose.settings':{...d['xgoose.settings'],language:'en'}})));
-  report.push({name,version:entry.version,labels,allFourClicksSent:true,permissionOff:true,mobile:true});await page.close();
+  report.push({name,version:entry.version,labels,allClicksSent:true,permissionOff:true,mobile:true});await page.close();
  }
  console.log(JSON.stringify({passed:true,syntheticOnly:true,requests:requests.length,report}));
 }finally{await context.close();server.close();await rm(profile,{recursive:true,force:true});}

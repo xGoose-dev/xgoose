@@ -35,6 +35,30 @@ test("pre-aborted turns cannot call the provider",async()=>{
   const bundle=createAgent({settings,fetchImpl:fetch,tools:[],streamFn:()=>{throw new Error("must not run");}});
   await assert.rejects(bundle.agent.stream({messages:[{role:"user",content:"hi"}],abortSignal:AbortSignal.abort()}));
 });
+test("tool failures retain their text in live events and persisted history",async()=>{
+  let requests=0;
+  const message='weibo.searchStatuses: native API access denied';
+  const bundle=createAgent({settings,fetchImpl:fetch,tools:[defineTool({name:'broken',description:'Failure fixture',inputSchema:z.object({}),execute:()=>{throw new Error(message);}})],streamFn:(_m,ctx)=>{
+    if(++requests===1)return stream(answer([{type:'toolCall',id:'failed-1',name:'broken',arguments:{}}],'toolUse'));
+    assert.equal(ctx.messages.at(-1)?.content[0].text,message);return stream(answer([{type:'text',text:'Reported the actual failure'}]));
+  }});
+  const run=await bundle.agent.stream({messages:[{role:'user',content:'Run once'}]});const events=[];
+  for await(const event of run.fullStream)events.push(event);
+  assert.equal(events.find(e=>e.type==='tool-error')?.error,message);
+  const saved=(await run.response).messages.find(m=>m.role==='tool');
+  assert.equal(saved?.content[0].output.type,'error-text');assert.equal(saved?.content[0].output.value,message);
+});
+test('multiple image-reading tools in one turn cannot exceed the provider image cap',async()=>{
+ let requests=0;
+ const bundle=createAgent({settings,fetchImpl:fetch,tools:[defineTool({name:'images',description:'Image fixture',inputSchema:z.object({}),execute:()=>({attached:3}),toModelOutput:()=>[{type:'text',text:'Source images'},...Array.from({length:3},()=>({type:'file-data' as const,data:'fixture',mediaType:'image/jpeg'}))]})],streamFn:(_m,ctx)=>{
+  requests++;const images=ctx.messages.flatMap(m=>Array.isArray(m.content)?m.content:[]).filter((p:any)=>p.type==='image');assert.ok(images.length<=8);
+  if(requests<=3)return stream(answer([{type:'toolCall',id:`image-${requests}`,name:'images',arguments:{}}],'toolUse'));
+  assert.equal(images.length,8);return stream(answer([{type:'text',text:'Read the available images'}]));
+ }});
+ const run=await bundle.agent.stream({messages:[{role:'user',content:'Read several image pages'}]});for await(const _ of run.fullStream){}
+ const saved=(await run.response).messages.filter(m=>m.role==='tool').flatMap(m=>m.content[0].images);
+ assert.equal(saved.length,9);assert.equal(requests,4);
+});
 test("compaction preserves full output while persisting a separate model context",async()=>{
   let summaries=0,normal=0;
   const bundle=createAgent({settings,fetchImpl:fetch,tools:[],contextBudgetChars:100,streamFn:(_model,ctx)=>{
