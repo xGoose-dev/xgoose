@@ -80,7 +80,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-      actions: read
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -92,7 +92,8 @@ jobs:
       - name: Verify checksum
         working-directory: release-files
         run: sha256sum --check SHA256SUMS
-      - name: Release or dry run
+      - id: release
+        name: Release or dry run
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -125,4 +126,11 @@ jobs:
           fi
           gh release create "$tag" release-files/* \
             --target "$RELEASE_SHA" --title "xgoose $VERSION" --generate-notes
+          echo "created=true" >> "$GITHUB_OUTPUT"
           echo "Published [$tag](https://github.com/$GH_REPO/releases/tag/$tag)." >> "$GITHUB_STEP_SUMMARY"
+      - name: Dispatch store submissions for the newly tested release
+        if: steps.release.outputs.created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: gh workflow run store-publish.yml --ref main -f tag="v$VERSION" -f store=both

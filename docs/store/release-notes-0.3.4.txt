@@ -1,0 +1,3 @@
+Answers now prioritize information available on the current website and useful partial findings, with concise coverage limitations rather than exhaustive verification requirements. Discourse topic-list evidence exposes the correct total reply count, preserves all returned topics and removes irrelevant avatar metadata from model context while keeping raw diagnostic tool responses intact.
+
+Model-sized context windows remain available. Successful gateway policy updates can restore capacity after a legacy small limit, and compaction diagnostics now record client version, model, trigger and actual byte/token thresholds. No new permissions or AI provider changes.
