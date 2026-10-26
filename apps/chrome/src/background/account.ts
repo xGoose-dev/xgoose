@@ -1,3 +1,6 @@
+import {isSafari} from '@/shared/host';
+import {nativeCommand} from '@/shared/platformBridge';
+import {createAccountSession} from './accountSession';
 import {recordEvent,failureReason} from "@/shared/analytics";
 /**
  * Email-confirmation login runs in the service worker. Pending requests are
@@ -158,21 +161,11 @@ export async function pollOnce(): Promise<LoginState> {
 }
 
 export async function logout(): Promise<void> {
-  const account = await getAccount();
-  if (account) {
-    // Best-effort: the worker rotates refresh tokens, so logout invalidates
-    // the active server-side session. If the network is down we still wipe
-    // the local copy below.
-    await apiFetch("/auth/logout", {
-      method: "POST",
-      body: JSON.stringify({refresh_token:account.refreshToken}),
-      bearer: account.accessToken,
-    }).catch(() => undefined);
-  }
-  await clearAccount();
-  cancelPending();
-  lastPhase = "idle";
-  lastError = null;
+  if(isSafari){await nativeCommand("logout");return;}
+  const account=await getAccount();
+  await accountSession.replace(null);
+  cancelPending();lastPhase="idle";lastError=null;
+  if(account)await apiFetch("/auth/logout",{method:"POST",body:JSON.stringify({refresh_token:account.refreshToken}),bearer:account.accessToken}).catch(()=>undefined);
 }
 
 /**
@@ -180,55 +173,17 @@ export async function logout(): Promise<void> {
  * Account on success, or null if the refresh failed (caller should treat as
  * "session expired, prompt re-login").
  */
-let refreshInFlight:Promise<Account|null>|null=null;
-export function refreshTokens():Promise<Account|null>{
- return refreshInFlight??=performRefresh().finally(()=>{refreshInFlight=null;});
-}
-async function performRefresh(): Promise<Account | null> {
-  const account = await getAccount();
-  if (!account) return null;
-  const res = await apiFetch<{
-    access_token: string;
-    refresh_token: string;
-    access_token_expires_at: string;
-  }>("/auth/refresh", {
-    method: "POST",
-    body: JSON.stringify({ refresh_token: account.refreshToken }),
-  });
-  if (!res.ok) {
-    if (res.status === 401) {
-      await clearAccount();
-    }
-    return null;
-  }
-  const next: Account = {
-    ...account,
-    accessToken: res.data.access_token,
-    refreshToken: res.data.refresh_token,
-    accessTokenExpiresAt: res.data.access_token_expires_at,
-    lastSeenAt: Date.now(),
-  };
-  await setAccount(next);
-  return next;
-}
-
-const ACCESS_TOKEN_REFRESH_BUFFER_MS = 120_000;
-
-function msUntilAccessTokenExpiry(account: Account): number {
-  const t = Date.parse(account.accessTokenExpiresAt);
-  return Number.isFinite(t) ? t - Date.now() : -1;
-}
-
-/** Return an account whose access token is ready to use. */
-export async function getFreshAccount(): Promise<Account | null> {
-  const account = await getAccount();
-  if (!account) return null;
-  if (msUntilAccessTokenExpiry(account) >= ACCESS_TOKEN_REFRESH_BUFFER_MS) {
-    return account;
-  }
-  const refreshed = await refreshTokens();
-  return refreshed ?? (msUntilAccessTokenExpiry(account) > 0 ? account : null);
-}
+const accountSession=createAccountSession({read:getAccount,save:async(a)=>{if(!isSafari)await setAccount(a);},clear:clearAccount,renew:async(account)=>{
+ if(isSafari){
+  const next=await nativeCommand("account",{refresh:true});
+  return next?{ok:true,account:next}:{ok:false,status:401};
+ }
+ const res=await apiFetch<{access_token:string;refresh_token:string;access_token_expires_at:string}>("/auth/refresh",{method:"POST",body:JSON.stringify({refresh_token:account.refreshToken})});
+ if(!res.ok)return {ok:false,status:res.status};
+ return {ok:true,account:{...account,accessToken:res.data.access_token,refreshToken:res.data.refresh_token,accessTokenExpiresAt:res.data.access_token_expires_at,lastSeenAt:Date.now()}};
+}});
+export const refreshTokens=(rejectedToken?:string)=>accountSession.refresh(rejectedToken);
+export const getFreshAccount=()=>accountSession.fresh();
 
 // ── Polling internals ───────────────────────────────────────────────────
 
@@ -296,7 +251,7 @@ async function pollCurrent():Promise<void>{
       accessTokenExpiresAt: tokens.access_token_expires_at,
       lastSeenAt: Date.now(),
     };
-    await setAccount(account);
+    await accountSession.replace(account);
     recordEvent("email_login_succeeded",{method:flow.mode==="email"?"extension_email":"device",duration_ms:Math.max(0,Date.now()-(flow.expiresAt-600000))});
     cancelPending();
     lastPhase = "idle";
