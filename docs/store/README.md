@@ -232,3 +232,17 @@ Bumps package, Chrome package, manifest and lockfile versions together. Separate
 Onboarding begins with the shared email sign-in component and answer-language choice, followed by the highlighted, collapsible Chrome User Scripts guide. Eight website links: Reddit, YouTube, Weibo, V2EX, NGA, US Card Forum, Hacker News and Zhihu. YouTube is explicitly basic page reading, not a bundled dedicated skill. Installation, starter authoring and troubleshooting move to skills-help.html. Personalization uses consistent full-width preference rows, independent language controls and a compact analytics checkbox; panel coordinates are folded into details. Focused selects retain their small caret background sizing/position (the focus shorthand no longer resets them).
 
 Keeps all 34 packaged skills and the tested 0.2.8 BYOK/native transport fixes. No new extension permissions.
+
+
+## 0.3.1 prepared — October 26, 2026 (America/Chicago)
+
+Includes PR #5 (native Weibo search and no-result handling, bounded NGA JSON
+recovery, optional NGA post-image context) and the latest 0.3.0 follow-ups
+(stable email sign-in controls and onboarding language updates both preferences
+while translating immediately). Settings keeps independent language controls.
+All 34 built-in skills remain bundled; Weibo 0.2.2 and NGA 0.1.3 work without
+Allow User Scripts. Manifest permissions and host permissions are unchanged.
+Uncommitted provider additions in another checkout are not part of this release.
+
+GitHub publication and Chrome Web Store submission are separate steps. Check
+the release artifact report and Developer Dashboard for actual submission status.
