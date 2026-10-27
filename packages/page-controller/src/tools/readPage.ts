@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { defineTool, type XgooseBuiltTool } from "@xgoose/core";
+import { defineTool, resultBudgetBytes, type XgooseBuiltTool } from "@xgoose/core";
 
-const READ_PAGE_MAX_BYTES = 30_000;
 
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;
@@ -77,15 +76,14 @@ export function createReadPageTool(): XgooseBuiltTool {
         .optional()
         .describe(
           'CSS selector to scope the read (defaults to "body"). Pass a tighter selector on large ' +
-            'pages — e.g. "#search" on Google, "main" on most articles — to stay under the byte cap.',
+            'pages — e.g. "#search" on Google, "main" on most articles — when only part of the page matters.',
         ),
       maxBytes: z
         .number()
         .int()
         .min(500)
-        .max(100_000)
         .optional()
-        .describe("Max output size; truncated past this. Defaults to 30000."),
+        .describe("Optional output size cap. Defaults to the model's per-result budget."),
     }),
     isReadOnly: true,
     isConcurrencySafe: () => true,
@@ -95,7 +93,7 @@ export function createReadPageTool(): XgooseBuiltTool {
       return `Read page ${fmt}${sel}`;
     },
     execute: async ({ format, selector, maxBytes }) => {
-      const max = maxBytes ?? READ_PAGE_MAX_BYTES;
+      const max = maxBytes ?? resultBudgetBytes();
       const sel = selector ?? "body";
       let root: Element | null = null;
       try {

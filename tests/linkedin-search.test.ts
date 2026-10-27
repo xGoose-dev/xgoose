@@ -117,7 +117,7 @@ test('profile details use the target profile identity and preserve dates and off
  const payload=JSON.parse(requests[2].options.body).clientArguments.payload;
  assert.equal(payload.replaceableSectionArgs.vieweeProfileId,'target-profile-id');assert.equal(payload.vanityName,'jingtaozheng');
  assert.match(result.sources.find((s:any)=>s.scope==='experience').text,/xAI.*2025.*Offer date: 2025-11-28/);
- assert.match(result.instruction,/does not establish/);assert.equal(result.sources.every((s:any)=>s.complete===false),true);
+ assert.equal(result.instruction,undefined);assert.equal(result.sources.every((s:any)=>s.complete===false),true);
  assert.equal(JSON.stringify(result).includes('synthetic-csrf'),false);
 });
 

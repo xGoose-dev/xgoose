@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         substack
 // @namespace    substack
-// @version      0.1.4
+// @version      0.1.5
 // @description  Substack publication archives/search, posts, comments, RSS, publication metadata and session read endpoints. Supports custom publication domains, excerpts, source cards and conservative rate limits.
 // @match        https://substack.com/*
 // @match        https://*.substack.com/*
@@ -26,11 +26,11 @@ import { z } from 'zod';
 const READER_VERSION = 1;
 const readerStates = globalThis[Symbol.for('xgoose.reader.states')] ??= new Map();
 const count = (n = 10, max = 30) => z.number().int().min(1).max(max).default(n);
-const offset = z.number().int().min(0).max(100000).default(0);
+const offset = z.number().int().min(0).default(0);
 const identifier = z.union([z.string().min(1).max(300), z.number().int().positive()]);
 const empty = z.object({});
-const reading = z.object({ offset: offset, maxChars: count(8000, 16000) });
-const readOptions = { offset: offset, maxChars: count(8000, 16000) };
+const reading = z.object({ offset: offset, maxChars: z.number().int().positive().optional() });
+const readOptions = { offset: offset, maxChars: z.number().int().positive().optional() };
 
 function siteFn(summary, input, handler, examples = []) {
   return fn({ summary, input, examples, handler: (raw = {}) => {
@@ -78,7 +78,7 @@ function source(data, options = {}) {
   if (!url) throw fault('invalid_source_url', 'Source must have an HTTP(S) original URL.');
   const full = String(data.text ?? data.excerpt ?? '');
   const start = options.offset ?? 0;
-  const end = start + (options.maxChars ?? 8000);
+  const end = options.maxChars === undefined ? full.length : start + options.maxChars;
   const fragment = full.slice(start, end);
   const nextOffset = start + fragment.length < full.length ? start + fragment.length : null;
   return {
@@ -96,23 +96,7 @@ function source(data, options = {}) {
 }
 
 function result(sources = [], extra = {}) {
-  const output = { readerVersion: READER_VERSION, sources, ...extra };
-  // Keep the envelope parseable under js_exec's 30 KB character cap. Truncating
-  // whole JSON there would destroy source cards and continuation information.
-  let size = JSON.stringify(output).length;
-  for (let round = 0; size > 25000 && round < 8; round++) {
-    let changed = false;
-    for (const s of output.sources) {
-      if (s.text.length > 100) {
-        s.text = s.text.slice(0, Math.max(100, Math.floor(s.text.length * 0.6)));
-        s.complete = false; s.nextOffset = s.offset + s.text.length; changed = true;
-      }
-      if (s.excerpt.length > 100) s.excerpt = s.excerpt.slice(0, 100);
-    }
-    size = JSON.stringify(output).length;
-    if (!changed) break;
-  }
-  return output;
+  return { readerVersion: READER_VERSION, sources, ...extra };
 }
 
 function currentPage(selectors, options = {}) {
@@ -128,7 +112,7 @@ function currentPage(selectors, options = {}) {
     publishedAt: document.querySelector('time[datetime]')?.getAttribute('datetime'),
     text, scope: 'loaded_page', method: 'dom', complete: false,
     access: document.querySelector('[data-testid="paywall"],.paywall,.paywall-title') ? 'preview' : 'session',
-  }, options)], { coverage: 'Only the currently loaded page. Hidden, unloaded, and paywalled content is not included.' });
+  }, options)], { coverage: 'loaded_page' });
 }
 
 function walkJson(value, visit, maxNodes = 12000) {
@@ -169,11 +153,7 @@ function observedHeaders(request) {
 }
 
 function boundedRaw(data) {
-  const json = JSON.stringify(data);
-  return json.length <= 22000 ? { data } : {
-    truncated: true, preview: json.slice(0, 22000),
-    instruction: 'Raw JSON was truncated. Use a typed reader with pagination before making claims about its content.',
-  };
+  return { data };
 }
 
 function createClient(site, policy, allowed) {

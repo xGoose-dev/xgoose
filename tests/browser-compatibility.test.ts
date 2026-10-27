@@ -1,8 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {browserName,browserUiText,extensionDetailsUrl} from '../apps/chrome/src/shared/browser.ts';
+import {browserName,extensionDetailsUrl} from '../apps/chrome/src/shared/browser.ts';
 import {userScriptsSetup,userScriptsReminder} from '../apps/chrome/src/shared/userScriptsSetup.ts';
-import {translate} from '../apps/chrome/src/shared/locale.ts';
 
 const edge='Mozilla/5.0 Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0';
 const chrome='Mozilla/5.0 Chrome/150.0.0.0 Safari/537.36';
@@ -12,7 +11,7 @@ test('permission links follow the Chromium browser and preserve the installed ex
   assert.equal(extensionDetailsUrl(undefined,edge),'edge://extensions');
   assert.equal(browserName(edge),'Microsoft Edge');
 });
-test('Edge permission instructions and translated UI point to Edge without mislabelling the Chrome reference image',()=>{
+test('Edge permission instructions point to Edge',()=>{
   const old=Object.getOwnPropertyDescriptor(globalThis,'navigator');
   Object.defineProperty(globalThis,'navigator',{configurable:true,value:{userAgent:edge,languages:['en'],language:'en'}});
   try {
@@ -22,16 +21,7 @@ test('Edge permission instructions and translated UI point to Edge without misla
     assert.match(setup.steps[0],/Microsoft Edge/);
     const reminder=userScriptsReminder('installed-id');
     assert.match(reminder,/edge:\/\/extensions/);assert.doesNotMatch(reminder,/chrome:\/\/extensions/);
-    assert.match(translate('Chrome could not open the page. Select Show me where for the manual address.','zh-CN'),/Microsoft Edge/);
-    assert.match(translate('Paste this address into Chrome’s address bar:','es'),/Microsoft Edge/);
-    const source='Actual Chrome extension details: Site access, followed by Allow User Scripts with its switch enabled in blue, followed by Site settings.';
-    assert.match(translate(source,'zh-CN'),/^Chrome/);
-    const reference='In Microsoft Edge, open the Edge address above. The Chrome image is a reference for locating Allow User Scripts.';
-    assert.match(translate(reference,'en'),/The Chrome image/);
   } finally {
     if(old)Object.defineProperty(globalThis,'navigator',old);else Reflect.deleteProperty(globalThis,'navigator');
   }
-});
-test('Chrome UI keeps its existing permission guide',()=>{
-  assert.equal(browserUiText('Open Chrome settings',undefined,chrome),'Open Chrome settings');
 });

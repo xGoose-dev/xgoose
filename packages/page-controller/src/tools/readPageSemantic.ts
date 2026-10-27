@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineTool, type XgooseBuiltTool } from "@xgoose/core";
+import { defineTool, resultBudgetBytes, type XgooseBuiltTool } from "@xgoose/core";
 import {
   awaitDomQuiet,
   buildDomSnapshot,
@@ -7,8 +7,6 @@ import {
   type DomSnapshot,
 } from "@xgoose/dom-snapshot";
 
-const DEFAULT_MAX_BYTES = 30_000;
-const MAX_MAX_BYTES = 100_000;
 const MAX_WAIT_FOR_STABLE_MS = 1500;
 
 function truncate(s: string, n: number): string {
@@ -69,10 +67,9 @@ export function createReadPageSemanticTool(): XgooseBuiltTool {
         .number()
         .int()
         .min(500)
-        .max(MAX_MAX_BYTES)
         .optional()
         .describe(
-          "Max output byte budget; truncated past this. Defaults to 30000.",
+          "Optional output byte cap. Defaults to the model's per-result budget.",
         ),
       maxNodes: z
         .number()
@@ -103,7 +100,7 @@ export function createReadPageSemanticTool(): XgooseBuiltTool {
       maxNodes,
     }) => {
       const outFormat = format ?? "text";
-      const max = maxBytes ?? DEFAULT_MAX_BYTES;
+      const max = maxBytes ?? resultBudgetBytes();
       const sel = selector ?? "body";
 
       let root: Element | null = null;

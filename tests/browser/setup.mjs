@@ -64,7 +64,7 @@ try {
  assert.equal(await page.locator('#testApiKeyBtn').isVisible(),true);
  const fromSettings=context.waitForEvent('page');await page.locator('#openUserScriptsSettings').click();
  const settingsDetails=await fromSettings;await settingsDetails.waitForURL(`chrome://extensions/?id=${id}`);await settingsDetails.close();
- const skills=await page.evaluate(()=>chrome.runtime.sendMessage({kind:'sw:list_skills'}));assert.equal(skills.length,34);assert.ok(skills.every(s=>s.enabled&&!s.userAuthored));
+ const skills=await page.evaluate(()=>chrome.runtime.sendMessage({kind:'sw:list_skills'}));assert.equal(skills.length,JSON.parse(await readFile(resolve(dist,'skills/registry.json'),'utf8')).length);assert.ok(skills.every(s=>s.enabled&&!s.userAuthored));
  await page.locator('#connectionMode').selectOption('byok');await page.locator('#apiKey').fill('draft-key');
  assert.equal(await page.locator('#provider').isVisible(),true);assert.equal(await page.locator('#modelCustomToggleRow').isVisible(),true);
  await page.locator('#connectionMode').selectOption('hosted');await page.locator('#connectionMode').selectOption('byok');assert.equal(await page.locator('#apiKey').inputValue(),'draft-key');

@@ -1,8 +1,7 @@
 import { z } from "zod";
-import { defineTool, type XgooseBuiltTool } from "@xgoose/core";
+import { boundedModelText, defineTool, websiteEvidence, type XgooseBuiltTool } from "@xgoose/core";
 import { callBridge } from "../pageRpc";
 
-const MAX_RESULT_BYTES = 30_000;
 const DEFAULT_JS_EXEC_TIMEOUT_MS = 30_000;
 
 function truncate(s: string, n: number): string {
@@ -31,21 +30,21 @@ export type JsExecToolDeps = {
  *   - Wraps the user's body as `(async () => { … })()` inside the bridge.
  *   - Forwards the agent-run AbortSignal end-to-end: signal abort → tell
  *     the bridge to abort the exec → return `{ ok:false, error:'aborted by user' }`.
- *   - Truncates results past ~30 KB so we don't blow the AI provider's
- *     context budget on one tool result.
+ *   - Returns results in full; only a value too large for the model window
+ *     is replaced by a stored handle (see `boundedModelText`).
  */
 export function createJsExecTool(deps: JsExecToolDeps): XgooseBuiltTool {
   return defineTool({
     name: "js_exec",
     description:
-      "Run async JavaScript in the page MAIN world. Code body is wrapped in `(async () => { ... })()`. Use `return X` to return JSON. `xgoose.skills.<ns>.*` is available. Skills return their documented data directly: do not unwrap a skill return with `.result` unless its schema includes that field. Only the outer js_exec response has {ok,result,error}. Inspect Object.keys(value) and a small sample after an unexpected shape. The result is JSON-stringified and truncated past ~30 KB. Set parallel_safe:true for read-only code.",
+      "Run async JavaScript in the page MAIN world. Code body is wrapped in `(async () => { ... })()`. Use `return X` to return JSON. `xgoose.skills.<ns>.*` is available. Skills return their documented data directly: do not unwrap a skill return with `.result` unless its schema includes that field. Only the outer js_exec response has {ok,result,error}. Inspect Object.keys(value) and a small sample after an unexpected shape. Each return value is kept as `xgoose.results[resultId]` for later calls, so loop, filter and aggregate in code and return what the answer needs. Set parallel_safe:true for read-only code.",
     inputSchema: z.object({
       code: z
         .string()
         .describe(
           "JS body wrapped in `(async () => { ...code... })()`. Use `return X` to return JSON. " +
-            "In scope: `args` (array, defaults to []), `signal` (AbortSignal), `xgoose` (the skills root). " +
-            "Each call is independent — to thread data through, do it in one call or use the `args` field.",
+            "In scope: `args` (array, defaults to []), `signal` (AbortSignal), `xgoose` (the skills root; " +
+            "`xgoose.results[resultId]` holds the return values of earlier calls in this page).",
         ),
       purpose: z
         .string()
@@ -145,7 +144,9 @@ export function createJsExecTool(deps: JsExecToolDeps): XgooseBuiltTool {
 
 /** Only the model-facing representation is bounded; transcript details stay intact. */
 export function jsExecModelOutput(output:unknown) {
-  const json=safeJson(output),bytes=new TextEncoder().encode(json);
-  const text=bytes.length<=MAX_RESULT_BYTES?json:JSON.stringify({truncated:true,sizeBytes:bytes.length,preview:new TextDecoder().decode(bytes.slice(0,MAX_RESULT_BYTES)),next:"Continue with a narrower result projection."});
+  const envelope=output as {ok?:boolean;result?:unknown;resultId?:unknown}|null;
+  const id=typeof envelope?.resultId==="string"?envelope.resultId:undefined;
+  const shown=envelope?.ok?{...envelope,result:websiteEvidence(envelope.result,location.origin)}:output;
+  const text=boundedModelText(envelope?.ok?envelope.result:output,safeJson(shown),{id,pageHandle:!!id});
   return [{type:"text" as const,text}];
 }

@@ -1,13 +1,13 @@
 // ==XGooseSkill==
 // @name         uscardforum
 // @namespace    uscf
-// @version      0.2.8
+// @version      0.2.10
 // @description  美卡论坛：搜索信用卡、积分与旅行讨论，汇总社区共识和实测 DP。
 // @match        *://www.uscardforum.com/*
 // @match        *://uscardforum.com/*
 // @detect       location.hostname.endsWith('uscardforum.com')
 // @run-at       document_idle
-// @require      discourse-forum@0.2.9
+// @require      discourse-forum@0.2.11
 // @primary      searchInCategory
 // @keyword      uscardforum
 // @keyword      美卡论坛
@@ -179,6 +179,8 @@ export default defineSkill({
   instructions: `美卡论坛是美国信用卡、银行、积分、里程与财务优化社区。使用中文回复。
 - 搜索相关讨论，优先阅读近期（尽可能近 6 个月）、点赞和回复较多的有用帖子，关注真实用户经历、官方公告及政策变化，汇总社区共识与可操作的 DP。
 - 查找 DP 时重点关注近 3–6 个月，提取发生了什么、日期、金额、相关条件和用户情况；附作者、主题 ID、楼层链接及可用的点赞数，展示规律和趋势。
+- 用户问“怎么撸”、玩法或羊毛时，按社区实际在用的做法从基础到进阶完整列出（包括改 payment、叠加等），每种写清步骤、收益和对应 DP，按社区采用度和 DP 排序。
+- 搜索词用中文和论坛黑话（如“撸”“DP”“改 payment”），再配合英文卡名或商户名。
 - 比较信用卡时，结合社区反馈说明开卡奖励与要求、年费、权益、积分价值、适合人群及申请策略。
 - 总结长帖内容，读取与分页遵循 discourse-forum。`,
   actions: [

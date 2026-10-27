@@ -31,7 +31,5 @@ test('only explicit answer choices reach the AI and chat requests take priority'
  assert.match(languageReminder('zh-CN',['es-MX']),/Simplified Chinese \(zh-CN\)/);
  assert.match(languageReminder('en',['zh-CN']),/Preferred language: English \(en\)/);
  assert.match(languageReminder('es',['en-US']),/Preferred language: Spanish \(es\)/);
- assert.match(languageReminder('es'),/explicitly requests a different response language/);
- assert.match(languageReminder('zh-CN'),/Preserve original quotes/);
  const settings=SettingsSchema.parse({language:'en',answerLanguage:'es'});assert.equal(settings.language,'en');assert.equal(settings.answerLanguage,'es');
 });

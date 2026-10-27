@@ -13,6 +13,7 @@ export {
 } from "./buildTool";
 
 export { createTodoWriteTool } from "./todoWrite";
+export { createResultQueryTool } from "./resultQuery";
 export {
   createRememberTool,
   createForgetTool,
@@ -21,6 +22,7 @@ export {
 
 import type { XgooseBuiltTool } from "./buildTool";
 import { createTodoWriteTool } from "./todoWrite";
+import { createResultQueryTool } from "./resultQuery";
 import {
   createRememberTool,
   createForgetTool,
@@ -28,8 +30,8 @@ import {
 } from "./memory";
 
 /**
- * One-shot helper that returns the three browser-agnostic core tools the
- * agent always wants: `todo_write`, `remember`, `forget`. The host glues
+ * One-shot helper that returns the browser-agnostic core tools the agent
+ * always wants: `todo_write`, `remember`, `forget`, `result_query`. The host glues
  * these into its tool array alongside `@xgoose/page-controller`'s DOM
  * tools and any host-specific tools.
  */
@@ -38,5 +40,6 @@ export function buildCoreTools(deps: MemoryToolDeps): XgooseBuiltTool[] {
     createTodoWriteTool(),
     createRememberTool(deps),
     createForgetTool(deps),
+    createResultQueryTool(),
   ];
 }

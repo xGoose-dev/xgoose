@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         linkedin
 // @namespace    linkedin
-// @version      0.1.4
+// @version      0.1.5
 // @description  LinkedIn browser-session reader: search, jobs, profiles, companies, posts, feed, comments and reactions; public guest jobs; observed GraphQL replay and read-only Voyager API access. Rate-limited, with source cards.
 // @match        https://www.linkedin.com/*
 // @match        https://linkedin.com/*
@@ -24,11 +24,11 @@ import { parseFragment } from 'parse5';
 const READER_VERSION = 1;
 const readerStates = globalThis[Symbol.for('xgoose.reader.states')] ??= new Map();
 const count = (n = 10, max = 30) => z.number().int().min(1).max(max).default(n);
-const offset = z.number().int().min(0).max(100000).default(0);
+const offset = z.number().int().min(0).default(0);
 const identifier = z.union([z.string().min(1).max(300), z.number().int().positive()]);
 const empty = z.object({});
-const reading = z.object({ offset: offset, maxChars: count(8000, 16000) });
-const readOptions = { offset: offset, maxChars: count(8000, 16000) };
+const reading = z.object({ offset: offset, maxChars: z.number().int().positive().optional() });
+const readOptions = { offset: offset, maxChars: z.number().int().positive().optional() };
 
 function siteFn(summary, input, handler, examples = []) {
   return fn({ summary, input, examples, handler: (raw = {}) => {
@@ -76,7 +76,7 @@ function source(data, options = {}) {
   if (!url) throw fault('invalid_source_url', 'Source must have an HTTP(S) original URL.');
   const full = String(data.text ?? data.excerpt ?? '');
   const start = options.offset ?? 0;
-  const end = start + (options.maxChars ?? 8000);
+  const end = options.maxChars === undefined ? full.length : start + options.maxChars;
   const fragment = full.slice(start, end);
   const nextOffset = start + fragment.length < full.length ? start + fragment.length : null;
   return {
@@ -94,23 +94,7 @@ function source(data, options = {}) {
 }
 
 function result(sources = [], extra = {}) {
-  const output = { readerVersion: READER_VERSION, sources, ...extra };
-  // Keep the envelope parseable under js_exec's 30 KB character cap. Truncating
-  // whole JSON there would destroy source cards and continuation information.
-  let size = JSON.stringify(output).length;
-  for (let round = 0; size > 25000 && round < 8; round++) {
-    let changed = false;
-    for (const s of output.sources) {
-      if (s.text.length > 100) {
-        s.text = s.text.slice(0, Math.max(100, Math.floor(s.text.length * 0.6)));
-        s.complete = false; s.nextOffset = s.offset + s.text.length; changed = true;
-      }
-      if (s.excerpt.length > 100) s.excerpt = s.excerpt.slice(0, 100);
-    }
-    size = JSON.stringify(output).length;
-    if (!changed) break;
-  }
-  return output;
+  return { readerVersion: READER_VERSION, sources, ...extra };
 }
 
 function currentPage(selectors, options = {}) {
@@ -126,7 +110,7 @@ function currentPage(selectors, options = {}) {
     publishedAt: document.querySelector('time[datetime]')?.getAttribute('datetime'),
     text, scope: 'loaded_page', method: 'dom', complete: false,
     access: document.querySelector('[data-testid="paywall"],.paywall,.paywall-title') ? 'preview' : 'session',
-  }, options)], { coverage: 'Only the currently loaded page. Hidden, unloaded, and paywalled content is not included.' });
+  }, options)], { coverage: 'loaded_page' });
 }
 
 function walkJson(value, visit, maxNodes = 12000) {
@@ -167,11 +151,7 @@ function observedHeaders(request) {
 }
 
 function boundedRaw(data) {
-  const json = JSON.stringify(data);
-  return json.length <= 22000 ? { data } : {
-    truncated: true, preview: json.slice(0, 22000),
-    instruction: 'Raw JSON was truncated. Use a typed reader with pagination before making claims about its content.',
-  };
+  return { data };
 }
 
 function createClient(site, policy, allowed) {
@@ -355,7 +335,7 @@ function liSources(data,options={}) {
 }
 function response(data,options={}) {
   const sources=liSources(data,options);
-  return result(sources,{coverage:'Only entities returned by the current session’s browser endpoint.',
+  return result(sources,{coverage:'session_endpoint',
     ...(sources.length?{}:boundedRaw(data))});
 }
 function restliValue(value){return encodeURIComponent(String(value)).replace(/[!'()*]/g,c=>`%${c.charCodeAt(0).toString(16).toUpperCase()}`);}
@@ -445,9 +425,7 @@ async function readProfile(a) {
       if(a.signal?.aborted || [401,403,429].includes(error.status))break;
     }
   }
-  return result(sources,{loadedSections,sectionErrors,coverage:'Profile header and explicitly loaded profile sections. Each section is bounded and may have unread entries.',
-    instruction:'Use experience entries, titles, companies, dates and descriptions together. A headline, offer or "Offer date" does not establish that a job offer was accepted or employment independently verified. Preserve those qualifications. Never infer current employment solely from an offer. Report missing sections explicitly.',
-  });
+  return result(sources,{loadedSections,sectionErrors,coverage:'profile_sections'});
 }
 
 // LinkedIn's current read-only search transport (SDUI / React Flight).
@@ -551,7 +529,7 @@ function parseSearchFlight(text, type='all', limit=10) {
     add(primaryDestination(props,new Set(),0,kind),readable(props));
   }
   else for(const value of records.values())collect(value);
-  return [...found.values()].slice(0,limit).map(entry=>source({...entry,access:'session',method:'sdui_search_api',scope:'snippet',complete:false},{maxChars:1600}));
+  return [...found.values()].slice(0,limit).map(entry=>source({...entry,access:'session',method:'sdui_search_api',scope:'snippet',complete:false},{}));
 }
 function searchPacket(a) {
   const route=({all:'all',people:'people',companies:'companies',posts:'content'})[a.type];
@@ -585,8 +563,8 @@ async function searchCurrentApi(a) {
   const sources=available.slice(a.start%10,a.start%10+a.count);
   if(!sources.length && !/no results|no matches|try.*different|未找到|没有找到/i.test(text))throw fault('unexpected_search_response','LinkedIn returned search data without readable result cards. The response format must be checked; no legacy endpoint or page fallback was attempted.');
   return result(sources,{method:'sdui_search_api',page:Math.floor(a.start/10)+1,nextStart:sources.length?a.start+sources.length:null,
-    coverage:'Search result snippets returned by the current LinkedIn search API; profiles and recent activity are not fully read.',
-    instruction:'These are search snippets. For current employment, background or education, use the original profile URL to call getProfile and read About and Experience before answering. Do not infer personal familiarity without visible shared connections or shared background. Do not retry the removed search/blended endpoint.'});
+    coverage:'search_snippets',
+    instruction:'Call getProfile with a result URL for About, Experience and Education. The search/blended endpoint is removed.'});
 }
 
 // A JavaScript-only HTML parser keeps downloaded job markup inert. LinkedIn's
@@ -652,13 +630,13 @@ const skill={
     const html=await client.request(`/jobs-guest/jobs/api/jobPosting/${a.id}`,{type:'text',signal:a.signal,ttl:30000});
     return jobDescription(html,a.id,a);
   }),
-  getProfile:siteFn('Read the profile header plus About, Experience and Education through current SDUI APIs. Returns original section text, companies, dates and qualifications, not just a search snippet. Report missing sections and never treat an offer as verified employment.',z.object({publicId:slug,sections:z.array(z.enum(['about','experience','education'])).max(3).default(['about','experience','education']),...readOptions}),readProfile),
+  getProfile:siteFn('Read the profile header plus About, Experience and Education through current SDUI APIs. Returns original section text, companies, dates and qualifications, not just a search snippet.',z.object({publicId:slug,sections:z.array(z.enum(['about','experience','education'])).max(3).default(['about','experience','education']),...readOptions}),readProfile),
   getCompany:siteFn('Read a company by its /company/slug via the browser’s universal-name lookup.',z.object({slug,...readOptions}),async a=>response(await voyager('organization/companies',{q:'universalName',universalName:a.slug},a),{...a,scope:'body'})),
   getPost:siteFn('Read a LinkedIn activity by numeric ID via the session browser endpoint.',z.object({id:numericId,...readOptions}),async a=>response(await voyager(`feed/updates/${encodeURIComponent(`urn:li:activity:${a.id}`)}`,{},a),{...a,scope:'body'})),
   getComments:siteFn('Read a bounded page of comments for an activity (session-dependent browser endpoint).',z.object({activityId:numericId,...paging}),async a=>response(await voyager('feed/comments',{q:'comments',updateId:`urn:li:activity:${a.activityId}`,start:a.start,count:a.count},a),{scope:'comment',complete:false,maxChars:900})),
-  getReactions:siteFn('Read reaction metadata for an activity; do not infer private attributes about reactors.',z.object({activityId:numericId,...paging}),async a=>boundedRaw(await voyager('feed/reactions',{q:'reactionType',entityUrn:`urn:li:activity:${a.activityId}`,start:a.start,count:a.count},a))),
+  getReactions:siteFn('Read reaction metadata for an activity.',z.object({activityId:numericId,...paging}),async a=>boundedRaw(await voyager('feed/reactions',{q:'reactionType',entityUrn:`urn:li:activity:${a.activityId}`,start:a.start,count:a.count},a))),
   getFeed:siteFn('Read a page of the signed-in feed (best-effort Voyager adapter).',z.object(paging),async a=>response(await voyager('feed/updates',{q:'feed',start:a.start,count:a.count},a),{maxChars:900,complete:false})),
-  getMyProfile:siteFn('Read the signed-in member identity only when requested.',empty,async a=>response(await voyager('me',{},a))),
+  getMyProfile:siteFn('Read the signed-in member identity.',empty,async a=>response(await voyager('me',{},a))),
   readObserved:siteFn('Replay an actually observed read-only LinkedIn GraphQL query with scalar variable replacements. Current query IDs stay intact.',z.object({
     queryPrefix:z.string().regex(/^voyager[A-Za-z0-9_]{1,120}$/),variables:z.record(z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/),z.union([z.string().max(500),z.number(),z.boolean()])).default({}),
   }),async a=>response(await observedQuery(a.queryPrefix,a.variables,a),{maxChars:700,complete:false})),

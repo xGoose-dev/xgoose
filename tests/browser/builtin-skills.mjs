@@ -1,6 +1,6 @@
 import {chromium} from '@playwright/test';
 import {createServer} from 'node:http';
-import {mkdtemp,rm,mkdir} from 'node:fs/promises';
+import {mkdtemp,rm,mkdir,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {resolve} from 'node:path';
 import assert from 'node:assert/strict';
@@ -25,7 +25,7 @@ try{
  const settings=await context.newPage();await settings.goto(`chrome-extension://${id}/options.html`);
  await settings.locator('#userScriptsAlert').waitFor({state:'visible'});assert.match(await settings.locator('#userScriptsAlert').innerText(),/Built-in skills and page reading are ready/);
  assert.equal((await settings.evaluate(()=>chrome.runtime.sendMessage({kind:'sw:user_scripts_status'}))).enabled,false);
- const all=await settings.evaluate(()=>chrome.runtime.sendMessage({kind:'sw:list_skills'}));assert.equal(all.length,34);assert.ok(all.every(s=>s.enabled&&!s.userAuthored));
+ const all=await settings.evaluate(()=>chrome.runtime.sendMessage({kind:'sw:list_skills'}));assert.equal(all.length,JSON.parse(await readFile(resolve(dist,'skills/registry.json'),'utf8')).length);assert.ok(all.every(s=>s.enabled&&!s.userAuthored));
  await settings.evaluate(base=>chrome.storage.local.set({'xgoose.settings':{provider:'openai-compat',apiKeys:{'openai-compat':'fixture'},baseUrls:{'openai-compat':base},model:'luna',analyticsEnabled:false,launcherVisibility:'skill-sites'}}),base);
  await context.route('https://news.ycombinator.com/**',route=>route.fulfill({contentType:'text/html',headers:{'content-security-policy':"default-src 'self'; script-src 'none'; connect-src 'self' https://hn.algolia.com"},body:'<!doctype html><title>Built-in fixture</title><main>Visible page evidence for the built-in test.</main>'}));
  await context.route('https://hn.algolia.com/api/v1/search?**',route=>{searches++;return route.fulfill({json:{hits:[{objectID:'19',title:'Built-in fixture story',url:'https://fixture.test/source',author:'fixture',points:10,num_comments:0}],nbHits:1,page:0,nbPages:1},headers:{'access-control-allow-origin':'*'}});});
@@ -51,5 +51,5 @@ try{
  await settings.bringToFront();await settings.evaluate(()=>window.dispatchEvent(new Event('focus')));await settings.locator('#userScriptsAlert').waitFor({state:'hidden'});
  await details.bringToFront();await details.locator('#allow-user-scripts cr-toggle').click();await page.bringToFront();await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await page.waitForFunction(()=>!window.xgoose?.skills?.hn);await page.reload();await page.locator('#xgoose-root').waitFor({state:'attached'});await page.waitForFunction(()=>document.querySelector('#xgoose-root')?.shadowRoot?.querySelectorAll('.skill-chip').length===0);
  await settings.bringToFront();await settings.evaluate(()=>window.dispatchEvent(new Event('focus')));await settings.locator('#userScriptsAlert').waitFor({state:'visible'});
- console.log(JSON.stringify({passed:true,builtins:34,permissionOff:true,strictCsp:true,liveSchemas:true,structuredInvocation:true,pageReading:true,defaultLauncher:true,settingsReminder:true,noBuiltinChatWarning:true,noAiMentionPopup:true,disabledStatePreserved:true,localEditRequiresPermission:true,enableWithoutReload:true,syntheticOnly:true}));
+ console.log(JSON.stringify({passed:true,builtins:all.length,permissionOff:true,strictCsp:true,liveSchemas:true,structuredInvocation:true,pageReading:true,defaultLauncher:true,settingsReminder:true,noBuiltinChatWarning:true,noAiMentionPopup:true,disabledStatePreserved:true,localEditRequiresPermission:true,enableWithoutReload:true,syntheticOnly:true}));
 }finally{await context.close();server.close();await rm(profile,{recursive:true,force:true});}

@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         reddit
 // @namespace    reddit
-// @version      0.1.3
+// @version      0.1.5
 // @description  Reddit JSON read APIs: subreddit feeds/search/about/rules, posts, comment trees and morechildren, users and current-account subscriptions. Native sorting, time ranges, fullnames and cursors; no agent HTML parsing.
 // @match        https://www.reddit.com/*
 // @match        https://reddit.com/*
@@ -25,11 +25,11 @@ import { z } from 'zod';
 const READER_VERSION = 1;
 const readerStates = globalThis[Symbol.for('xgoose.reader.states')] ??= new Map();
 const count = (n = 10, max = 30) => z.number().int().min(1).max(max).default(n);
-const offset = z.number().int().min(0).max(100000).default(0);
+const offset = z.number().int().min(0).default(0);
 const identifier = z.union([z.string().min(1).max(300), z.number().int().positive()]);
 const empty = z.object({});
-const reading = z.object({ offset: offset, maxChars: count(8000, 16000) });
-const readOptions = { offset: offset, maxChars: count(8000, 16000) };
+const reading = z.object({ offset: offset, maxChars: z.number().int().positive().optional() });
+const readOptions = { offset: offset, maxChars: z.number().int().positive().optional() };
 
 function siteFn(summary, input, handler, examples = []) {
   return fn({ summary, input, examples, handler: (raw = {}) => {
@@ -78,7 +78,7 @@ function source(data, options = {}) {
   if (!url) throw fault('invalid_source_url', 'Source must have an HTTP(S) original URL.');
   const full = String(data.text ?? data.excerpt ?? '');
   const start = options.offset ?? 0;
-  const end = start + (options.maxChars ?? 8000);
+  const end = options.maxChars === undefined ? full.length : start + options.maxChars;
   const fragment = full.slice(start, end);
   const nextOffset = start + fragment.length < full.length ? start + fragment.length : null;
   return {
@@ -96,23 +96,7 @@ function source(data, options = {}) {
 }
 
 function result(sources = [], extra = {}) {
-  const output = { readerVersion: READER_VERSION, sources, ...extra };
-  // Keep the envelope parseable under js_exec's 30 KB character cap. Truncating
-  // whole JSON there would destroy source cards and continuation information.
-  let size = JSON.stringify(output).length;
-  for (let round = 0; size > 25000 && round < 8; round++) {
-    let changed = false;
-    for (const s of output.sources) {
-      if (s.text.length > 100) {
-        s.text = s.text.slice(0, Math.max(100, Math.floor(s.text.length * 0.6)));
-        s.complete = false; s.nextOffset = s.offset + s.text.length; changed = true;
-      }
-      if (s.excerpt.length > 100) s.excerpt = s.excerpt.slice(0, 100);
-    }
-    size = JSON.stringify(output).length;
-    if (!changed) break;
-  }
-  return output;
+  return { readerVersion: READER_VERSION, sources, ...extra };
 }
 
 function currentPage(selectors, options = {}) {
@@ -128,7 +112,7 @@ function currentPage(selectors, options = {}) {
     publishedAt: document.querySelector('time[datetime]')?.getAttribute('datetime'),
     text, scope: 'loaded_page', method: 'dom', complete: false,
     access: document.querySelector('[data-testid="paywall"],.paywall,.paywall-title') ? 'preview' : 'session',
-  }, options)], { coverage: 'Only the currently loaded page. Hidden, unloaded, and paywalled content is not included.' });
+  }, options)], { coverage: 'loaded_page' });
 }
 
 function walkJson(value, visit, maxNodes = 12000) {
@@ -169,11 +153,7 @@ function observedHeaders(request) {
 }
 
 function boundedRaw(data) {
-  const json = JSON.stringify(data);
-  return json.length <= 22000 ? { data } : {
-    truncated: true, preview: json.slice(0, 22000),
-    instruction: 'Raw JSON was truncated. Use a typed reader with pagination before making claims about its content.',
-  };
+  return { data };
 }
 
 function createClient(site, policy, allowed) {
@@ -242,7 +222,7 @@ function createClient(site, policy, allowed) {
           typeof globalThis.__xgoose?.publicReaderFetch === 'function';
         const response = usePublicRelay ? await globalThis.__xgoose.publicReaderFetch(url.href, { signal: controller.signal }) : await fetch(url.href, {
           method: 'GET', credentials: url.origin === location.origin ? 'include' : 'omit',
-          headers: options.headers, signal: controller.signal, redirect: 'error',
+          headers: options.headers, signal: controller.signal, redirect: 'error', cache: options.cache,
         });
         const retry = response.headers.get('retry-after');
         const reset = response.headers.get('x-rate-limit-reset') || response.headers.get('x-ratelimit-reset');
@@ -256,7 +236,7 @@ function createClient(site, policy, allowed) {
         }
         if (!response.ok) throw fault(response.status === 429 ? 'rate_limited' : response.status === 401 ? 'login_required' : response.status === 403 ? 'access_denied' : 'http_error',
           `${site} returned HTTP ${response.status}. No automatic retry was made.`, { status: response.status, retryAfterMs: Math.max(0, state.blockedUntil - Date.now()) });
-        const value = options.type === 'text' ? await response.text() : await response.json();
+        const value = options.parseResponse ? await options.parseResponse(response) : options.type === 'text' ? await response.text() : await response.json();
         if (ttl) {
           if (state.cache.size >= 80) state.cache.delete(state.cache.keys().next().value);
           state.cache.set(cacheKey, { value, until: Date.now() + ttl });
@@ -331,12 +311,11 @@ function itemSource(item,a={}){
 function sourcePage(items,a,extra={}){
   const sources=[];
   for(const item of items.slice(a.offset)){
-    const s=itemSource(item,{offset:0,maxChars:500});
-    if(new TextEncoder().encode(JSON.stringify([...sources,s])).length>22000)break;sources.push(s);
+    const s=itemSource(item,{offset:0});sources.push(s);
   }
   const nextOffset=a.offset+sources.length<items.length?a.offset+sources.length:null;
   return result(sources,{...extra,returned:sources.length,nextOffset,
-    ...(nextOffset!==null?{after:null}:{}),coverage:'Only returned API records. Text nextOffset is a character continuation, distinct from the top-level row nextOffset.'});
+    ...(nextOffset!==null?{after:null}:{}),coverage:'api_records',pagination:'source.nextOffset continues text; top-level nextOffset continues rows.'});
 }
 async function listing(path,params,a,personal=false){
   if(a.after && a.before)throw fault('invalid_cursor','Choose after or before, not both.');
@@ -349,14 +328,13 @@ function commentPage(raw,a){
   const walk=children=>{for(const c of children||[]){if(c.kind==='more')more.push(...(c.data.children||[]));else if(c.kind==='t1'){comments.push(c);walk(c.data.replies?.data?.children);}}};
   walk(raw);const sources=[];
   for(const [i,c]of comments.slice(a.offset).entries()){
-    const s={...itemSource(c,{offset:i===0?a.textOffset:0,maxChars:a.maxChars}),commentIndex:a.offset+i};
-    if(new TextEncoder().encode(JSON.stringify([...sources,s])).length>21000)break;sources.push(s);
+    const s={...itemSource(c,{offset:i===0?a.textOffset:0,maxChars:a.maxChars}),commentIndex:a.offset+i};sources.push(s);
   }
   return result(sources,{returned:sources.length,nextOffset:a.offset+sources.length<comments.length?a.offset+sources.length:null,
     more:{children:more.slice(a.moreOffset,a.moreOffset+100),nextOffset:a.moreOffset+100<more.length?a.moreOffset+100:null,total:more.length},
-    coverage:'Returned comment tree only; more children remain unread. Top-level nextOffset continues rows; source.nextOffset continues text at commentIndex; more.nextOffset continues the list of unexpanded IDs.'});
+    coverage:'comment_tree',pagination:'Top-level nextOffset continues rows; source.nextOffset continues text at commentIndex; more.nextOffset continues unexpanded IDs.'});
 }
-const commentOptions={offset,textOffset:offset,maxChars:count(2000,6000),moreOffset:offset};
+const commentOptions={offset,textOffset:offset,maxChars:z.number().int().positive().optional(),moreOffset:offset};
 const skill={
   getPosts:siteFn('GET [r/subreddit/]sort.json: global/subreddit/multi-subreddit feed. Choose native sort, t, limit, after/before/count.',z.object({subreddit:subreddit.optional(),sort:z.enum(['hot','new','top','rising','controversial','best']).default('hot'),t:time,...listingOptions}),a=>listing(`${prefix(a)}/${a.sort}.json`,{t:a.t},a)),
   searchPosts:siteFn('GET [r/subreddit/]search.json: native q/sort/t/restrict_sr/include_over_18 and listing cursors. Search is not semantic and results are not full discussion reads.',z.object({

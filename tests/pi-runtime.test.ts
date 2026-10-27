@@ -6,7 +6,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { createAgent } from "../packages/core/src/createAgent.ts";
 import { defineTool } from "../packages/core/src/tools/buildTool.ts";
 const settings={provider:"openai-compat" as const,model:"luna",baseUrl:"https://example.test/ai",apiKey:"synthetic",thinking:false};
-function answer(content:any[],reason:"stop"|"toolUse"="stop"):AssistantMessage {return {role:"assistant",content,api:"openai-completions",provider:"xgoose",model:"luna",timestamp:Date.now(),stopReason:reason,usage:{input:10,output:5,cacheRead:2,cacheWrite:0,totalTokens:17,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}};}
+function answer(content:any[],reason:"stop"|"toolUse"|"length"="stop"):AssistantMessage {return {role:"assistant",content,api:"openai-completions",provider:"xgoose",model:"luna",timestamp:Date.now(),stopReason:reason,usage:{input:10,output:5,cacheRead:2,cacheWrite:0,totalTokens:17,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}};}
 function stream(message:AssistantMessage){const s=new AssistantMessageEventStream();s.push({type:"start",partial:message});s.push({type:"done",reason:message.stopReason as "stop",message});return s;}
 test("PI executes a real tool loop and exposes stable host events/history",async()=>{
   let calls=0, requests=0;
@@ -87,4 +87,27 @@ test("full tool transcript is separate from bounded model context",async()=>{
  assert.equal(requests,2);
  assert.deepEqual(saved.messages.find(m=>m.role==='tool')?.content[0].output.value,large);
  assert.equal(saved.modelContext.find(m=>m.role==='tool')?.content[0].output.value,'bounded evidence preview');
+});
+test("an answer cut off by the output cap continues instead of ending mid-sentence",async()=>{
+  let requests=0;
+  const bundle=createAgent({settings,fetchImpl:fetch,tools:[],streamFn:(_m,ctx)=>{
+    if(++requests===1)return stream(answer([{type:"text",text:"First half of the"}],"length"));
+    assert.equal(ctx.messages.at(-1)?.role,"assistant");return stream(answer([{type:"text",text:" answer."}]));
+  }});
+  const run=await bundle.agent.stream({messages:[{role:"user",content:"Long answer"}]});for await(const _ of run.fullStream){}
+  assert.equal(requests,2);
+});
+test("concurrency-safe calls in one turn run together while other calls run alone in order",async()=>{
+  let active=0,peak=0;const order:string[]=[];
+  const work=(name:string)=>async({q}:{q:string})=>{order.push(`${name}:${q}:start`);active++;peak=Math.max(peak,active);await new Promise(r=>setTimeout(r,20));active--;order.push(`${name}:${q}:end`);return q;};
+  const tools=[defineTool({name:"read",description:"read",inputSchema:z.object({q:z.string()}),isConcurrencySafe:()=>true,execute:work("read")}),
+    defineTool({name:"write",description:"write",inputSchema:z.object({q:z.string()}),execute:work("write")})];
+  let requests=0;
+  const bundle=createAgent({settings,fetchImpl:fetch,tools,streamFn:()=>{
+    if(++requests===1)return stream(answer([{type:"toolCall",id:"r1",name:"read",arguments:{q:"a"}},{type:"toolCall",id:"r2",name:"read",arguments:{q:"b"}},{type:"toolCall",id:"w1",name:"write",arguments:{q:"c"}},{type:"toolCall",id:"r3",name:"read",arguments:{q:"d"}}],"toolUse"));
+    return stream(answer([{type:"text",text:"done"}]));
+  }});
+  const run=await bundle.agent.stream({messages:[{role:"user",content:"go"}]});for await(const _ of run.fullStream){}
+  assert.equal(peak,2);
+  assert.deepEqual(order.slice(4),["write:c:start","write:c:end","read:d:start","read:d:end"]);
 });

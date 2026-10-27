@@ -11,7 +11,7 @@ export function modelContextWindow(model:string):number {
   if(id==='gpt-4'||/^gpt-4-0[36]/.test(id))return 8_192;
   return 128_000;
 }
-export const OUTPUT_RESERVE_TOKENS=4096;
+export const OUTPUT_RESERVE_TOKENS=16384;
 export const inputTokenBudget=(window:number)=>Math.max(1024,Math.floor((window-OUTPUT_RESERVE_TOKENS)*.95));
 /** Coarse transport guard only; token occupancy decides normal compaction. */
 export const requestByteBudget=(window:number)=>Math.min(8_400_000,window*8);

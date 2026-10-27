@@ -1,25 +1,87 @@
+const isForumPost = (post: any) => post && Number.isSafeInteger(post.post_number) && typeof post.text === 'string';
+
+const POST_FORMAT = '#floor @user [date, shown when it changes] [♥likes] [↩floor it replies to, omitted for the previous floor]: text';
+const TOPIC_FORMAT = '#id title · replies · views · ♥likes · created→last post · [tags] · flags';
+/** Thread fields the post lines, `complete` and `next_cursor` already convey. */
+const DERIVABLE = new Set(['id', 'origin', 'first_post_number', 'last_post_number', 'requested_from_post_number', 'selected_count', 'text_complete', 'range_complete', 'hint']);
+
+const day = (value: unknown) => typeof value === 'string' ? value.slice(0, 10) : '';
+
+function postLines(posts: any[]): string[] {
+  let lastDay = '', lastFloor: number | undefined;
+  return posts.map(post => {
+    const date = day(post.created_at), parts = [`#${post.post_number}`];
+    if (post.username) parts.push(`@${post.username}`);
+    if (date && date !== lastDay) parts.push(date);
+    if (post.like_count) parts.push(`♥${post.like_count}`);
+    if (post.reply_to_post_number && post.reply_to_post_number !== lastFloor) parts.push(`↩${post.reply_to_post_number}`);
+    lastDay = date || lastDay; lastFloor = post.post_number;
+    const more = post.text_truncated && post.next_text_offset != null ? ` …[continues at text_offset ${post.next_text_offset}]` : '';
+    return `${parts.join(' ')}: ${post.text}${more}`;
+  });
+}
+
+function withoutNoise(raw: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(Object.entries(raw).filter(([key, value]) =>
+    value !== null && value !== undefined && !(Array.isArray(value) && !value.length) && !DERIVABLE.has(key) &&
+    !(key === 'status' && value === 'ok') && !(key === 'output_limited' && value === false)));
+}
+
+/** One line per post; post links are `${url}/${floor}`. */
+function compactThread(raw: Record<string, any>): Record<string, any> {
+  if (!Array.isArray(raw.posts) || !raw.posts.length || !raw.posts.every(isForumPost)) return raw;
+  const url = typeof raw.url === 'string' ? raw.url : String(raw.posts[0].url ?? '').replace(/\/\d+$/, '');
+  return {...withoutNoise(raw), url, post_url: `${url}/{floor}`, post_format: POST_FORMAT, posts: postLines(raw.posts)};
+}
+
+function topicLine(topic: any): string {
+  const parts = [`#${topic.id} ${topic.title}`];
+  if (Number.isSafeInteger(topic.posts_count) && topic.posts_count >= 1) parts.push(`${topic.posts_count - 1} replies`);
+  if (topic.views) parts.push(`${topic.views} views`);
+  if (topic.like_count) parts.push(`♥${topic.like_count}`);
+  const created = day(topic.created_at), last = day(topic.last_posted_at ?? topic.bumped_at);
+  if (created || last) parts.push(last && last !== created ? `${created}→${last}` : created || last);
+  const tags = Array.isArray(topic.tags) ? topic.tags.map((tag: any) => typeof tag === 'string' ? tag : tag?.name).filter(Boolean) : [];
+  if (tags.length) parts.push(`[${tags.join(', ')}]`);
+  const flags = ['pinned', 'closed', 'archived'].filter(flag => topic[flag]);
+  if (flags.length) parts.push(flags.join(' '));
+  return parts.join(' · ');
+}
+
+const isSearchHit = (post: any) => post && Number.isSafeInteger(post.topic_id) && Number.isSafeInteger(post.post_number) && typeof post.blurb === 'string';
+const isTopic = (topic: any) => topic && Number.isSafeInteger(topic.id) && typeof topic.title === 'string';
+
+/** Search hits as `#topic/floor @user date ♥likes: snippet`; topics as topic lines. */
+function compactSearch(raw: Record<string, any>, origin: string): Record<string, any> {
+  const more = raw.grouped_search_result?.more_full_page_results || raw.grouped_search_result?.more_posts;
+  const {grouped_search_result, total_topics, total_posts, topics, posts, ...rest} = raw;
+  return {
+    ...withoutNoise(rest),
+    ...(rest.hint ? {hint: rest.hint} : {}),
+    topic_url: `${origin}/t/{id}`,
+    post_url: `${origin}/t/{topic}/{floor}`,
+    ...(topics.length ? {topic_format: TOPIC_FORMAT, topics: topics.map(topicLine)} : {}),
+    ...(posts.length ? {post_format: '#topic/floor @user date [♥likes]: snippet', posts: posts.map((post: any) =>
+      `#${post.topic_id}/${post.post_number}${post.username ? ` @${post.username}` : ''}${day(post.created_at) ? ` ${day(post.created_at)}` : ''}${post.like_count ? ` ♥${post.like_count}` : ''}: ${post.blurb}`)} : {}),
+    ...(more ? {more_results: true} : {}),
+  };
+}
+
 /** Model-only projection. The original tool result stays in history/transcripts. */
 export function websiteEvidence(result: unknown, origin: string): unknown {
   if (!result || typeof result !== 'object') return result;
   const raw = result as Record<string, any>;
+  if (Array.isArray(raw.posts) && Array.isArray(raw.topics) && raw.posts.every(isSearchHit) && raw.topics.every(isTopic)) return compactSearch(raw, origin);
+  if (Array.isArray(raw.posts)) return compactThread(raw);
+  if (Array.isArray(raw.topics) && raw.topics.some((topic: any) => Array.isArray(topic?.posts)))
+    return {...raw, topics: raw.topics.map((topic: any) => topic && Array.isArray(topic.posts) ? compactThread(topic) : topic)};
   if (!raw.topic_list || !Array.isArray(raw.topic_list.topics)) return result;
   const topics = raw.topic_list.topics;
-  if (!topics.every((topic: any) => topic && Number.isSafeInteger(topic.id) && typeof topic.title === 'string')) return result;
-  const fields = ['id', 'title', 'slug', 'created_at', 'last_posted_at', 'bumped_at',
-    'posts_count', 'reply_count', 'views', 'like_count', 'category_id', 'tags', 'pinned', 'closed', 'archived'];
+  if (!topics.every(isTopic)) return result;
   return {
-    origin,
-    topic_list: {
-      per_page: raw.topic_list.per_page,
-      more_topics_url: raw.topic_list.more_topics_url,
-      topics: topics.map((topic: any) => ({
-        ...Object.fromEntries(fields.filter(field => topic[field] !== undefined).map(field => [field, topic[field]])),
-        url: `${origin}/t/${topic.id}`,
-        ...(Number.isSafeInteger(topic.posts_count) && topic.posts_count >= 1 ? {total_replies: topic.posts_count - 1} : {}),
-      })),
-    },
-    returned: topics.length,
-    coverage: 'topic_list_page',
-    count_semantics: 'total_replies = posts_count - 1 (excluding the original post). Discourse reply_count counts direct reply relationships, not all topic replies.',
+    topic_url: `${origin}/t/{id}`,
+    ...(raw.topic_list.more_topics_url ? {more_topics_url: raw.topic_list.more_topics_url} : {}),
+    topic_format: TOPIC_FORMAT,
+    topics: topics.map(topicLine),
   };
 }

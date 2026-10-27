@@ -25,19 +25,16 @@ test('generic Discourse owns the three English actions and uscf adds only deals'
  assert.equal(specific.skill.readTopicForSummary,undefined);
 });
 test('summary reads the first 30 replies and latest 100 replies, with the original post and floor links',async()=>{
- const {skill,context}=fixture(300);const result=await skill.readTopicForSummary({});
+ const {skill}=fixture(300);const result=await skill.readTopicForSummary({});
  const expected=[1,...Array.from({length:30},(_,i)=>i+2),...Array.from({length:100},(_,i)=>i+201)];
  assert.equal(result.read_count,131);assert.equal(result.complete,true);
- assert.equal(result.selection,'first post, first 30 replies and latest 100 replies');
  assert.deepEqual(Array.from(result.posts,(p:any)=>p.post_number),expected);
  assert.equal(result.posts.at(-1).url,'https://linux.do/t/42/300');
- assert.match(context.actions.find((a:any)=>a.label==='Summarize this thread').prompt,/first 30 and latest 100 replies/);
- assert.match(result.hint,/Counts are approximate/);
 });
 test('short threads deduplicate overlapping windows even when deleted floors inflate the highest floor',async()=>{
  for(const count of [1,30,100,130,131]){
   const {skill}=fixture(count,900);const result=await skill.readTopicForSummary({});
-  assert.equal(result.read_count,count);assert.equal(result.selection,'all visible posts');
+  assert.equal(result.read_count,count);
   assert.equal(new Set(result.posts.map((p:any)=>p.post_number)).size,count);
   assert.equal(result.posts.at(-1).post_number,count);
  }

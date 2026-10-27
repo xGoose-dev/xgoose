@@ -1,6 +1,7 @@
 import {requestContextTokens,estimateTextTokens} from './contextTokens';
 import {requestTextBytes,textBytes,clipBytes,textChunks,omitImageBytes,modelOnlyMessage,collapsedSystem,excerptSummary} from "./contextWindow";
 import {inputTokenBudget,requestByteBudget,OUTPUT_RESERVE_TOKENS} from './contextPolicy';
+import {setResultBudget} from './resultStore';
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { Agent, type AgentMessage, type StreamFn, type AgentContext } from "@earendil-works/pi-agent-core";
 import { streamSimple as openai } from "@earendil-works/pi-ai/api/openai-completions";
@@ -91,9 +92,10 @@ export class PageAgentRuntime {
     if (this.pi?.signal) throw new Error("This runtime already has an active run");
     input.abortSignal?.throwIfAborted();
     const opts = this.opts, model = createModel(opts.settings), queue = new EventQueue();
+    setResultBudget(model.contextWindow);
     const history = toPiMessages(input.messages, model);
     this.modelMessages = history;
-    let steps = 0;
+    let steps = 0, lengthContinuations = 0;
     const completedMessages: AgentMessage[] = [];
     const summaryUsage: AssistantMessage[] = [];
     let gatewayBudget=opts.requestBudgetBytes??requestByteBudget(model.contextWindow);
@@ -107,13 +109,13 @@ export class PageAgentRuntime {
         // overrides remain caps. Never permanently latch the smallest policy
         // observed during a rollout into a million-token conversation.
         const window=Number(response.headers.get('x-xgoose-context-window-tokens'));
-        if(response.ok&&Number.isSafeInteger(window)&&window>=8192&&window<=16_000_000)model.contextWindow=window;
+        if(response.ok&&Number.isSafeInteger(window)&&window>=8192&&window<=16_000_000){model.contextWindow=window;setResultBudget(window);}
         const target=Number(response.headers.get("x-xgoose-context-target-bytes"));
         if(Number.isFinite(target)&&target>=32000)gatewayBudget=Math.min(response.ok?(opts.requestBudgetBytes??requestByteBudget(model.contextWindow)):gatewayBudget,target);
         const tokens=Number(response.headers.get('x-xgoose-context-target-tokens'));
         if(Number.isFinite(tokens)&&tokens>=1024)tokenBudget=Math.min(response.ok?inputTokenBudget(model.contextWindow):tokenBudget,tokens);
         return response;
-      }, maxRetries: 0, maxTokens: options?.maxTokens ?? 4096 };
+      }, maxRetries: 0, maxTokens: options?.maxTokens ?? model.maxTokens };
       if (m.api === "google-generative-ai") {
         // PI rejects its top-level fetch option for Google. The underlying
         // Google SDK supports a per-request transport through httpOptions.
@@ -194,7 +196,7 @@ export class PageAgentRuntime {
         const latestImages=latestUser&&Array.isArray(latestUser.content)?latestUser.content.filter((part:any)=>part.type==="image").length:0;
         const imageSlots=Math.max(0,8-latestImages);
         const preservedImages=imageSlots?recentImages.slice(-imageSlots):[];
-        const marker="Earlier context summary (preserve usable findings and continue from completed work; never repeat mutations; read omitted details only when needed for the answer):\n";
+        const marker="Earlier context summary:\n";
         const summaryMessage:AgentMessage={role:"user",content:[{type:"text",text:marker+clipBytes(summary,36000)},...preservedImages],timestamp:Date.now()};
         let messages:AgentMessage[]=[...system,summaryMessage,...(latestUser?[latestUser]:[])];
         // Normally the bounded system reminder + summary are far below budget.
@@ -235,6 +237,7 @@ export class PageAgentRuntime {
       });
       return output;
     };
+    const scheduleTool = toolScheduler();
     const pi = new Agent({
       initialState: {
         model, systemPrompt: buildSystemPrompt(opts.reminder ?? null,opts.capabilities), messages: history,
@@ -246,7 +249,7 @@ export class PageAgentRuntime {
           execute: async (id: string, args: unknown, signal?: AbortSignal) => {
             signal?.throwIfAborted();
             const parsed = def.inputSchema.parse(args);
-            const output = await def.execute(parsed, { abortSignal: signal, toolCallId: id });
+            const output = await scheduleTool(!!def.isConcurrencySafe?.(parsed), async () => def.execute(parsed, { abortSignal: signal, toolCallId: id }));
             signal?.throwIfAborted();
             const parts = def.toModelOutput?.(output, parsed);
             const content = parts?.length ? parts.map(p => p.type === "text" ? p : { type: "image" as const, data: p.data, mimeType: p.mediaType }) : [{ type: "text" as const, text: typeof output === "string" ? output : JSON.stringify(output ?? null) }];
@@ -254,7 +257,7 @@ export class PageAgentRuntime {
           },
         })),
       },
-      toolExecution: "sequential",
+      toolExecution: "parallel",
       streamFn: streamProvider,
       prepareRequest: async ({context},signal)=>{
         const bounded={...context,messages:capContextImages(context.messages)};
@@ -265,7 +268,10 @@ export class PageAgentRuntime {
         if(compacted){activeContext=compacted;return {context:compacted};}
         return {context:bounded};
       },
-      finishTurn: () => ++steps >= (opts.maxSteps ?? 50) ? { action: "end" } : undefined,
+      finishTurn: (turn) => {
+        if (++steps >= (opts.maxSteps ?? 50)) return { action: "end" };
+        if (turn.message.stopReason === "length" && !turn.toolResults.length && lengthContinuations++ < 2) return { action: "continue" };
+      },
     });
     this.pi = pi;
     const emit = async (event: RuntimeEvent) => { for (const listener of this.listeners) await listener(event); queue.push(event); };
@@ -304,6 +310,23 @@ export class PageAgentRuntime {
     };
   }
 }
+/** Concurrency-safe calls in one assistant turn run together; any other call runs alone, in order. */
+function toolScheduler() {
+  let barrier: Promise<unknown> = Promise.resolve();
+  const shared = new Set<Promise<unknown>>();
+  return <T>(safe: boolean, run: () => Promise<T>): Promise<T> => {
+    if (!safe) {
+      const exclusive = Promise.all([barrier, ...shared]).then(run);
+      barrier = exclusive.catch(() => undefined);
+      return exclusive;
+    }
+    const call = barrier.then(run), settled = call.catch(() => undefined);
+    shared.add(settled);
+    settled.then(() => shared.delete(settled));
+    return call;
+  };
+}
+
 export function createAgent(opts: CreateAgentOpts): AgentBundle {
   return { agent: new PageAgentRuntime(opts), tools: Object.fromEntries(opts.tools.map(t => [t.name, t])) };
 }

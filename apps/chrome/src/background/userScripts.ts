@@ -14,6 +14,7 @@ export async function executePage(sender: chrome.runtime.MessageSender, payload:
   const timeout = Math.min(Math.max(payload.timeoutMs ?? 30000, 100), 120000);
   const code = `(async () => {
     const jobs = globalThis.__xgooseExecutions ??= new Map();
+    const root = globalThis.xgoose ??= { skills: {} }, results = root.results ??= {};
     const id = ${JSON.stringify(payload.execId)}, ac = new AbortController();
     jobs.set(id, ac);
     let timer;
@@ -23,7 +24,10 @@ export async function executePage(sender: chrome.runtime.MessageSender, payload:
         ac.signal.addEventListener('abort', () => reject(new Error('Execution stopped; side effects may remain.')), { once: true });
         timer = setTimeout(() => ac.abort(), ${timeout});
       });
-      return { ok: true, result: await Promise.race([work, stopped]) };
+      const result = await Promise.race([work, stopped]);
+      results[id] = result;
+      for (const key of Object.keys(results).slice(0, -20)) delete results[key];
+      return { ok: true, result, resultId: id };
     } catch (error) { return { ok: false, error: String(error?.message ?? error) }; }
     finally { clearTimeout(timer); jobs.delete(id); }
   })()`;

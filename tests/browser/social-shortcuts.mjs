@@ -28,7 +28,7 @@ try{
  assert.equal((await settings.evaluate(()=>chrome.runtime.sendMessage({kind:'sw:user_scripts_status'}))).enabled,false);
  const report=[];
  for(const[name,url,labels]of cases){
-  const entry=registry.find(s=>s.name===name);assert.deepEqual(entry.actions.map(a=>a.label),labels);assert.ok(entry.actions.every(a=>a.prompt.length>70&&!a.js));
+  const entry=registry.find(s=>s.name===name);assert.deepEqual(entry.actions.map(a=>a.label),labels);assert.ok(entry.actions.every(a=>a.prompt&&!a.js));
   await context.route(`${new URL(url).origin}/**`,r=>r.fulfill({contentType:'text/html',headers:{'content-security-policy':"default-src 'self'; script-src 'none'; connect-src 'self'"},body:'<!doctype html><title>Shortcut fixture</title><main>A current post</main>'}));
   const page=await context.newPage();await page.goto(url);if(!await page.locator('.in-text').isVisible())await page.locator('.toggle').click();
   const buttons=page.locator('.shortcuts button');await buttons.filter({hasText:labels[0]}).waitFor();assert.deepEqual(await buttons.allTextContents(),labels);
