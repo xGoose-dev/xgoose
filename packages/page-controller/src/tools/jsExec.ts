@@ -22,6 +22,8 @@ export type JsExecToolDeps = {
   /** Host-supplied default timeout when `timeout_ms` isn't passed by the
    *  caller. Lets the host expose it as a setting. */
   getDefaultTimeoutMs(): number;
+  /** Turns image references the page cannot read itself into image values before they are detached. */
+  resolveResultImages?(result: unknown, signal?: AbortSignal): Promise<unknown>;
 };
 
 /**
@@ -136,7 +138,9 @@ export function createJsExecTool(deps: JsExecToolDeps): XgooseBuiltTool {
         : await execPromise;
 
       // Preserve the actual result for the local journal and consented transcript; image bytes go only to the model.
-      return res.ok ? { ...res, result: detachResultImages(res.result) } : res;
+      if (!res.ok) return res;
+      const result = deps.resolveResultImages ? await deps.resolveResultImages(res.result, signal) : res.result;
+      return { ...res, result: detachResultImages(result) };
 
     },
   });

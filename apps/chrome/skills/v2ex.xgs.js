@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         v2ex
 // @namespace    v2ex
-// @version      0.2.4
+// @version      0.2.5
 // @description  V2EX public v1 and token-authenticated v2 read APIs: configurable search, topics, replies, node directory and node topics, profiles and notifications. Browser-session identity and explicit pagination.
 // @match        https://www.v2ex.com/*
 // @match        https://v2ex.com/*
@@ -63,8 +63,15 @@ function textOf(html) {
   if (!html) return '';
   const doc = new DOMParser().parseFromString(`<html><body>${String(html)}</body></html>`, 'text/html');
   doc.querySelectorAll('script,style,iframe,noscript,template').forEach(n => n.remove());
-  doc.querySelectorAll('p,br,li,div,blockquote,h1,h2,h3,pre').forEach(n => n.append('\n'));
-  return (doc.body.textContent || '').replace(/[^\S\n]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  // Pictures and quotes stay visible as markers; icons, emoji and avatars are dropped.
+  doc.querySelectorAll('img').forEach(img => {
+    const tiny = ['width', 'height'].some(side => Number(img.getAttribute(side)) > 0 && Number(img.getAttribute(side)) < 48);
+    if (tiny || /emoji|avatar|icon/i.test(`${img.className} ${img.getAttribute('alt') || ''}`)) img.remove();
+  });
+  doc.querySelectorAll('img').forEach((img, index) => img.replaceWith(` [image ${index + 1}] `));
+  Array.from(doc.querySelectorAll('blockquote')).reverse().forEach(quote => quote.replaceWith(`\n[quote: ${quote.textContent.replace(/\s+/g, ' ').trim()}]\n`));
+  doc.querySelectorAll('p,br,li,div,h1,h2,h3,pre').forEach(n => n.append('\n'));
+  return (doc.body.textContent || '').replace(/[^\S\n]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function documentOf(html) {

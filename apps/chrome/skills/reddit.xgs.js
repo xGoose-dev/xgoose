@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         reddit
 // @namespace    reddit
-// @version      0.1.5
+// @version      0.1.6
 // @description  Reddit JSON read APIs: subreddit feeds/search/about/rules, posts, comment trees and morechildren, users and current-account subscriptions. Native sorting, time ranges, fullnames and cursors; no agent HTML parsing.
 // @match        https://www.reddit.com/*
 // @match        https://reddit.com/*
@@ -59,8 +59,15 @@ function textOf(html) {
   if (!html) return '';
   const doc = new DOMParser().parseFromString(`<html><body>${String(html)}</body></html>`, 'text/html');
   doc.querySelectorAll('script,style,iframe,noscript,template').forEach(n => n.remove());
-  doc.querySelectorAll('p,br,li,div,blockquote,h1,h2,h3,pre').forEach(n => n.append('\n'));
-  return (doc.body.textContent || '').replace(/[^\S\n]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  // Pictures and quotes stay visible as markers; icons, emoji and avatars are dropped.
+  doc.querySelectorAll('img').forEach(img => {
+    const tiny = ['width', 'height'].some(side => Number(img.getAttribute(side)) > 0 && Number(img.getAttribute(side)) < 48);
+    if (tiny || /emoji|avatar|icon/i.test(`${img.className} ${img.getAttribute('alt') || ''}`)) img.remove();
+  });
+  doc.querySelectorAll('img').forEach((img, index) => img.replaceWith(` [image ${index + 1}] `));
+  Array.from(doc.querySelectorAll('blockquote')).reverse().forEach(quote => quote.replaceWith(`\n[quote: ${quote.textContent.replace(/\s+/g, ' ').trim()}]\n`));
+  doc.querySelectorAll('p,br,li,div,h1,h2,h3,pre').forEach(n => n.append('\n'));
+  return (doc.body.textContent || '').replace(/[^\S\n]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function documentOf(html) {

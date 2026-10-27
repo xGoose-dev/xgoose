@@ -1,8 +1,8 @@
 // ==XGooseSkill==
 // @name         vbulletin-forum
 // @namespace    vbulletin
-// @version      0.1.2
-// @description  Generic helpers for vBulletin 3.x/4.x forums (search posts/threads, summarize threads, fetch recent threads, getForum).
+// @version      0.2.0
+// @description  Generic helpers for vBulletin 3.x/4.x forums (search posts/threads, read threads, see post pictures, recent threads, forum listings).
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*
 // @detect       !!document.querySelector('meta[name="generator"][content*="vBulletin"]') || /vbulletin/i.test(document.documentElement.outerHTML.slice(0, 4000))
@@ -18,22 +18,24 @@
 /**
  * vBulletin scraper. There is no official JSON API; we hit:
  *
- *   GET  /forum/search.php?do=process&type=thread          → search threads
- *   GET  /forum/search.php?do=process&type=post            → search posts
+ *   GET  /forum/search.php                                 → security token for searches
+ *   POST /forum/search.php?do=process                      → search threads or posts
+ *   GET  /forum/search.php?searchid={id}&pp=25&page={n}    → later result pages
  *   GET  /forum/external.php?type=RSS2&forumids=…          → recent threads (RSS)
- *   GET  /forum/forumdisplay.php?f={id}                    → forum landing page
+ *   GET  /forum/forumdisplay.php?f={id}&page={n}           → forum listing
  *   GET  /forum/showthread.php?t={id}&page={n}             → thread page
+ *   GET  /forum/showthread.php?p={postId}                  → the page holding one post
  *
- * All endpoints are anonymous-OK; we always send `credentials: 'include'` so
- * the user's `usergroup` cookie is attached and they see proper access.
- *
- * Output shapes match what `flyertalk.searchAll` expects (see flyertalk skill).
+ * Reads send the user's cookies so they see what their account can see. Links
+ * in result pages are relative to /forum/, so they are resolved against the
+ * response URL rather than the site origin.
  */
 
 import { defineSkill, fn } from '@xgoose/skill';
 import { z } from 'zod';
 
-const SEARCH_URL = '/forum/search.php';
+const forumUrl = (path) => new URL(path, `${location.origin}/forum/`).href;
+const postUrl = (postId) => `${forumUrl('showthread.php')}?p=${postId}#post${postId}`;
 
 function parseHtml(html) {
   return new DOMParser().parseFromString(html, 'text/html');
@@ -44,209 +46,395 @@ function txt(node) {
 }
 
 function parseInteger(s) {
-  const m = String(s ?? '').match(/-?\d+/);
+  const m = String(s ?? '').replace(/,/g, '').match(/-?\d+/);
   return m ? Number(m[0]) : 0;
+}
+
+function compact(record) {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined && value !== null && value !== ''));
+}
+
+/** Result links carry `?highlight=` search terms; the plain thread or post URL is what the user opens. */
+function cleanUrl(href, base) {
+  if (!href) return undefined;
+  const url = new URL(href, base);
+  url.searchParams.delete('highlight');
+  return url.href;
+}
+
+/** Forum dates (`Dec 2, 2025 | 6:07 pm`, `Yesterday 12:54 am`, `on May 26, 2023`) as their local day; unparseable text as written. */
+function siteDay(text) {
+  const s = String(text ?? '').replace(/\s*\|\s*/g, ' ').replace(/^on\s+/i, '').replace(/\s*,\s*(?=\d{1,2}:\d{2})/, ' ').trim();
+  if (!s) return undefined;
+  const relative = s.match(/^(today|yesterday)\b/i);
+  const date = relative ? new Date(Date.now() - (/^y/i.test(relative[1]) ? 86_400_000 : 0)) : new Date(s);
+  if (Number.isNaN(date.valueOf())) return s.slice(0, 40);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function parseThreadIdFromHref(href) {
   if (!href) return null;
   let m = href.match(/showthread\.php\?(?:[^#]*?&)?t=(\d+)/);
   if (m) return Number(m[1]);
-  m = href.match(/\/forum\/[^/]+\/(\d+)-[^/]+\.html/);
+  m = href.match(/(?:^|\/)(\d+)-[^/]+\.html/);
   if (m) return Number(m[1]);
   return null;
 }
 
 function parsePostIdFromHref(href) {
   if (!href) return null;
-  let m = href.match(/showpost\.php\?p=(\d+)/);
-  if (m) return Number(m[1]);
-  m = href.match(/[?&#]p(?:ost)?=?(\d+)/);
-  if (m) return Number(m[1]);
-  return null;
+  const m = href.match(/showpost\.php\?p=(\d+)|[?&]p=(\d+)|#post(\d+)|-post(\d+)\.html/);
+  return m ? Number(m.slice(1).find(Boolean)) : null;
 }
 
 function parseForumIdFromHref(href) {
   if (!href) return null;
-  let m = href.match(/forumdisplay\.php\?(?:[^#]*?&)?f=(\d+)/);
-  if (m) return Number(m[1]);
-  m = href.match(/\/forum\/[^/]+-(\d+)\/?(?:\?|$)/);
-  if (m) return Number(m[1]);
-  return null;
+  const m = href.match(/forumdisplay\.php\?(?:[^#]*?&)?f=(\d+)/) || href.match(/(?:^|\/)[^/]+-(\d+)\/?(?:[?#]|$)/);
+  return m ? Number(m[1]) : null;
 }
 
-async function postSearch(opts) {
-  const params = new URLSearchParams({ do: 'process' });
+/** vBulletin 3 boards usually serve ISO-8859-1; `Response.text()` would always decode UTF-8 and turn curly quotes into U+FFFD. */
+async function decodedText(r) {
+  const bytes = await r.arrayBuffer();
+  const head = new TextDecoder('latin1').decode(bytes.slice(0, 2048)).match(/<meta[^>]+charset=["']?([\w-]+)|<\?xml[^>]+encoding=["']([\w-]+)/i);
+  const declared = r.headers.get('content-type')?.match(/charset=["']?([\w-]+)/i)?.[1] ?? head?.[1] ?? head?.[2];
+  try { return new TextDecoder(declared || 'utf-8').decode(bytes); } catch { return new TextDecoder().decode(bytes); }
+}
+
+async function fetchPage(url, init = {}) {
+  const r = await fetch(url, { credentials: 'include', ...init, headers: { Accept: 'text/html', ...init.headers } });
+  if (!r.ok) throw new Error(`vbulletin: ${new URL(url).pathname} → HTTP ${r.status}`);
+  return { doc: parseHtml(await decodedText(r)), url: r.url };
+}
+
+/* ───── Post bodies ───── */
+
+const QUOTE_BLOCKS = 'div[style*="margin"], .bbcode_container';
+const isQuote = (el) => el.classList.contains('bbcode_container') || /^\s*Quote:/i.test(el.textContent);
+const isDecorative = (img) => {
+  const src = img.getAttribute('src') ?? '';
+  const tiny = ['width', 'height'].some((side) => Number(img.getAttribute(side)) > 0 && Number(img.getAttribute(side)) < 48);
+  return tiny || img.classList.contains('inlineimg') || /smil|statusicon|\/images\/(?:misc|buttons|icons|reputation)\//i.test(src);
+};
+
+/** Pictures the author posted (not those inside quotes), numbered as the [image N] markers in post text. */
+function contentImages(body) {
+  return [...body.querySelectorAll('img')].filter((img) => !isDecorative(img) && ![...body.querySelectorAll(QUOTE_BLOCKS)].some((q) => isQuote(q) && q.contains(img)));
+}
+
+/**
+ * vBulletin 3 quotes are `<div style="margin…"><label>Quote:</label><div class="panel">
+ * [Originally Posted by <strong>user</strong> <a href="…#post123">]<div>text</div></div></div>`;
+ * vBulletin 4 uses `.bbcode_container .bbcode_postedby strong` + `.message`.
+ */
+function postText(body) {
+  const root = body.cloneNode(true);
+  root.querySelectorAll('script,style,noscript').forEach((n) => n.remove());
+  contentImages(root).forEach((img, index) => img.replaceWith(` [image ${index + 1}] `));
+  root.querySelectorAll('img').forEach((img) => img.remove());
+  [...root.querySelectorAll(QUOTE_BLOCKS)].filter(isQuote).reverse().forEach((quote) => {
+    const by = [...quote.querySelectorAll('.bbcode_postedby, div')].find((d) => !d.querySelector('div') && /^\s*(?:Originally\s+)?Posted by/i.test(d.textContent) && d.querySelector('strong'));
+    const user = txt(by?.querySelector('strong'));
+    const postId = parsePostIdFromHref(by?.querySelector('a[href]')?.getAttribute('href'));
+    by?.remove();
+    quote.querySelectorAll('label').forEach((label) => label.remove());
+    const quoted = txt(quote).replace(/^Quote:\s*/i, '');
+    const capped = quoted.length > 300 ? `${quoted.slice(0, 300)}…` : quoted;
+    quote.replaceWith(`\n[quote${user ? ` @${user}` : ''}${postId ? ` post ${postId}` : ''}: ${capped}]\n`);
+  });
+  root.querySelectorAll('br,p,div,li').forEach((n) => n.append('\n'));
+  return (root.textContent ?? '').replace(/[^\S\n]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** Quotes name the quoted post id; when that post is in the same read it becomes its floor. */
+function linkQuotes(posts) {
+  const floors = new Map(posts.map((post) => [post.post_id, post.post_number]));
+  for (const post of posts) post.text = post.text.replace(/\[quote( @[^\]:]*?)? post (\d+):/g, (m, user = '', id) => floors.has(Number(id)) ? `[quote${user} #${floors.get(Number(id))}:` : m);
+  return posts;
+}
+
+function threadPosts(doc, start, maxChars) {
+  return [...doc.querySelectorAll('div[id^="edit"], li.postbitlegacy[id^="post_"], li.postbit[id^="post_"], table[id^="post"]')].flatMap((el, index) => {
+    const postId = Number(el.id.match(/(\d+)$/)?.[1]) || null;
+    const body = (postId && el.querySelector(`#post_message_${postId}`)) || el.querySelector('[id^="post_message_"], blockquote.postcontent, .postbody');
+    if (!postId || !body) return [];
+    const head = txt(el.querySelector('.thead, .posthead'));
+    const author = [...el.querySelectorAll('.username, .bigusername, a[href*="members/"], a[href*="member.php"]')].find((a) => !body.contains(a));
+    const full = postText(body);
+    const text = maxChars === undefined ? full : full.slice(0, maxChars);
+    return [compact({
+      post_number: Number(head.match(/#(\d+)\s*$/)?.[1]) || parseInteger(txt(el.querySelector('.postcounter'))) || start + index + 1,
+      post_id: postId,
+      username: txt(author),
+      created_at: siteDay(txt(el.querySelector('.postdate, .date')) || head.replace(/#\d+\s*$/, '')),
+      like_count: parseInteger(txt(el.querySelector('[id^="post_thanks_button_likes_"]'))) || undefined,
+      text,
+      text_truncated: text.length < full.length || undefined,
+      url: postUrl(postId),
+    })];
+  });
+}
+
+/** Highest page linked from the thread's own pager, including its "Last" link. */
+function lastPage(doc, threadId) {
+  let pages = parseInteger(txt(doc.querySelector('.pagenav td.vbmenu_control')).match(/of\s+(\d+)/i)?.[1]) || 1;
+  for (const a of doc.querySelectorAll('a[href]')) {
+    const href = a.getAttribute('href');
+    if (parseThreadIdFromHref(href) !== threadId) continue;
+    const label = txt(a), query = href.match(/[?&]page=(\d+)/);
+    if (query) pages = Math.max(pages, Number(query[1]));
+    else if (/^\d+$/.test(label)) pages = Math.max(pages, Number(label));
+    else if (/^last\b/i.test(label)) pages = Math.max(pages, Number(href.match(/-(\d+)\.html(?:[?#]|$)/)?.[1] ?? 1));
+  }
+  return pages;
+}
+
+/* ───── Search results and listings ───── */
+
+function postHits(doc, base) {
+  return [...doc.querySelectorAll('div.tbox[id^="post"], table[id^="post"]')].flatMap((box) => {
+    const postId = Number(box.id.replace(/^post/, '')) || null;
+    const threadLink = [...box.querySelectorAll('a[href]')].find((a) => a.querySelector('strong') && parseThreadIdFromHref(a.getAttribute('href')));
+    if (!postId || !threadLink) return [];
+    const forum = box.querySelector('.thead .right a[href], .thead a[href*="forumdisplay"]');
+    const excerpt = box.querySelector('.panel em, .panel, blockquote');
+    const titleLink = excerpt?.querySelector('a[href]');
+    const title = txt(titleLink);
+    titleLink?.remove();
+    const stat = (name) => parseInteger(txt([...box.querySelectorAll('.smallfont')].find((n) => txt(n).startsWith(`${name}:`))?.querySelector('strong'))) || undefined;
+    return [compact({
+      post_id: postId,
+      thread_id: parseThreadIdFromHref(threadLink.getAttribute('href')),
+      thread: txt(threadLink),
+      forum: txt(forum),
+      forum_id: parseForumIdFromHref(forum?.getAttribute('href')),
+      author: txt([...box.querySelectorAll('.smallfont')].find((n) => /^Posted By/i.test(txt(n)))?.querySelector('a')),
+      date: siteDay(txt(box.querySelector('.thead span'))),
+      replies: stat('Replies'),
+      views: stat('Views'),
+      title: title && title !== txt(threadLink) ? title : undefined,
+      snippet: txt(excerpt),
+      url: cleanUrl(titleLink?.getAttribute('href'), base) ?? postUrl(postId),
+    })];
+  });
+}
+
+function threadRows(doc, base) {
+  return [...doc.querySelectorAll('a[id^="thread_title_"]')].map((a) => {
+    const id = Number(a.id.slice('thread_title_'.length));
+    const row = a.closest('.trow, tr, li') ?? a.parentElement;
+    const cell = doc.getElementById(`td_threadtitle_${id}`) ?? row;
+    const statsCell = row.querySelector('[title^="Replies"]');
+    const stats = statsCell?.getAttribute('title') ?? '';
+    const last = txt(statsCell);
+    const pager = [...cell.querySelectorAll('.smallfont a[href]')].map((link) => txt(link)).filter((label) => /^\d+$/.test(label));
+    return compact({
+      id,
+      title: txt(a),
+      url: cleanUrl(a.getAttribute('href'), base),
+      sticky: /^\s*Sticky\b/.test(txt(cell)) || undefined,
+      starter: txt(cell.querySelector('.smallfont span[onclick], .smallfont a[href*="members/"], .smallfont a[href*="member.php"]')),
+      started: siteDay(txt(cell.querySelector('.jumbo-txt'))),
+      replies: parseInteger(stats.match(/Replies:\s*([\d,]+)/)?.[1]),
+      views: parseInteger(stats.match(/Views:\s*([\d,]+)/)?.[1]),
+      pages: pager.length ? Math.max(...pager.map(Number)) : undefined,
+      last_post: siteDay(last.replace(/\s+by\s+.*$/, '')),
+      last_poster: last.match(/\bby\s+(.+)$/)?.[1],
+      preview: cell.getAttribute?.('title')?.trim() || undefined,
+    });
+  });
+}
+
+function hasNextPage(doc, page) {
+  return [...doc.querySelectorAll('a[href]')].some((a) => a.getAttribute('href').match(/[?&]page=(\d+)/)?.[1] === String(page + 1) || /-(\d+)\.html/.exec(a.getAttribute('href'))?.[1] === String(page + 1));
+}
+
+/* ───── Search ───── */
+
+let tokenRequest;
+/** Searches need the session's own security token; a stale or guest token is rejected. */
+function securityToken(fresh) {
+  if (fresh || !tokenRequest) {
+    tokenRequest = fetchPage(forumUrl('search.php'))
+      .then(({ doc }) => doc.querySelector('form[action*="search.php"] input[name="securitytoken"], input[name="securitytoken"]')?.value || 'guest')
+      .catch((error) => { tokenRequest = undefined; throw error; });
+  }
+  return tokenRequest;
+}
+
+async function runSearch(opts, retry = true) {
+  if (opts.searchId) {
+    const { doc, url } = await fetchPage(forumUrl(`search.php?searchid=${opts.searchId}&pp=25&page=${opts.page ?? 1}`));
+    return { searchId: opts.searchId, doc, url, page: opts.page ?? 1 };
+  }
   const body = new URLSearchParams({
     s: '',
-    securitytoken: 'guest',
+    securitytoken: await securityToken(!retry),
     do: 'process',
-    type: opts.type,
     query: opts.query,
     titleonly: opts.titleOnly ? '1' : '0',
     showposts: opts.type === 'post' ? '1' : '0',
+    childforums: '1',
   });
   if (opts.author) {
     body.set('searchuser', opts.author);
     if (opts.exactName) body.set('exactname', '1');
     if (opts.starterOnly) body.set('starteronly', '1');
   }
-  if (opts.forumIds?.length) {
-    for (const f of opts.forumIds) body.append('forumchoice[]', String(f));
-  }
-  if (opts.page) body.set('page', String(opts.page));
-  const r = await fetch(`${SEARCH_URL}?${params.toString()}`, {
+  for (const f of opts.forumIds ?? []) body.append('forumchoice[]', String(f));
+  const { doc, url } = await fetchPage(forumUrl('search.php?do=process'), {
     method: 'POST',
-    credentials: 'include',
     cache: 'no-cache',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/html' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString(),
-    redirect: 'follow',
   });
-  if (!r.ok) throw new Error(`vbulletin.search → HTTP ${r.status}`);
-  const text = await r.text();
-  // After redirect, the URL may contain ?searchid=...
-  const searchId = Number(new URL(r.url).searchParams.get('searchid')) || 0;
-  return { searchId, text, finalUrl: r.url };
+  const searchId = Number(new URL(url).searchParams.get('searchid')) || 0;
+  if (searchId) return { searchId, doc, url, page: 1 };
+  // Boards without header redirects answer with a "taking you to the results" page that refreshes to them.
+  const refreshed = Number(doc.querySelector('meta[http-equiv="refresh" i]')?.getAttribute('content')?.match(/searchid=(\d+)/)?.[1]);
+  if (refreshed) return runSearch({ searchId: refreshed, page: 1 });
+  const message = txt(doc.querySelector('.standard_error, td.panelsurround, .blockrow, .panel, #content, body')).replace(/^vBulletin Message\s*/i, '');
+  if (/no matches/i.test(message)) return { searchId: 0, doc: null, url, page: 1 };
+  if (retry && /security token|logged in since|could not be processed/i.test(message)) return runSearch(opts, false);
+  throw new Error(`vbulletin search: ${message.slice(0, 200) || 'the forum returned no result page'}`);
 }
 
-function extractPosts(doc) {
-  const rows = doc.querySelectorAll('table.tborder tr, li.threadbit, li.postbit, .searchposts li, div.search_result');
-  const results = [];
-  rows.forEach((row) => {
-    const titleA = row.querySelector('a.title, h3 a, a[href*="showpost.php"], a[href*="showthread.php"]');
-    if (!titleA) return;
-    const href = titleA.getAttribute('href') ?? '';
-    const postId = parsePostIdFromHref(href);
-    const threadId = parseThreadIdFromHref(href);
-    if (!threadId) return;
-    const snippet = row.querySelector('blockquote, .excerpt, .searchresult_excerpt, .snippet');
-    const author = row.querySelector('.username, .bigusername, a[href*="member.php"]');
-    const date = row.querySelector('.date, .smaller, .time, .post_date');
-    const replyCount = row.querySelector('.replycount, .views, .stats');
-    results.push({
-      postId: postId ?? 0,
-      postUrl: new URL(href, location.origin).toString(),
-      threadId,
-      threadTitle: txt(titleA),
-      threadUrl: new URL(href, location.origin).toString(),
-      forumId: 0,
-      forumName: '',
-      forumSlug: '',
-      author: txt(author) || undefined,
-      dateText: txt(date),
-      replyCount: parseInteger(txt(replyCount)),
-      snippetText: txt(snippet),
-      snippetHtml: snippet?.innerHTML ?? '',
-    });
-  });
-  return results;
+const SearchInput = {
+  query: z.string(),
+  forumIds: z.array(z.number().int().positive()).optional(),
+  author: z.string().optional(),
+  exactName: z.boolean().optional(),
+  searchId: z.number().int().positive().optional().describe('From a previous result; with page, reads later result pages of that search.'),
+  page: z.number().int().min(1).optional().describe('Result page; needs searchId for pages after 1.'),
+};
+
+async function search(opts, extract) {
+  const { searchId, doc, url, page } = await runSearch(opts);
+  const results = doc ? extract(doc, url) : [];
+  return compact({ searchId: searchId || undefined, page, results, hasMore: !!doc && hasNextPage(doc, page) });
 }
 
-function extractThreads(doc) {
-  const rows = doc.querySelectorAll('tr[id^="thread_"], li.threadbit');
-  const results = [];
-  rows.forEach((row) => {
-    const titleA = row.querySelector('a.title, h3 a, a[href*="showthread.php"]');
-    if (!titleA) return;
-    const href = titleA.getAttribute('href') ?? '';
-    const threadId = parseThreadIdFromHref(href);
-    if (!threadId) return;
-    const author = row.querySelector('.username, .bigusername, a[href*="member.php"]');
-    const date = row.querySelector('.date, .smaller, .time');
-    const replyCell = row.querySelector('.alt2.smallfont a[href*="misc.php?do=showthreadviewsstats"], .replies a, .replies');
-    results.push({
-      threadId,
-      threadTitle: txt(titleA),
-      threadUrl: new URL(href, location.origin).toString(),
-      forumId: 0,
-      forumName: '',
-      forumSlug: '',
-      starter: txt(author) || undefined,
-      dateText: txt(date),
-      replyCount: parseInteger(txt(replyCell)),
-    });
-  });
-  return results;
+/* ───── Images ───── */
+
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024, MAX_IMAGE_DATA_CHARS = 500_000;
+/** Downscaled JPEG in the image shape hosts attach to the model; the image host's CORS rules apply. */
+async function modelImage(url) {
+  const response = await fetch(url, { credentials: 'same-origin' });
+  if (!response.ok) throw new Error(`Image returned HTTP ${response.status}`);
+  if (Number(response.headers.get('content-length')) > MAX_IMAGE_BYTES) throw new Error('Image exceeds 10 MB');
+  const blob = await response.blob();
+  if (!/^image\/(png|jpeg|webp|gif|avif)$/.test(blob.type)) throw new Error(`Unsupported image type ${blob.type || 'unknown'}`);
+  if (blob.size > MAX_IMAGE_BYTES) throw new Error('Image exceeds 10 MB');
+  const bitmap = await createImageBitmap(blob);
+  try {
+    let scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+    for (let attempt = 0; attempt < 4; attempt++, scale *= .75) {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const data = canvas.toDataURL('image/jpeg', attempt ? .75 : .85).split(',')[1];
+      if (data.length <= MAX_IMAGE_DATA_CHARS) return { type: 'image', mimeType: 'image/jpeg', data, width: canvas.width, height: canvas.height };
+    }
+    throw new Error('Image is too detailed for the model context');
+  } finally { bitmap.close(); }
 }
 
-async function getThreadPage(threadId, page) {
-  const url = `/forum/showthread.php?t=${threadId}${page ? `&page=${page}` : ''}`;
-  const r = await fetch(url, { credentials: 'include', headers: { Accept: 'text/html' } });
-  if (!r.ok) throw new Error(`getThreadPage → HTTP ${r.status}`);
-  const text = await r.text();
-  return { url, doc: parseHtml(text) };
+/** A linked full-size file first, then the inline rendition. FlyerTalk's CDN serves inline pictures at 320px wide; the same path at 1600px is the larger rendition. */
+function imageSources(img, base) {
+  const src = img.getAttribute('src');
+  const link = img.closest('a[href]')?.getAttribute('href');
+  const linked = link && /attachment\.php|\.(?:jpe?g|png|gif|webp)(?:[?#]|$)/i.test(link) ? link : null;
+  const larger = src && /ibsrv\.net\/gimg\//.test(src) ? src.replace(/\/\d+x\d+\//, '/1600x2000/') : null;
+  return [...new Set([linked, larger, src].filter(Boolean).map((u) => new URL(u, base).href))];
 }
 
-function extractPostList(doc, start=0, maxChars) {
-  const posts = [];
-  doc.querySelectorAll('div[id^="edit"], li.postbitlegacy, table[id^="post"], div.post').forEach((el, idx) => {
-    const counter = el.querySelector('.postcounter');
-    const num = counter?.textContent ?? '';
-    const postId = parsePostIdFromHref(counter?.getAttribute('href')) || Number(el.id?.match(/^(?:edit|post)(\d+)$/)?.[1]) || null;
-    const author = el.querySelector('.username, .bigusername, a[href*="member.php"]');
-    const date = el.querySelector('.date, .postdate, .post_date');
-    const body = el.querySelector('blockquote.postcontent, .post_message, .postbody');
-    posts.push({
-      postNumber: parseInteger(num) || start + idx + 1,
-      postId,
-      author: txt(author),
-      date: txt(date),
-      snippet: maxChars === undefined ? txt(body) : txt(body).slice(0, maxChars),
-      text_truncated: maxChars !== undefined && txt(body).length > maxChars,
-    });
-  });
-  return posts;
-}
-
-function extractThreadMeta(doc) {
-  const titleEl = doc.querySelector('h1, .threadtitle, [class*="threadtitle"]');
-  const totalPagesEl = doc.querySelector('.pagenav td.vbmenu_control, .pagination, span.selected');
-  const totalPagesMatch = txt(totalPagesEl).match(/of\s+(\d+)/i);
+async function readPostImages({ postId, images }) {
+  const { doc, url } = await fetchPage(forumUrl(`showthread.php?p=${postId}`));
+  const body = doc.querySelector(`#post_message_${postId}`);
+  if (!body) throw new Error(`Post ${postId} is not on the page it links to; it may be deleted, moderated or private.`);
+  const found = contentImages(body);
+  const chosen = images ? [...new Set(images)] : found.slice(0, 3).map((_, index) => index + 1);
   return {
-    title: txt(titleEl),
-    totalPages: totalPagesMatch ? Number(totalPagesMatch[1]) : 1,
+    post_id: postId, url: postUrl(postId), total_images: found.length,
+    images: await Promise.all(chosen.map(async (number) => {
+      const img = found[number - 1];
+      if (!img) return { image: number, error: `The post has ${found.length} images.` };
+      const sources = imageSources(img, url);
+      let error;
+      for (const source of sources) {
+        try { return { image: number, url: source, ...await modelImage(source) }; } catch (failure) { error = failure; }
+      }
+      return { image: number, url: sources[0] ?? null, error: String(error?.message ?? 'Image has no source') };
+    })),
   };
+}
+
+/* ───── Threads ───── */
+
+async function getThreadPage(threadId, page, maxChars, perPage) {
+  const { doc, url } = await fetchPage(forumUrl(`showthread.php?t=${threadId}${page > 1 ? `&page=${page}` : ''}`));
+  return {
+    url,
+    title: txt(doc.querySelector('h1, .threadtitle, [class*="threadtitle"]')),
+    totalPages: lastPage(doc, threadId),
+    posts: threadPosts(doc, (page - 1) * perPage, maxChars),
+  };
+}
+
+async function summarizeThread({ threadId, mode, page, maxPosts, firstReplies = 30, latestReplies = 100, maxChars }) {
+  const m = mode ?? 'first+last';
+  const cap = maxPosts ?? (m === 'first+last' || m === 'tldr' ? 1 + firstReplies + latestReplies : 10);
+  const cache = new Map();
+  let perPage = 0;
+  const fetchPage = async (p) => {
+    if (!cache.has(p)) cache.set(p, await getThreadPage(threadId, p, maxChars, perPage));
+    return cache.get(p);
+  };
+  const first = await fetchPage(1);
+  perPage = first.posts.length;
+  const totalPages = first.totalPages;
+  const out = { id: threadId, title: first.title, url: first.url, total_pages: totalPages };
+  const finish = (posts, extra = {}) => {
+    linkQuotes([...cache.values()].flatMap((p) => p.posts));
+    return { ...out, ...extra, pages_read: [...cache.keys()].sort((a, b) => a - b), posts };
+  };
+  if (!perPage) return { ...out, hint: 'No readable posts returned; the thread may be private, moved or deleted.', posts: [] };
+  if (m === 'first') return finish(first.posts.slice(0, cap));
+  if ((m === 'first+last' || m === 'tldr') && page === undefined) {
+    const head = [...first.posts], tail = [];
+    for (let p = 2; p <= totalPages && head.length < 1 + firstReplies; p++) head.push(...(await fetchPage(p)).posts);
+    for (let p = totalPages; p >= 1 && tail.length < latestReplies; p--) tail.unshift(...(await fetchPage(p)).posts);
+    const selected = [...head.slice(0, 1 + firstReplies), ...(latestReplies ? tail.filter((post) => post.post_number !== first.posts[0]?.post_number).slice(-latestReplies) : [])];
+    const posts = [...new Map(selected.map((post) => [post.post_number, post])).values()].sort((a, b) => a.post_number - b.post_number).slice(0, cap);
+    return finish(posts, { selection: `original post, first ${firstReplies} replies and latest ${latestReplies} replies` });
+  }
+  if (m === 'full') {
+    const all = [...first.posts];
+    for (let p = 2; p <= totalPages && all.length < cap; p++) all.push(...(await fetchPage(p)).posts);
+    return finish(all.slice(0, cap));
+  }
+  const targetPage = typeof page === 'number' ? (page < 0 ? Math.max(1, totalPages + page + 1) : Math.min(page, totalPages)) : totalPages;
+  return finish((await fetchPage(targetPage)).posts.slice(-cap), { page: targetPage });
 }
 
 export default defineSkill({
   searchPosts: fn({
     summary: 'Full-text search across forum posts. ★ primary entry.',
-    input: z.object({
-      query: z.string(),
-      forumIds: z.array(z.number().int().positive()).optional(),
-      author: z.string().optional(),
-      exactName: z.boolean().optional(),
-      page: z.number().int().min(1).optional(),
-    }),
+    input: z.object(SearchInput),
     examples: [{ args: { query: 'amex platinum 175k' } }],
-    handler: async (p) => {
-      const { searchId, text, finalUrl } = await postSearch({ ...p, type: 'post' });
-      const doc = parseHtml(text);
-      const results = extractPosts(doc);
-      const page = Number(new URL(finalUrl).searchParams.get('page')) || 1;
-      return { searchId, results, page, totalPages: null, hasMore: results.length >= 25 };
-    },
+    handler: (p) => search({ ...p, type: 'post' }, postHits),
   }),
 
   searchThreads: fn({
-    summary: 'Search forum threads by title.',
+    summary: 'Search forum threads by title (titleOnly) or content.',
     input: z.object({
-      query: z.string(),
-      forumIds: z.array(z.number().int().positive()).optional(),
-      author: z.string().optional(),
-      exactName: z.boolean().optional(),
+      ...SearchInput,
       starterOnly: z.boolean().optional(),
       titleOnly: z.boolean().optional(),
-      page: z.number().int().min(1).optional(),
     }),
-    handler: async (p) => {
-      const { searchId, text, finalUrl } = await postSearch({ ...p, type: 'thread' });
-      const doc = parseHtml(text);
-      const results = extractThreads(doc);
-      const page = Number(new URL(finalUrl).searchParams.get('page')) || 1;
-      return { searchId, results, page, totalPages: null, hasMore: results.length >= 25 };
-    },
+    handler: (p) => search({ ...p, type: 'thread' }, threadRows),
   }),
 
   summarizeThread: fn({
@@ -260,107 +448,64 @@ export default defineSkill({
       page: z.number().int().optional().describe('Specific page; negative is from end (-1=last, -2=second-to-last).'),
       maxPosts: z.number().int().min(1).max(601).optional(),
     }),
-    handler: async ({ threadId, mode, page, maxPosts, firstReplies=30, latestReplies=100, maxChars }) => {
-      const m = mode ?? 'first+last';
-      const cap = maxPosts ?? (m==='first+last'||m==='tldr'?1+firstReplies+latestReplies:10);
-      let perPage=0;
-      const cache=new Map();
-      const fetchPage = async (p=1) => {
-        if(cache.has(p))return cache.get(p);
-        const { doc, url } = await getThreadPage(threadId, p);
-        const value={doc,url:new URL(url,location.origin).href,posts:extractPostList(doc,(p-1)*perPage,maxChars),meta:extractThreadMeta(doc)};
-        for(const post of value.posts)post.url=post.postId?`${value.url}#post${post.postId}`:value.url;
-        cache.set(p,value);return value;
-      };
-      const first = await fetchPage(undefined);
-      const totalPages = first.meta.totalPages;
-      perPage=first.posts.length;
-      const out = { thread: { id: threadId, title: first.meta.title, url: first.url }, totalPages, page: 1, posts: [] };
-      if(!perPage)return {...out,coverage:'No readable posts returned.'};
-      if (m === 'first') {
-        out.posts = first.posts.slice(0, cap);
-        return out;
-      }
-      if ((m === 'first+last' || m === 'tldr') && page === undefined) {
-        const head=[...first.posts],tail=[];
-        for(let p=2;p<=totalPages && head.length<1+firstReplies;p++)head.push(...(await fetchPage(p)).posts);
-        for(let p=totalPages;p>=1 && tail.length<latestReplies;p--)tail.unshift(...(await fetchPage(p)).posts);
-        const selected=[...head.slice(0,1+firstReplies),...(latestReplies?tail.filter(post=>post.postNumber!==first.posts[0]?.postNumber).slice(-latestReplies):[])];
-        out.posts=[...new Map(selected.map(post=>[post.postNumber,post])).values()].slice(0,cap);
-        out.selection=`original post, first ${firstReplies} replies and latest ${latestReplies} replies`;
-        out.pagesRead=[...cache.keys()].sort((a,b)=>a-b);
-        return out;
-      }
-      if (m === 'full') {
-        const all = [first.posts];
-        for (let p = 2; p <= totalPages && all.flat().length < cap; p++) {
-          all.push((await fetchPage(p)).posts);
-        }
-        out.posts = all.flat().slice(0, cap);
-        return out;
-      }
-      // 'latest' (default) or explicit page
-      let targetPage = totalPages;
-      if (typeof page === 'number') targetPage = page < 0 ? Math.max(1, totalPages + page + 1) : page;
-      const last = targetPage === 1 ? first : await fetchPage(targetPage);
-      out.page = targetPage;
-      out.posts = last.posts.slice(-cap);
-      return out;
-    },
+    handler: summarizeThread,
+  }),
+
+  readPostImages: fn({
+    summary: 'Attach up to three pictures from one post so you can see them. Post text marks them as [image N].',
+    input: z.object({
+      postId: z.number().int().positive().describe('The post id shown as (id N) on post lines.'),
+      images: z.array(z.number().int().min(1)).min(1).max(3).optional().describe('[image N] numbers from the post text. Default: the first three.'),
+    }).strict(),
+    examples: [{ args: { postId: 37461448, images: [1] } }],
+    handler: readPostImages,
   }),
 
   getRecentThreads: fn({
-    summary: 'Recent threads in one or more forums (RSS). With full=true also fetches each thread page.',
+    summary: 'Recent threads in one or more forums (RSS). With full=true also returns each first post as text.',
     input: z.object({
       forumIds: z.array(z.number().int().positive()).min(1),
       full: z.boolean().optional(),
     }),
     handler: async ({ forumIds, full }) => {
-      const url = `/forum/external.php?type=RSS2&forumids=${forumIds.join(',')}`;
-      const r = await fetch(url, { credentials: 'include', headers: { Accept: 'application/rss+xml' } });
+      const r = await fetch(forumUrl(`external.php?type=RSS2&forumids=${forumIds.join(',')}`), { credentials: 'include', headers: { Accept: 'application/rss+xml' } });
       if (!r.ok) throw new Error(`getRecentThreads → HTTP ${r.status}`);
-      const xml = await r.text();
-      const doc = new DOMParser().parseFromString(xml, 'application/xml');
-      const items = doc.querySelectorAll('item');
-      const results = [];
-      items.forEach((item) => {
+      const doc = new DOMParser().parseFromString(await decodedText(r), 'application/xml');
+      return [...doc.querySelectorAll('item')].map((item) => {
         const link = item.querySelector('link')?.textContent ?? '';
-        const title = item.querySelector('title')?.textContent ?? '';
-        const pubDate = item.querySelector('pubDate')?.textContent ?? '';
-        const author = item.querySelector('author')?.textContent ?? '';
-        const contentText = item.querySelector('description')?.textContent ?? '';
-        const threadId = parseThreadIdFromHref(link);
-        results.push({
-          threadId: threadId ?? 0,
-          title,
-          link,
-          author,
-          pubDate,
-          contentText,
+        const description = item.querySelector('encoded, description')?.textContent ?? '';
+        return compact({
+          id: parseThreadIdFromHref(link),
+          title: item.querySelector('title')?.textContent ?? '',
+          url: link,
+          author: item.querySelector('creator, author')?.textContent,
+          date: siteDay(item.querySelector('pubDate')?.textContent),
+          text: full ? postText(parseHtml(description).body) : undefined,
         });
       });
-      return full ? results : results.map((r) => ({ ...r, contentText: undefined }));
     },
   }),
 
   getForum: fn({
-    summary: 'Fetch a forum index page; returns the forum title + slug + thread links.',
-    input: z.object({ id: z.number().int().positive() }),
-    handler: async ({ id }) => {
-      const url = `/forum/forumdisplay.php?f=${id}`;
-      const r = await fetch(url, { credentials: 'include', headers: { Accept: 'text/html' } });
-      if (!r.ok) throw new Error(`getForum → HTTP ${r.status}`);
-      const text = await r.text();
-      const doc = parseHtml(text);
-      const finalUrl = r.url;
-      const slugMatch = finalUrl.match(/\/forum\/([^/?#]+)-\d+/);
-      return {
+    summary: 'A forum listing page: title, slug and threads with starter, replies, views, pages and last post.',
+    input: z.object({ id: z.number().int().positive(), page: z.number().int().min(1).optional() }),
+    handler: async ({ id, page }) => {
+      const { doc, url } = await fetchPage(forumUrl(`forumdisplay.php?f=${id}${page > 1 ? `&page=${page}` : ''}`));
+      return compact({
         id,
-        slug: slugMatch ? slugMatch[1] : '',
+        slug: url.match(/\/forum\/([^/?#]+)-\d+/)?.[1],
         title: txt(doc.querySelector('h1, .forumtitle')),
-        url: finalUrl,
-        threads: extractThreads(doc),
-      };
+        url,
+        page: page ?? 1,
+        threads: threadRows(doc, url),
+        hasMore: hasNextPage(doc, page ?? 1),
+      });
     },
   }),
+}, {
+  instructions: `Search to locate threads, then read them with summarizeThread before answering; snippets are not enough for claims.
+- Return thread results as they are. They reach you as one line per post with floor, post id, author, day, likes and inline quotes ([quote @user #floor: text], or post <id> when the quoted post was not part of the read).
+- Post text marks pictures as [image N]. When a screenshot, chart or photo matters to the answer, call readPostImages({postId, images:[N]}) to see it; skip decorative ones.
+- Search results include searchId; pass it with page to read further result pages instead of searching again.
+- Summarize outcomes, dates, amounts and circumstances with author, likes and post links. Follow the user's scope and language.`,
 });

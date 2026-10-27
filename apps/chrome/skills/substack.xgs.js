@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         substack
 // @namespace    substack
-// @version      0.1.5
+// @version      0.1.6
 // @description  Substack publication archives/search, posts, comments, RSS, publication metadata and session read endpoints. Supports custom publication domains, excerpts, source cards and conservative rate limits.
 // @match        https://substack.com/*
 // @match        https://*.substack.com/*
@@ -59,8 +59,15 @@ function textOf(html) {
   if (!html) return '';
   const doc = new DOMParser().parseFromString(`<html><body>${String(html)}</body></html>`, 'text/html');
   doc.querySelectorAll('script,style,iframe,noscript,template').forEach(n => n.remove());
-  doc.querySelectorAll('p,br,li,div,blockquote,h1,h2,h3,pre').forEach(n => n.append('\n'));
-  return (doc.body.textContent || '').replace(/[^\S\n]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  // Pictures and quotes stay visible as markers; icons, emoji and avatars are dropped.
+  doc.querySelectorAll('img').forEach(img => {
+    const tiny = ['width', 'height'].some(side => Number(img.getAttribute(side)) > 0 && Number(img.getAttribute(side)) < 48);
+    if (tiny || /emoji|avatar|icon/i.test(`${img.className} ${img.getAttribute('alt') || ''}`)) img.remove();
+  });
+  doc.querySelectorAll('img').forEach((img, index) => img.replaceWith(` [image ${index + 1}] `));
+  Array.from(doc.querySelectorAll('blockquote')).reverse().forEach(quote => quote.replaceWith(`\n[quote: ${quote.textContent.replace(/\s+/g, ' ').trim()}]\n`));
+  doc.querySelectorAll('p,br,li,div,h1,h2,h3,pre').forEach(n => n.append('\n'));
+  return (doc.body.textContent || '').replace(/[^\S\n]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function documentOf(html) {
