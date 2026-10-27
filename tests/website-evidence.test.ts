@@ -101,3 +101,44 @@ test('post lines carry emoji reactions after likes and keep image markers', () =
   assert.deepEqual(projected.posts, ['#1 @op ♥98 :troll:×10 :666:×2: Statement [image 1]', '#2 @reader: plain']);
   assert.match(projected.post_format, /:emoji:×count/);
 });
+
+test('shared reader results become one line per source with defaults omitted and a link template', () => {
+  const comment = (id: string, parentId: string | null, text: string, extra = {}) => ({id, kind: 'comment', title: 'Original source', url: `https://news.ycombinator.com/item?id=${id}`, author: 'pg', publishedAt: '2026-10-25T14:39:34.000Z',
+    text, excerpt: text.slice(0, 400), access: 'public', scope: 'body', method: 'api', complete: true, offset: 0, nextOffset: null, ...(parentId ? {parentId} : {}), score: 3, ...extra});
+  const projected = websiteEvidence({readerVersion: 1, coverage: 'thread', sources: [
+    {...comment('100', null, 'Show HN: a reader'), kind: 'story', title: 'Show HN', commentCount: 2, externalUrl: 'https://example.com/post'},
+    comment('101', '100', 'First reply'),
+    comment('102', '100', 'Second reply', {nextOffset: 12, complete: false, images: [{url: 'https://img.example/a.png'}]}),
+  ]}, 'https://news.ycombinator.com') as any;
+  assert.deepEqual(projected, {coverage: 'thread', source_url: 'https://news.ycombinator.com/item?id={id}', source_format: projected.source_format, sources: [
+    '100 [story] @pg 2026-10-25 ↑3 💬2: Show HN: a reader → https://example.com/post',
+    '101 @pg ↑3: First reply',
+    '102 @pg ↑3 ↩100: Second reply …[continues at offset 12] {"images":[{"url":"https://img.example/a.png"}]}',
+  ]});
+});
+
+test('reader sources without a shared link pattern keep their own URL and non-default scope and access', () => {
+  const projected = websiteEvidence({readerVersion: 1, sources: [{id: 'a', kind: 'post', title: 'Loaded page', url: 'https://x.com/home', author: null, publishedAt: null, text: 'Visible posts',
+    excerpt: 'Visible posts', access: 'session', scope: 'loaded_page', method: 'dom', complete: false, offset: 0, nextOffset: null}]}, 'https://x.com') as any;
+  assert.deepEqual(projected.sources, ['a [post] "Loaded page": Visible posts …[partial] (loaded_page, session) <https://x.com/home>']);
+});
+
+test('vBulletin posts link by post id: one URL template, with the id on each line', () => {
+  const link = (id: number) => `https://www.flyertalk.com/forum/showthread.php?p=${id}#post${id}`;
+  const projected = websiteEvidence({id: 900, title: 'Lounge', url: 'https://www.flyertalk.com/forum/airport-lounges/900-lounge.html', total_pages: 2, pages_read: [1, 2], posts: [
+    {post_number: 1, post_id: 101, username: 'alice', created_at: '2025-12-02', like_count: 3, text: 'Chang’s lounge [image 1]', url: link(101)},
+    {post_number: 2, post_id: 102, username: 'bob', created_at: '2025-12-02', text: '[quote @alice #1: Chang lounge] Agreed', url: link(102)},
+  ]}, 'https://www.flyertalk.com') as any;
+  assert.equal(projected.post_url, 'https://www.flyertalk.com/forum/showthread.php?p={post_id}#post{post_id}');
+  assert.match(projected.post_format, /^#floor \(id post_id\) @user/);
+  assert.deepEqual(projected.posts, ['#1 (id 101) @alice 2025-12-02 ♥3: Chang’s lounge [image 1]', '#2 (id 102) @bob: [quote @alice #1: Chang lounge] Agreed']);
+});
+
+test('posts whose links fit no template keep their own link on the line', () => {
+  const projected = websiteEvidence({url: 'https://forum.example/thread', posts: [
+    {post_number: 1, username: 'a', text: 'one', url: 'https://forum.example/a'},
+    {post_number: 2, username: 'b', text: 'two', url: 'https://forum.example/b'},
+  ]}, 'https://forum.example') as any;
+  assert.equal(projected.post_url, undefined);
+  assert.deepEqual(projected.posts, ['#1 @a: one <https://forum.example/a>', '#2 @b: two <https://forum.example/b>']);
+});

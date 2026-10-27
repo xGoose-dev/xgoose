@@ -5,12 +5,14 @@ const TOPIC_FORMAT = '#id title · replies · views · ♥likes · created→las
 /** Thread fields the post lines, `complete` and `next_cursor` already convey. */
 const DERIVABLE = new Set(['id', 'origin', 'first_post_number', 'last_post_number', 'requested_from_post_number', 'selected_count', 'text_complete', 'range_complete', 'hint']);
 
-const day = (value: unknown) => typeof value === 'string' ? value.slice(0, 10) : '';
+/** ISO timestamps as their day; a site's own date text (`Oct 25, 2026`) as written. */
+const day = (value: unknown) => typeof value !== 'string' ? '' : /^\d{4}-\d{2}-\d{2}/.test(value) ? value.slice(0, 10) : value.trim().slice(0, 40);
 
-function postLines(posts: any[]): string[] {
+function postLines(posts: any[], link: PostLink): string[] {
   let lastDay = '', lastFloor: number | undefined;
   return posts.map(post => {
     const date = day(post.created_at), parts = [`#${post.post_number}`];
+    if (link === 'post_id') parts.push(`(id ${post.post_id})`);
     if (post.username) parts.push(`@${post.username}`);
     if (date && date !== lastDay) parts.push(date);
     if (post.like_count) parts.push(`♥${post.like_count}`);
@@ -20,8 +22,19 @@ function postLines(posts: any[]): string[] {
     lastDay = date || lastDay; lastFloor = post.post_number;
     const more = !post.text_truncated ? '' :
       post.next_text_offset != null ? ` …[continues at text_offset ${post.next_text_offset}]` : ' …[truncated]';
-    return `${parts.join(' ')}: ${post.text}${more}`;
+    return `${parts.join(' ')}: ${post.text}${more}${link === 'inline' && post.url ? ` <${post.url}>` : ''}`;
   });
+}
+
+type PostLink = 'floor' | 'post_id' | 'inline';
+
+/** Discourse links posts by floor; vBulletin-style forums by a post id that is part of every post URL. */
+function postLink(posts: any[], url: string): {link: PostLink, template?: string} {
+  if (posts.every(post => post.url == null || String(post.url).endsWith(`/${post.post_number}`))) return {link: 'floor', template: `${url}/{floor}`};
+  const first = posts[0], id = String(first.post_id ?? '');
+  const template = id && typeof first.url === 'string' ? first.url.split(id).join('{post_id}') : '';
+  return template.includes('{post_id}') && posts.every(post => post.post_id != null && post.url === template.split('{post_id}').join(String(post.post_id)))
+    ? {link: 'post_id', template} : {link: 'inline'};
 }
 
 function withoutNoise(raw: Record<string, any>): Record<string, any> {
@@ -30,11 +43,13 @@ function withoutNoise(raw: Record<string, any>): Record<string, any> {
     !(key === 'status' && value === 'ok') && !(key === 'output_limited' && value === false)));
 }
 
-/** One line per post; post links are `${url}/${floor}`. */
+/** One line per post, with post links as a URL template whenever every post fits one. */
 function compactThread(raw: Record<string, any>): Record<string, any> {
   if (!Array.isArray(raw.posts) || !raw.posts.length || !raw.posts.every(isForumPost)) return raw;
   const url = typeof raw.url === 'string' ? raw.url : String(raw.posts[0].url ?? '').replace(/\/\d+$/, '');
-  return {...withoutNoise(raw), ...(raw.hint ? {hint: raw.hint} : {}), url, post_url: `${url}/{floor}`, post_format: POST_FORMAT, posts: postLines(raw.posts)};
+  const {link, template} = postLink(raw.posts, url);
+  const format = link === 'post_id' ? POST_FORMAT.replace('#floor ', '#floor (id post_id) ') : link === 'inline' ? `${POST_FORMAT} <post url>` : POST_FORMAT;
+  return {...withoutNoise(raw), ...(raw.hint ? {hint: raw.hint} : {}), url, ...(template ? {post_url: template} : {}), post_format: format, posts: postLines(raw.posts, link)};
 }
 
 function topicLine(topic: any): string {
@@ -70,7 +85,42 @@ function compactSearch(raw: Record<string, any>, origin: string): Record<string,
   };
 }
 
+const SOURCE_FORMAT = 'id [kind] @author [date, shown when it changes] [↑score] [💬comments] [↩parent id, omitted when it is the line directly above] ["title"]: text [(scope, access)]';
+const SOURCE_FIELDS = new Set(['id', 'kind', 'title', 'url', 'discussionUrl', 'externalUrl', 'author', 'publishedAt', 'text', 'excerpt', 'access', 'scope', 'method', 'complete', 'offset', 'nextOffset', 'parentId', 'score', 'commentCount']);
+const isReaderSource = (source: any) => source && typeof source.url === 'string' && typeof source.text === 'string';
+
+/** Shared website-reader results: one line per source, defaults omitted, links as a template when every URL contains its id. */
+function compactReader(raw: Record<string, any>): Record<string, any> {
+  const {readerVersion, sources, ...rest} = raw;
+  const template = sources.length > 1 && sources.every((source: any) => source.id && source.url.split(String(source.id)).length === 2)
+    ? sources[0].url.replace(String(sources[0].id), '{id}') : null;
+  const sharedTemplate = template && sources.every((source: any) => source.url === template.replace('{id}', String(source.id))) ? template : null;
+  let lastDay = '', lastId: string | undefined;
+  const lines = sources.map((source: any) => {
+    const date = day(source.publishedAt), parts = [String(source.id ?? '')];
+    if (source.kind && !['comment', 'reply'].includes(source.kind)) parts.push(`[${source.kind}]`);
+    if (source.author) parts.push(`@${source.author}`);
+    if (date && date !== lastDay) parts.push(date);
+    if (source.score != null) parts.push(`↑${source.score}`);
+    if (source.commentCount) parts.push(`💬${source.commentCount}`);
+    if (source.parentId != null && String(source.parentId) !== lastId) parts.push(`↩${source.parentId}`);
+    if (source.title && source.title !== 'Original source' && !source.text.startsWith(source.title)) parts.push(JSON.stringify(source.title));
+    lastDay = date || lastDay; lastId = String(source.id ?? '');
+    const notes = [source.scope && source.scope !== 'body' && source.scope !== source.kind ? source.scope : '', source.access && source.access !== 'public' ? source.access : ''].filter(Boolean);
+    const extra = Object.fromEntries(Object.entries(source).filter(([key, value]) => !SOURCE_FIELDS.has(key) && value != null));
+    return `${parts.join(' ')}: ${source.offset ? `…[from offset ${source.offset}] ` : ''}${source.text}` +
+      (source.nextOffset != null ? ` …[continues at offset ${source.nextOffset}]` : source.complete === false ? ' …[partial]' : '') +
+      (notes.length ? ` (${notes.join(', ')})` : '') +
+      (sharedTemplate ? '' : ` <${source.url}>`) +
+      (source.externalUrl && source.externalUrl !== source.url ? ` → ${source.externalUrl}` : '') +
+      (source.discussionUrl && source.discussionUrl !== source.url ? ` discussion <${source.discussionUrl}>` : '') +
+      (Object.keys(extra).length ? ` ${JSON.stringify(extra)}` : '');
+  });
+  return {...withoutNoise(rest), ...(sharedTemplate ? {source_url: sharedTemplate} : {}), source_format: SOURCE_FORMAT, sources: lines};
+}
+
 function compactKnown(raw: Record<string, any>, origin: string): unknown {
+  if (Number.isSafeInteger(raw.readerVersion) && Array.isArray(raw.sources) && raw.sources.every(isReaderSource)) return compactReader(raw);
   if (Array.isArray(raw.posts) && Array.isArray(raw.topics) && raw.posts.every(isSearchHit) && raw.topics.every(isTopic)) return compactSearch(raw, origin);
   if (Array.isArray(raw.posts)) return compactThread(raw);
   if (Array.isArray(raw.topics) && raw.topics.some((topic: any) => Array.isArray(topic?.posts)))

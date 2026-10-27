@@ -1,13 +1,13 @@
 // ==XGooseSkill==
 // @name         flyertalk
 // @namespace    ft
-// @version      0.2.1
+// @version      0.2.2
 // @description  FlyerTalk site-specific helpers — WordPress article search (anonymous /wp-json), URL parsing for the vBulletin SEO routes, a curated forum-slug-to-id map (airlines, hotels, credit cards), and a parallel searchAll fan-out across articles + forum posts + threads.
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*
 // @detect       location.hostname.endsWith('flyertalk.com')
 // @run-at       document_idle
-// @require      vbulletin-forum
+// @require      vbulletin-forum@0.2.0
 // @connect      <self>
 // @primary      searchAll
 // @keyword      flyertalk
@@ -37,16 +37,6 @@
  * `/forum/*` is vBulletin 3.9.3.9 (use `xgoose.skills.vbulletin.*`). This skill
  * adds the FlyerTalk-specific URL parsing, forum-id catalog, and WordPress
  * article reader on top.
- *
- * Operating rules (silent — do not echo to the user):
- *  - NEVER invent thread/post/user IDs from memory; only use IDs that appear
- *    in a previous tool result.
- *  - Don't re-sort merged search results; relevance is what you want.
- *  - Default to unscoped `vbulletin.searchPosts` (no `forumIds`).
- *  - English queries only; vBulletin's index doesn't tokenize CJK.
- *  - Don't answer from snippets — follow up with
- *    `vbulletin.summarizeThread({ threadId })` on the top 2-3
- *    hits before composing.
  */
 
 import { defineSkill, fn } from '@xgoose/skill';
@@ -120,7 +110,6 @@ function toFull(r) {
   const html = r.content?.rendered ?? '';
   return {
     ...toSummary(r),
-    contentHtml: html,
     contentText: stripHtml(html),
     modified: normalizeDate(r.modified),
     author: r.author ?? 0,
@@ -432,4 +421,10 @@ export default defineSkill({
     input: z.object({ href: z.string() }),
     handler: async ({ href }) => parseForumUrlImpl(href),
   }),
+}, {
+  instructions: `Start research with searchAll; it covers articles, forum posts and thread titles.
+- Search in English; the forum index does not tokenize Chinese or other CJK text. Translate the user's terms first.
+- Snippets only locate discussions. Read the top 2-3 threads with xgoose.skills.vbulletin.summarizeThread({threadId}) before answering.
+- Use only thread, post and forum ids from tool results. Keep search results in their relevance order.
+- Leave forumIds unset unless the user names a forum; getForumMap lists the main forum ids.`,
 });

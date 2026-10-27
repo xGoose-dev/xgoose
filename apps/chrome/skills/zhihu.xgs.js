@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        zhihu
 // @namespace   zhihu
-// @version     0.1.0
+// @version     0.1.1
 // @description 知乎 (zhihu.com) Q&A + article reader. Pure JSON API + SSR-HTML parsing — search, read questions/answers/articles/comments/热榜/users. No DOM scraping, no clicks. Reply to the user in Chinese (中文).
 // @match       *://www.zhihu.com/*
 // @match       *://zhuanlan.zhihu.com/*
@@ -65,6 +65,30 @@ function stripHtml(html) {
   ).replace(/\s+/g, " ").trim();
 }
 __name(stripHtml, "stripHtml");
+/** Answer/article HTML as text with paragraph breaks and `[image]` where a picture sits. */
+function htmlText(html) {
+  if (!html) return "";
+  return decodeEntities(
+    String(html).replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<noscript[\s\S]*?<\/noscript>/gi, " ").replace(/<img\b[^>]*>/gi, " [image] ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(?:p|h[1-6]|li|blockquote|figure|pre|tr)>/gi, "\n").replace(/<[^>]+>/g, " ")
+  ).replace(/(?:[ \t]*\[image\][ \t]*)+/g, " [image] ").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+__name(htmlText, "htmlText");
+/** Zhihu epoch seconds as ISO time; null when absent. */
+function isoTime(seconds) {
+  const n = Number(seconds);
+  return n > 0 ? new Date(n * 1e3).toISOString() : null;
+}
+__name(isoTime, "isoTime");
+/** Drops absent and empty fields; zero counts and explicit false stay. */
+function compact(record) {
+  return Object.fromEntries(Object.entries(record).filter(([, v]) => v !== undefined && v !== null && v !== ""));
+}
+__name(compact, "compact");
+function times(created, updated) {
+  const createdAt = isoTime(created), updatedAt = isoTime(updated);
+  return { createdAt, updatedAt: updatedAt !== createdAt ? updatedAt : null };
+}
+__name(times, "times");
 async function fetchJson(url) {
   const r = await fetch(url, {
     method: "GET",
@@ -99,14 +123,12 @@ function extractInitialData(html) {
 }
 __name(extractInitialData, "extractInitialData");
 function toAuthor(a) {
-  if (!a) return { id: "", urlToken: "", name: "" };
-  return {
-    id: String(a.id ?? ""),
+  if (!a) return { name: "" };
+  return compact({
     urlToken: String(a.url_token ?? a.urlToken ?? ""),
     name: String(a.name ?? ""),
-    headline: a.headline ? String(a.headline) : void 0,
-    avatarUrl: a.avatar_url ?? a.avatarUrl ?? void 0
-  };
+    headline: a.headline ? String(a.headline) : void 0
+  });
 }
 __name(toAuthor, "toAuthor");
 function answerUrl(qid, aid) {
@@ -124,39 +146,35 @@ __name(articleUrl, "articleUrl");
 function toAnswerFromApi(r) {
   const qid = String(r.question?.id ?? "");
   const aid = String(r.id);
-  const html = r.content ?? "";
-  return {
+  const contentText = htmlText(r.content);
+  return compact({
     id: aid,
     questionId: qid,
     url: qid ? answerUrl(qid, aid) : "",
-    excerpt: stripHtml(r.excerpt ?? ""),
+    excerpt: contentText ? void 0 : stripHtml(r.excerpt ?? ""),
     voteupCount: Number(r.voteup_count ?? 0),
     commentCount: Number(r.comment_count ?? 0),
-    createdTime: Number(r.created_time ?? 0),
-    updatedTime: Number(r.updated_time ?? 0),
+    ...times(r.created_time, r.updated_time),
     author: toAuthor(r.author),
-    contentHtml: html,
-    contentText: stripHtml(html)
-  };
+    contentText
+  });
 }
 __name(toAnswerFromApi, "toAnswerFromApi");
 function toAnswerFromInitialData(r) {
   const qid = String(r.question?.id ?? "");
   const aid = String(r.id);
-  const html = r.content ?? "";
-  return {
+  const contentText = htmlText(r.content);
+  return compact({
     id: aid,
     questionId: qid,
     url: qid ? answerUrl(qid, aid) : "",
-    excerpt: stripHtml(r.excerpt ?? ""),
+    excerpt: contentText ? void 0 : stripHtml(r.excerpt ?? ""),
     voteupCount: Number(r.voteupCount ?? 0),
     commentCount: Number(r.commentCount ?? 0),
-    createdTime: Number(r.createdTime ?? 0),
-    updatedTime: Number(r.updatedTime ?? 0),
+    ...times(r.createdTime, r.updatedTime),
     author: toAuthor(r.author),
-    contentHtml: html,
-    contentText: stripHtml(html)
-  };
+    contentText
+  });
 }
 __name(toAnswerFromInitialData, "toAnswerFromInitialData");
 async function search(params) {
@@ -199,7 +217,7 @@ function toSearchHit(o) {
         url: qid ? answerUrl(qid, id) : "",
         voteupCount: Number(o.voteup_count ?? 0),
         commentCount: Number(o.comment_count ?? 0),
-        createdTime: Number(o.created_time ?? 0),
+        createdAt: isoTime(o.created_time),
         author: toAuthor(o.author)
       };
     }
@@ -212,7 +230,7 @@ function toSearchHit(o) {
         url: articleUrl(id),
         voteupCount: Number(o.voteup_count ?? 0),
         commentCount: Number(o.comment_count ?? 0),
-        createdTime: Number(o.created ?? o.created_time ?? 0),
+        createdAt: isoTime(o.created ?? o.created_time),
         author: toAuthor(o.author)
       };
     }
@@ -224,7 +242,7 @@ function toSearchHit(o) {
         excerpt: stripHtml(o.excerpt ?? ""),
         url: questionUrl(id),
         commentCount: Number(o.comment_count ?? 0),
-        createdTime: Number(o.created ?? 0),
+        createdAt: isoTime(o.created),
         author: toAuthor(o.author)
       };
     }
@@ -308,8 +326,7 @@ async function getQuestion(params) {
     title: stripHtml(rawQ.title ?? ""),
     detail: stripHtml(rawQ.detail ?? ""),
     url: questionUrl(qid),
-    createdTime: Number(rawQ.created ?? 0),
-    updatedTime: Number(rawQ.updatedTime ?? 0),
+    ...times(rawQ.created, rawQ.updatedTime),
     answerCount: Number(rawQ.answerCount ?? 0),
     followerCount: Number(rawQ.followerCount ?? 0),
     commentCount: Number(rawQ.commentCount ?? 0),
@@ -318,6 +335,7 @@ async function getQuestion(params) {
     topics: (rawQ.topics ?? []).map((t) => ({ id: String(t.id), name: stripHtml(t.name) })),
     author: toAuthor(rawQ.author)
   };
+  if (!question.updatedAt) delete question.updatedAt;
   const answers = Object.values(entities?.answers ?? {}).map((a) => toAnswerFromInitialData(a)).filter((a) => a.questionId === qid).sort((a, b) => b.voteupCount - a.voteupCount);
   return {
     question,
@@ -380,16 +398,14 @@ async function getArticle(params) {
   if (!rawA) {
     throw new Error(`zhihu.getArticle: article ${id} not found in initial data (404 / removed?)`);
   }
-  const content = rawA.content ?? "";
-  return {
+  const contentText = htmlText(rawA.content);
+  return compact({
     id,
     title: stripHtml(rawA.title ?? ""),
     url: articleUrl(id),
-    contentHtml: content,
-    contentText: stripHtml(content),
-    excerpt: stripHtml(rawA.excerpt ?? ""),
-    createdTime: Number(rawA.created ?? 0),
-    updatedTime: Number(rawA.updated ?? 0),
+    contentText,
+    excerpt: contentText ? void 0 : stripHtml(rawA.excerpt ?? ""),
+    ...times(rawA.created, rawA.updated),
     voteupCount: Number(rawA.voteupCount ?? 0),
     commentCount: Number(rawA.commentCount ?? 0),
     author: toAuthor(rawA.author),
@@ -398,7 +414,7 @@ async function getArticle(params) {
       title: stripHtml(rawA.column.title ?? ""),
       url: String(rawA.column.url ?? "")
     } : null
-  };
+  });
 }
 __name(getArticle, "getArticle");
 const TARGET_TYPE_NORMALIZE = {
@@ -429,13 +445,13 @@ async function getComments(params) {
   });
   const url = `https://www.zhihu.com/api/v4/comment_v5/${normalized}/${params.targetId}/root_comment?${sp}`;
   const json = await fetchJson(url);
-  const comments = (json.data ?? []).map((c) => ({
+  const comments = (json.data ?? []).map((c) => compact({
     id: String(c.id),
     authorName: String(c.author?.name ?? ""),
     authorUrlToken: String(c.author?.url_token ?? ""),
     contentText: stripHtml(c.content ?? ""),
     voteupCount: Number(c.like_count ?? c.vote_count ?? 0),
-    createdTime: Number(c.created_time ?? 0)
+    createdAt: isoTime(c.created_time)
   }));
   const paging = {
     isEnd: !!json.paging?.is_end,
@@ -458,7 +474,6 @@ async function getMember(params) {
     name: String(r.name ?? ""),
     headline: String(r.headline ?? ""),
     description: stripHtml(r.description ?? ""),
-    avatarUrl: String(r.avatar_url ?? ""),
     followerCount: Number(r.follower_count ?? 0),
     followingCount: Number(r.following_count ?? 0),
     answerCount: Number(r.answer_count ?? 0),

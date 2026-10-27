@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         nga
 // @namespace    nga
-// @version      0.1.7
+// @version      0.1.8
 // @description  NGA JSON read APIs: forum directory, board/collection topics and search, paginated posts, profiles, hot topics and favorite boards. Uses the current browser login and native fid/stid/tid/pid/page parameters.
 // @match        https://bbs.nga.cn/*
 // @match        https://ngabbs.com/*
@@ -61,8 +61,15 @@ function textOf(html) {
   if (!html) return '';
   const doc = new DOMParser().parseFromString(`<html><body>${String(html)}</body></html>`, 'text/html');
   doc.querySelectorAll('script,style,iframe,noscript,template').forEach(n => n.remove());
-  doc.querySelectorAll('p,br,li,div,blockquote,h1,h2,h3,pre').forEach(n => n.append('\n'));
-  return (doc.body.textContent || '').replace(/[^\S\n]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  // Pictures and quotes stay visible as markers; icons, emoji and avatars are dropped.
+  doc.querySelectorAll('img').forEach(img => {
+    const tiny = ['width', 'height'].some(side => Number(img.getAttribute(side)) > 0 && Number(img.getAttribute(side)) < 48);
+    if (tiny || /emoji|avatar|icon/i.test(`${img.className} ${img.getAttribute('alt') || ''}`)) img.remove();
+  });
+  doc.querySelectorAll('img').forEach((img, index) => img.replaceWith(` [image ${index + 1}] `));
+  Array.from(doc.querySelectorAll('blockquote')).reverse().forEach(quote => quote.replaceWith(`\n[quote: ${quote.textContent.replace(/\s+/g, ' ').trim()}]\n`));
+  doc.querySelectorAll('p,br,li,div,h1,h2,h3,pre').forEach(n => n.append('\n'));
+  return (doc.body.textContent || '').replace(/[^\S\n]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function documentOf(html) {
@@ -319,20 +326,58 @@ const fid=z.union([z.number().int(),z.string().regex(/^-?\d+(?:,-?\d+)*$/)]);
 const page=z.number().int().min(1).max(10000).default(1);
 const slice={offset,limit:count(20,50)};
 const values=value=>Array.isArray(value)?value:Object.values(value||{});
+const IMG=/\[img(?:=[^\]]*)?\]\s*([^\[]+?)\s*\[\/img\]/gi;
+const imageUrl=raw=>safeUrl(raw.startsWith('./mon_')?`https://img.nga.178.com/attachments/${raw.slice(2)}`:raw.startsWith('/attachments/')?`https://img.nga.178.com${raw}`:raw);
+/** Pictures in one post, numbered as its [image N] markers. */
 function postImages(content,postUrl,postNumber){
   const images=[];
-  for(const match of String(content||'').matchAll(/\[img(?:=[^\]]*)?\]\s*([^\[]+?)\s*\[\/img\]/gi)){
-    const raw=match[1].trim();
-    const url=safeUrl(raw.startsWith('./mon_')?`https://img.nga.178.com/attachments/${raw.slice(2)}`:raw.startsWith('/attachments/')?`https://img.nga.178.com${raw}`:raw);
+  for(const match of String(content||'').matchAll(IMG)){
+    const url=imageUrl(match[1].trim());
     if(!url||images.some(i=>i.url===url))continue;
     const host=new URL(url).hostname;
-    images.push({url,postUrl,postNumber,supported:['img.nga.178.com','img.nga.cn','img4.nga.cn'].includes(host)});
+    images.push({image:images.length+1,url,postUrl,postNumber,supported:['img.nga.178.com','img.nga.cn','img4.nga.cn'].includes(host)});
   }
   return images;
 }
+// NGA reply headers: `[b]Reply to [pid=1,2,3]Reply[/pid] Post by [uid=9]name[/uid] (date)[/b]`, and inside quotes
+// `[pid=1,2,3]Reply[/pid] [b]Post by [uid=9]name[/uid] (date):[/b]`. Anonymous authors are `[uid=-1]#anony_…[/uid]`.
+const AUTHOR=String.raw`Post by\s*\[uid(?:=[^\]]*)?\]([^\[]*)\[\/uid\]\s*(?:\([^)]*\))?\s*:?\s*`;
+const REPLY_HEAD=new RegExp(String.raw`^\s*\[b\]\s*Reply to\s*\[pid=(\d+)(?:,(\d+))?[^\]]*\][^\[]*\[\/pid\]\s*${AUTHOR}\[\/b\]`,'i');
+const QUOTE_HEAD=new RegExp(String.raw`^\s*(?:\[(pid|tid)=(\d+)(?:,(\d+))?[^\]]*\][^\[]*\[\/\1\])?\s*\[b\]\s*${AUTHOR}\[\/b\]`,'i');
+/** `[pid=0,tid,page]` is the opening post, whose source id is `tid:0`. */
+const postRef=(pid,tid)=>pid==='0'&&tid?`${tid}:0`:pid;
+/** BBCode body as plain text with [quote @user pid N: text] and [image N] markers, plus the post it replies to. */
+function ngaText(content){
+  let s=String(content||''),replyTo=null;
+  const head=s.match(REPLY_HEAD);
+  if(head){replyTo={pid:postRef(head[1],head[2]),author:head[3].trim()};s=s.slice(head[0].length);}
+  const numbered=[];
+  s=s.replace(IMG,(_,raw)=>{const url=imageUrl(raw.trim());if(!url)return '';const n=numbered.indexOf(url)+1||numbered.push(url);return ` [image ${n}] `;});
+  const inner=/\[quote\]((?:(?!\[quote\])[\s\S])*?)\[\/quote\]/i;
+  for(let match;(match=s.match(inner));){
+    const q=match[1].match(QUOTE_HEAD),who=q?.[4]?.trim(),pid=q?.[1]?.toLowerCase()==='pid'?postRef(q[2],q[3]):null;
+    if(pid&&!replyTo)replyTo={pid,author:who};
+    const quoted=textOf(bbcode(q?match[1].slice(q[0].length):match[1])).replace(/\s+/g,' ').replace(/\[image \d+\]/g,'').trim();
+    s=s.replace(match[0],()=>`<br>[quote${who?` @${who}`:''}${pid?` pid ${pid}`:''}: ${quoted.length>300?`${quoted.slice(0,300)}…`:quoted}] `);
+  }
+  return {text:textOf(bbcode(s)),replyTo};
+}
+function bbcode(s){
+  return s.replace(/\[s:[^\]]+\]/g,'')
+    .replace(/\[url=([^\]]+)\]([\s\S]*?)\[\/url\]/gi,(_,href,label)=>label.trim()&&label.trim()!==href?`${label} (${href})`:href)
+    .replace(/\[url\]([\s\S]*?)\[\/url\]/gi,'$1')
+    .replace(/\[uid(?:=[^\]]*)?\]([^\[]*)\[\/uid\]/gi,'@$1')
+    .replace(/\[collapse=([^\]]*)\]/gi,'<br>$1: ')
+    .replace(/\[\/?(?:b|i|u|del|color|size|font|align|collapse|h|list|\*|table|tr|td|code|quote|flash|l|r|pid|tid|attach|dice)(?:=[^\]]*)?\]/gi,' ');
+}
 const topicUrl=tid=>`${location.origin}/read.php?tid=${tid}`;
+const postId=(p,tid)=>p.pid?String(p.pid):`${tid}:0`;
+const postLink=(p,tid)=>p.pid?`${location.origin}/read.php?pid=${p.pid}`:topicUrl(tid);
+/** NGA attachments are not CORS-readable from the page; the host fetches these URLs and attaches the pictures. */
+const hostImages=(images,totalImages,nextOffset)=>({requested:true,delivery:'urls_only_until_host_attaches',
+  images:images.map(({supported,...image})=>image),totalImages,...(nextOffset!=null?{nextOffset}:{})});
 const topicSource=t=>({...source({id:t.tid,kind:'topic',title:textOf(t.subject),author:t.author,
-  url:topicUrl(t.tid),text:textOf(t.content||''),publishedAt:t.postdate,commentCount:t.replies,
+  url:topicUrl(t.tid),text:ngaText(t.content).text,publishedAt:t.postdate,commentCount:t.replies,
   scope:'topic_list',complete:false},{}),fid:t.fid,authorid:t.authorid,lastpost:t.lastpost});
 function topicPage(data,a){
   const topics=values(data.__T);
@@ -375,24 +420,42 @@ const skill={
     if(!data.__R||typeof data.__R!=='object')throw fault('invalid_response','NGA returned no post collection. This is not an empty successfully read topic.');
     const posts=values(data.__R);const users=data.__U||{};
     const selected=posts.slice(a.offset,a.offset+a.limit);const sources=[];
+    const images=[];
     for(const [i,p] of selected.entries()){
-      const user=users[p.authorid]||{};const tid=p.tid||data.__T?.tid||a.tid;
-      const s={...source({id:p.pid?String(p.pid):`${tid}:0`,kind:'post',title:textOf(p.subject||data.__T?.subject||`Post ${p.lou}`),
-        url:p.pid?`${location.origin}/read.php?pid=${p.pid}`:topicUrl(tid),author:user.username||String(p.authorid),
-        text:textOf(p.content||''),publishedAt:p.postdatetimestamp,parentId:tid,scope:'post'},
-        {offset:i===0?a.textOffset:0,maxChars:a.maxChars}),postNumber:p.lou,pid:p.pid,authorid:p.authorid,postIndex:a.offset+i};
-      s.images=postImages(p.content,s.url,p.lou);
+      const user=users[p.authorid]||{};const tid=p.tid||data.__T?.tid||a.tid;const body=ngaText(p.content);
+      const s={...source({id:postId(p,tid),kind:'post',title:textOf(p.subject||data.__T?.subject||`Post ${p.lou}`),
+        url:postLink(p,tid),author:user.username||String(p.authorid),
+        text:body.text,publishedAt:p.postdatetimestamp,parentId:body.replyTo?.pid,scope:'post'},
+        {offset:i===0?a.textOffset:0,maxChars:a.maxChars}),postNumber:p.lou,authorid:p.authorid};
+      if(s.nextOffset!=null)s.postIndex=a.offset+i;
+      images.push(...postImages(p.content,s.url,p.lou).filter(image=>image.supported));
       sources.push(s);
     }
     const currentPage=Number(data.__PAGE)||Number(a.page)||1;const perPage=Number(data.__R__ROWS_PAGE)||posts.length;
     const topic={};for(const key of ['tid','fid','subject','author','authorid','replies','postdate','lastpost'])if(data.__T?.[key]!==undefined)topic[key]=data.__T[key];
-    const images=[...new Map(sources.flatMap(s=>s.images).filter(i=>i.supported).map(i=>[i.url,i])).values()];
+    const unique=images.filter((image,index)=>images.findIndex(other=>other.url===image.url)===index);
     return result(sources,{topic,forum:data.__F,page:currentPage,totalPosts:data.__ROWS,
-      ...(a.includeImages?{imageContext:{requested:true,delivery:'urls_only_until_host_attaches',images:images.slice(a.imageOffset,a.imageOffset+a.maxImages),totalImages:images.length,nextOffset:a.imageOffset+a.maxImages<images.length?a.imageOffset+a.maxImages:null,instruction:'Attach image parts from the returned URLs; imageContext.delivery reports the delivery format.'}}:{}),
+      ...(a.includeImages?{imageContext:hostImages(unique.slice(a.imageOffset,a.imageOffset+a.maxImages),unique.length,a.imageOffset+a.maxImages<unique.length?a.imageOffset+a.maxImages:null)}:{}),
       nextOffset:a.offset+sources.length<posts.length?a.offset+sources.length:null,
       nextPage:a.offset+sources.length>=posts.length && perPage && currentPage*perPage<data.__ROWS?currentPage+1:null,
       pagination:'nextOffset is a post index on this server page. source.nextOffset is a character offset: continue the same page with offset:source.postIndex, limit:1, textOffset:source.nextOffset. Reset offset/textOffset on a new page.'});
   }),
+  readPostImages:siteFn('Attach up to three pictures from one post so you can see them. Post text marks them as [image N].',z.object({
+    id:z.union([z.number().int().positive(),z.string().regex(/^\d+(?::0)?$/)]).describe('Post id from the source line: a pid, or tid:0 for the opening post.'),
+    images:z.array(z.number().int().min(1)).min(1).max(3).optional().describe('[image N] numbers from the post text. Default: the first three.'),
+  }).strict(),async a=>{
+    const [first,opening]=String(a.id).split(':');
+    const data=await api('/read.php',opening?{tid:first}:{pid:first},a,true);
+    const posts=values(data.__R);
+    const post=opening?posts.find(p=>Number(p.lou)===0):posts.find(p=>String(p.pid)===first);
+    if(!post)throw fault('not_found',`NGA returned no post ${a.id}; it may be deleted or hidden.`);
+    const tid=post.tid||data.__T?.tid||first;
+    const found=postImages(post.content,postLink(post,tid),post.lou);
+    const chosen=(a.images?[...new Set(a.images)]:found.slice(0,3).map(image=>image.image)).map(n=>found[n-1]??{image:n,error:`The post has ${found.length} images.`});
+    const skipped=chosen.filter(image=>!image.supported).map(({supported,...image})=>image.error?image:{...image,error:'Only NGA attachments can be attached; open the URL to view it.'});
+    return {id:String(a.id),url:postLink(post,tid),totalImages:found.length,...(skipped.length?{skipped}:{}),
+      imageContext:hostImages(chosen.filter(image=>image.supported),found.length,null)};
+  },[{args:{id:'812345678',images:[1]}}]),
   getUser:siteFn('GET nuke.php ucp/get: public profile by uid. Omit uid to use the current session UID locally; credentials are never returned.',z.object({uid:id.optional()}),async a=>{
     const uid=a.uid??cookie('ngaPassportUid');if(!/^\d+$/.test(String(uid)))throw fault('login_required','Pass uid, or open a signed-in NGA page.');
     const data=await api('/nuke.php',{__lib:'ucp',__act:'get',uid},a,true);const raw=values(data)[0];
@@ -415,4 +478,4 @@ const skill={
   })),
   getRateLimit:siteFn('Inspect local request budgets and server cooldown.',empty,()=>client.status()),
 };
-export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+" NGA uses native JSON APIs (__output=11). Choose boards with getForums; fid and stid are distinct and negative fid values are valid. getTopics supports native search/list parameters; getTopic reads one server page or pid. includeImages:true, maxImages and imageOffset select images for host delivery. imageContext.delivery describes delivery format; imageContext.nextOffset continues images. Reply and body offsets are separate."});
+export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+" NGA uses native JSON APIs (__output=11). Choose boards with getForums; fid and stid are distinct and negative fid values are valid. getTopics supports native search/list parameters; getTopic reads one server page or pid. Post lines show the pid they reply to (↩pid) and quotes inline as [quote @user pid N: text]. Post text marks pictures as [image N]; when one matters, call readPostImages({id, images:[N]}) with the post's id. includeImages:true, maxImages and imageOffset attach a topic page's pictures in bulk; imageContext.delivery is image_parts only when pictures were attached, and imageContext.nextOffset continues them. Reply and body offsets are separate."});
