@@ -1,15 +1,11 @@
 #!/usr/bin/env node
-// Copy the canonical `SKILL_AUTHORING.md` (kept in this package) into the
-// three host repos that ship it to authors:
+// Copy the canonical `SKILL_AUTHORING.md` (kept in this package) to the Chrome
+// skills directory, which the build ships for `skill_help`:
 //
-//   - xgoose-extension-chrome/skills/SKILL_AUTHORING.md
-//   - xgoose-extension-safari/skills/SKILL_AUTHORING.md
-//   - xgoose-web/web/app/docs/skills/SKILL_AUTHORING.md   (rendered at /docs/skills/)
+//   node packages/skill-runtime/scripts/sync-authoring-doc.mjs
 //
-// Run from any of those repos with:
-//   node ../xgoose-core/packages/skill-runtime/scripts/sync-authoring-doc.mjs
-//
-// Idempotent. Logs each destination + whether it was already in sync.
+// The website copy (xgoose-web: web/app/docs/skills/SKILL_AUTHORING.md) lives in
+// another repository and is updated through its own release.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,15 +13,9 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = path.resolve(__dirname, '..', 'SKILL_AUTHORING.md');
-// All destinations are resolved relative to the xgoose-core repo root
-// (../../../ from this file). The four repos live as siblings under ~/xgoose.
-const ROOT = path.resolve(__dirname, '..', '..', '..', '..');
+const ROOT = path.resolve(__dirname, '..', '..', '..');
 
-const DESTINATIONS = [
-  path.join(ROOT, 'xgoose-extension-chrome', 'skills', 'SKILL_AUTHORING.md'),
-  path.join(ROOT, 'xgoose-extension-safari', 'skills', 'SKILL_AUTHORING.md'),
-  path.join(ROOT, 'xgoose-web', 'web', 'app', 'docs', 'skills', 'SKILL_AUTHORING.md'),
-];
+const DESTINATIONS = [path.join(ROOT, 'apps', 'chrome', 'skills', 'SKILL_AUTHORING.md')];
 
 const source = fs.readFileSync(SOURCE, 'utf8');
 console.log(`[sync-authoring-doc] source: ${SOURCE} (${source.length} bytes)`);
