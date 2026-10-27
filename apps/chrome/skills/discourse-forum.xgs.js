@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discourse-forum
 // @namespace    discourse
-// @version      0.2.11
+// @version      0.2.12
 // @description  Search Discourse forums, read topics and replies, and research community insights.
 // @match        *://meta.discourse.org/*
 // @match        *://*.discourse.org/*
@@ -190,7 +190,7 @@ function compactTopicResult(raw, maxChars) {
     created_at: raw.created_at,
     last_posted_at: raw.last_posted_at,
     posts,
-    hint: 'First five posts only; bodies are in posts[].text. Use readTopicPosts for replies or truncated text.',
+    hint: 'First five posts only. Use readTopicPosts for replies or truncated text.',
   };
 }
 
@@ -264,7 +264,7 @@ async function summaryTopic(topicId, firstReplies=30, latestReplies=100) {
   return {title:topic.title,url:topicLink(id),posts_count:topic.posts_count,highest_post_number:topic.highest_post_number,
     selection:selected.length===stream.length?'all visible posts':`first post, first ${firstReplies} replies and latest ${latestReplies} replies`,selected_count:selected.length,read_count:result.length,
     complete:result.length===selected.length,posts:result,
-    hint:'Read posts[].text. Counts are approximate; selection and text_truncated describe the returned data.'};
+    hint:'Counts are approximate; selection and truncation markers describe the returned data.'};
 }
 async function recentTopics(kind='new') {
   const result = await forumJson(`/latest.json?order=${kind==='random'?'latest':'created'}`);
@@ -336,7 +336,7 @@ async function loadTopicReadState(topicId, fromPostNumber) {
     const state = {topic, ids:[...new Set(ids)], posts:new Map(), expires:Date.now()+600000, revision:++topicReadRevision};
     rememberTopicPosts(state, topic);
     topicReadStates.set(topicId, state);
-    while (topicReadStates.size > 4) topicReadStates.delete(topicReadStates.keys().next().value);
+    while (topicReadStates.size > 16) topicReadStates.delete(topicReadStates.keys().next().value);
     return state;
   })();
   topicReadLoads.set(topicId, pending);
@@ -389,7 +389,7 @@ async function readTopicRange(rawArgs) {
     complete:start===0 && offset===state.ids.length && !failure && !missing.length && posts.every(post=>!post.text_truncated),
     next_cursor:offset<state.ids.length?rangeCursor(state,offset):null,
     next_post_number:offset<state.ids.length?(state.posts.get(state.ids[offset])?.post_number ?? (posts.at(-1)?.post_number !== undefined?posts.at(-1).post_number+1:args.fromPostNumber || 1)):null,
-    posts,hint:'Bodies: posts[].text. Continue next_cursor sequentially. missing_post_ids and text_truncated describe gaps and partial bodies.'});
+    posts,hint:'Continue next_cursor sequentially. missing_post_ids and truncation markers describe gaps and partial bodies.'});
   while (offset<end) {
     const id=state.ids[offset];
     if (!state.posts.has(id)) {

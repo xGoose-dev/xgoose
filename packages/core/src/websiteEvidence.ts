@@ -1,6 +1,6 @@
 const isForumPost = (post: any) => post && Number.isSafeInteger(post.post_number) && typeof post.text === 'string';
 
-const POST_FORMAT = '#floor @user [date, shown when it changes] [♥likes] [↩floor it replies to, omitted for the previous floor]: text';
+const POST_FORMAT = '#floor @user [date, shown when it changes] [♥likes] [↩floor it replies to, omitted when that is the floor on the line directly above]: text';
 const TOPIC_FORMAT = '#id title · replies · views · ♥likes · created→last post · [tags] · flags';
 /** Thread fields the post lines, `complete` and `next_cursor` already convey. */
 const DERIVABLE = new Set(['id', 'origin', 'first_post_number', 'last_post_number', 'requested_from_post_number', 'selected_count', 'text_complete', 'range_complete', 'hint']);
@@ -14,9 +14,11 @@ function postLines(posts: any[]): string[] {
     if (post.username) parts.push(`@${post.username}`);
     if (date && date !== lastDay) parts.push(date);
     if (post.like_count) parts.push(`♥${post.like_count}`);
-    if (post.reply_to_post_number && post.reply_to_post_number !== lastFloor) parts.push(`↩${post.reply_to_post_number}`);
+    const repliesToLineAbove = post.reply_to_post_number === lastFloor && lastFloor === post.post_number - 1;
+    if (post.reply_to_post_number && !repliesToLineAbove) parts.push(`↩${post.reply_to_post_number}`);
     lastDay = date || lastDay; lastFloor = post.post_number;
-    const more = post.text_truncated && post.next_text_offset != null ? ` …[continues at text_offset ${post.next_text_offset}]` : '';
+    const more = !post.text_truncated ? '' :
+      post.next_text_offset != null ? ` …[continues at text_offset ${post.next_text_offset}]` : ' …[truncated]';
     return `${parts.join(' ')}: ${post.text}${more}`;
   });
 }
@@ -31,7 +33,7 @@ function withoutNoise(raw: Record<string, any>): Record<string, any> {
 function compactThread(raw: Record<string, any>): Record<string, any> {
   if (!Array.isArray(raw.posts) || !raw.posts.length || !raw.posts.every(isForumPost)) return raw;
   const url = typeof raw.url === 'string' ? raw.url : String(raw.posts[0].url ?? '').replace(/\/\d+$/, '');
-  return {...withoutNoise(raw), url, post_url: `${url}/{floor}`, post_format: POST_FORMAT, posts: postLines(raw.posts)};
+  return {...withoutNoise(raw), ...(raw.hint ? {hint: raw.hint} : {}), url, post_url: `${url}/{floor}`, post_format: POST_FORMAT, posts: postLines(raw.posts)};
 }
 
 function topicLine(topic: any): string {

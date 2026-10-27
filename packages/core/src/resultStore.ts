@@ -20,8 +20,12 @@ export function storeResult(id: string, value: unknown): void {
 }
 
 export function storedResult(id: string): unknown {
-  if (!stored.has(id)) throw new Error(`No stored result "${id}". Only the latest ${MAX_STORED_RESULTS} oversized results are kept.`);
+  if (!stored.has(id)) throw new Error(`No stored result "${id}". Only the latest ${MAX_STORED_RESULTS} oversized results of the current conversation are kept.`);
   return stored.get(id);
+}
+
+export function clearStoredResults(): void {
+  stored.clear();
 }
 
 function shapeOf(value: unknown, depth = 0): unknown {
@@ -43,7 +47,8 @@ export function boundedModelText(value: unknown, text: string, opts: { id?: stri
     sizeBytes: bytes,
     shape: shapeOf(value),
     preview: clipBytes(text, Math.floor(budgetBytes / 4)),
-    next: `Full result stored as "${id}". Filter or page it with result_query({id:"${id}", path, match, fields, offset, limit})` +
+    next: `Full result stored as "${id}". \`shape\` lists the stored value's real paths; \`preview\` is a compact rendering whose keys may differ. ` +
+      `Filter or page it with result_query({id:"${id}", path, match, fields, offset, limit})` +
       (opts.pageHandle ? `, or aggregate it in code via xgoose.results["${id}"] inside js_exec.` : "."),
   });
 }

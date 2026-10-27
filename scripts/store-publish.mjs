@@ -3,6 +3,15 @@ import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
 import {createSign} from 'node:crypto';
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const IN_REVIEW=/pending.?review|in.?review|not.?updatable|InProgressSubmission/i;
+const IN_REVIEW_HINT='A previous submission is still in review. Wait for it to finish, or cancel it in the store dashboard, then rerun this workflow.';
+/** Store error bodies explain the rejection; credentials never appear in them, but bearer-like strings are masked anyway. */
+async function errorDetail(response) {
+ const text=(await response.text().catch(()=>'')).replace(/(Bearer|ApiKey)\s+\S+/gi,'$1 ***').replace(/ya29\.[\w.-]+/g,'***');
+ let message=text;
+ try{const body=JSON.parse(text);message=body.error?.message??body.error_description??body.message??body.errorCode??text;}catch{}
+ return String(message).replace(/\s+/g,' ').trim().slice(0,500).replace(/[.\s]+$/,'');
+}
 export const requiredSecrets={chrome:['CWS_SERVICE_ACCOUNT_JSON','CWS_PUBLISHER_ID','CWS_EXTENSION_ID'],edge:['EDGE_CLIENT_ID','EDGE_API_KEY','EDGE_PRODUCT_ID']};
 export function missingStoreSecrets(store, credentials) {
  const names=store==='chrome'&&!credentials.CWS_SERVICE_ACCOUNT_JSON
@@ -22,28 +31,31 @@ export async function chromeAccessToken(credentials,request) {
   const signature=createSign('RSA-SHA256').update(unsigned).sign(key.private_key,'base64url');
   body=new URLSearchParams({grant_type:'urn:ietf:params:oauth:grant-type:jwt-bearer',assertion:`${unsigned}.${signature}`});
  }else body=new URLSearchParams({client_id:credentials.CWS_CLIENT_ID,client_secret:credentials.CWS_CLIENT_SECRET,refresh_token:credentials.CWS_REFRESH_TOKEN,grant_type:'refresh_token'});
- const token=(await(await request('https://oauth2.googleapis.com/token',{method:'POST',body})).json()).access_token;
+ const token=(await(await request('https://oauth2.googleapis.com/token',{method:'POST',body},'Chrome OAuth token')).json()).access_token;
  if(!token)throw Error('OAuth response did not contain an access token');
  return token;
 }
 export async function submitStore({store,zip,credentials,notes='',fetchImpl=fetch,wait=sleep}) {
  if(!requiredSecrets[store])throw Error('Choose chrome or edge');
  const missing=missingStoreSecrets(store,credentials);if(missing.length)throw Error(`Missing ${missing.join(', ')}; no upload was attempted`);
- const request=async(url,options={})=>{
+ const request=async(url,options={},step='Store API')=>{
   const response=await fetchImpl(url,{...options,redirect:'error',signal:AbortSignal.timeout(120000)});
-  if(!response.ok)throw Error(`Store API returned HTTP ${response.status}; inspect the store dashboard. No automatic withdrawal/retry.`);
+  if(!response.ok){
+   const detail=await errorDetail(response);
+   throw Error(`${step} returned HTTP ${response.status}${detail?`: ${detail}`:''}. ${IN_REVIEW.test(detail)?IN_REVIEW_HINT:'Inspect the store dashboard.'} No automatic withdrawal/retry.`);
+  }
   return response;
  };
  if(store==='chrome'){
   const token=await chromeAccessToken(credentials,request);
   const name=`publishers/${encodeURIComponent(credentials.CWS_PUBLISHER_ID)}/items/${encodeURIComponent(credentials.CWS_EXTENSION_ID)}`;
   const headers={authorization:`Bearer ${token}`};
-  let upload=await(await request(`https://chromewebstore.googleapis.com/upload/v2/${name}:upload`,{method:'POST',headers:{...headers,'content-type':'application/zip'},body:zip})).json();
+  let upload=await(await request(`https://chromewebstore.googleapis.com/upload/v2/${name}:upload`,{method:'POST',headers:{...headers,'content-type':'application/zip'},body:zip},'Chrome upload')).json();
   for(let n=0;['IN_PROGRESS','UPLOAD_IN_PROGRESS'].includes(upload.uploadState)&&n<60;n++){
-   await wait(10000);const status=await(await request(`https://chromewebstore.googleapis.com/v2/${name}:fetchStatus`,{headers})).json();upload={uploadState:status.lastAsyncUploadState};
+   await wait(10000);const status=await(await request(`https://chromewebstore.googleapis.com/v2/${name}:fetchStatus`,{headers},'Chrome upload status')).json();upload={uploadState:status.lastAsyncUploadState};
   }
   if(!['SUCCEEDED','SUCCESS'].includes(upload.uploadState))throw Error(`Chrome upload did not succeed: ${upload.uploadState??'unknown'}`);
-  const result=await(await request(`https://chromewebstore.googleapis.com/v2/${name}:publish`,{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({publishType:'DEFAULT_PUBLISH'})})).json();
+  const result=await(await request(`https://chromewebstore.googleapis.com/v2/${name}:publish`,{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({publishType:'DEFAULT_PUBLISH'})},'Chrome publish')).json();
   if(!['PENDING_REVIEW','PUBLISHED','STAGED'].includes(result.state))throw Error(`Chrome submission state was not confirmed: ${result.state??'unknown'}`);
   return {store,stage:result.state==='PUBLISHED'?'published':'submitted-for-review',state:result.state};
  }
@@ -53,16 +65,19 @@ export async function submitStore({store,zip,credentials,notes='',fetchImpl=fetc
   const location=response.headers.get('location');if(!location)throw Error('Missing Edge operation ID');
   const id=location.split('/').filter(Boolean).at(-1);if(!/^[a-zA-Z0-9-]+$/.test(id))throw Error('Invalid Edge operation ID');
   for(let n=0;n<60;n++){
-   const state=await(await request(`${base}/${path}/${encodeURIComponent(id)}`,{headers})).json();
+   const state=await(await request(`${base}/${path}/${encodeURIComponent(id)}`,{headers},'Edge operation status')).json();
    if(state.status==='Succeeded')return state;
-   if(state.status==='Failed'||state.errorCode)throw Error(`Edge operation failed: ${state.errorCode||'see dashboard'}`);
+   if(state.status==='Failed'||state.errorCode){
+    const detail=[state.errorCode,state.message,...(state.errors??[]).map(error=>error?.message)].filter(Boolean).join(': ').replace(/[.\s]+$/,'');
+    throw Error(`Edge operation failed: ${detail||'see dashboard'}${IN_REVIEW.test(detail)?`. ${IN_REVIEW_HINT}`:''}`);
+   }
    if(state.status!=='InProgress')throw Error('Unknown Edge operation state');
    await wait(10000);
   }
   throw Error('Edge operation still pending; inspect the dashboard before retrying');
  };
- await operation(await request(`${base}/submissions/draft/package`,{method:'POST',headers:{...headers,'content-type':'application/zip'},body:zip}),'submissions/draft/package/operations');
- const result=await operation(await request(`${base}/submissions`,{method:'POST',headers:{...headers,'content-type':'text/plain'},body:notes}),'submissions/operations');
+ await operation(await request(`${base}/submissions/draft/package`,{method:'POST',headers:{...headers,'content-type':'application/zip'},body:zip},'Edge package upload'),'submissions/draft/package/operations');
+ const result=await operation(await request(`${base}/submissions`,{method:'POST',headers:{...headers,'content-type':'text/plain'},body:notes},'Edge submission'),'submissions/operations');
  return {store,stage:'submitted-for-review',operationId:result.id};
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){

@@ -75,6 +75,14 @@ const PRICES: Record<string, ModelCosts> = {
     cachedInputPerMTok: 0.275,
     outputPerMTok: 4.4,
   },
+
+  // ── xgoose Hosted (base tier of the gateway's HOSTED_PRICES; long-context
+  // and DeepSeek peak-hour surcharges are not modelled) ──
+  "gpt-6.1-sol": { inputPerMTok: 2.0, cachedInputPerMTok: 0.1, outputPerMTok: 10.0 },
+  "gpt-6.1-terra": { inputPerMTok: 1.0, cachedInputPerMTok: 0.05, outputPerMTok: 5.0 },
+  "claude-sonnet-5-5": { inputPerMTok: 2.0, cachedInputPerMTok: 0.1, outputPerMTok: 10.0 },
+  "claude-haiku-5-5": { inputPerMTok: 0.1, cachedInputPerMTok: 0.01, outputPerMTok: 0.5 },
+  "deepseek-flash": { inputPerMTok: 0.15, cachedInputPerMTok: 0.003, outputPerMTok: 0.6 },
 };
 
 function normaliseModelId(model: string): string {

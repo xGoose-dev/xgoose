@@ -44,7 +44,17 @@ test('thread posts become one line each, keeping floor, author, date changes, li
     '#4 @long: Part one …[continues at text_offset 8]',
   ]);
   assert.equal(projected.post_url, 'https://forum.example/t/citi-uber/42/{floor}');
-  assert.deepEqual(Object.keys(projected).sort(), ['complete', 'next_cursor', 'post_format', 'post_url', 'posts', 'title', 'url']);
+  assert.deepEqual(Object.keys(projected).sort(), ['complete', 'hint', 'next_cursor', 'post_format', 'post_url', 'posts', 'title', 'url']);
+});
+
+test('reply targets stay visible across gaps and truncation without an offset is still marked', () => {
+  const projected = websiteEvidence({posts: [
+    {post_number: 5, username: 'a', text: 'first'},
+    {post_number: 9, username: 'b', reply_to_post_number: 5, text: 'answers #5 across a gap'},
+    {post_number: 10, username: 'c', reply_to_post_number: 9, text: 'Preview', text_truncated: true},
+  ], url: 'https://forum.example/t/x/1', hint: 'First five posts only.'}, 'https://forum.example') as any;
+  assert.deepEqual(projected.posts, ['#5 @a: first', '#9 @b ↩5: answers #5 across a gap', '#10 @c: Preview …[truncated]']);
+  assert.equal(projected.hint, 'First five posts only.');
 });
 
 test('search results keep each hit with its topic and floor and drop search bookkeeping', () => {

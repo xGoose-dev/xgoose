@@ -92,10 +92,17 @@ test("an answer cut off by the output cap continues instead of ending mid-senten
   let requests=0;
   const bundle=createAgent({settings,fetchImpl:fetch,tools:[],streamFn:(_m,ctx)=>{
     if(++requests===1)return stream(answer([{type:"text",text:"First half of the"}],"length"));
-    assert.equal(ctx.messages.at(-1)?.role,"assistant");return stream(answer([{type:"text",text:" answer."}]));
+    assert.deepEqual(ctx.messages.slice(-2).map(m=>m.role),["assistant","user"]);
+    assert.match(JSON.stringify(ctx.messages.at(-1)?.content),/cut off by the output limit/);
+    return stream(answer([{type:"text",text:" answer."}]));
   }});
-  const run=await bundle.agent.stream({messages:[{role:"user",content:"Long answer"}]});for await(const _ of run.fullStream){}
+  const run=await bundle.agent.stream({messages:[{role:"user",content:"Long answer"}]});const steps=[];
+  for await(const event of run.fullStream)if(event.type==="start-step")steps.push(!!event.continuation);
+  const saved=await run.response;
+  assert.deepEqual(steps,[false,true]);
   assert.equal(requests,2);
+  assert.deepEqual(saved.messages.map(m=>m.role),["assistant","assistant"]);
+  assert.match(JSON.stringify(saved.modelContext.at(-2)),/cut off by the output limit/);
 });
 test("concurrency-safe calls in one turn run together while other calls run alone in order",async()=>{
   let active=0,peak=0;const order:string[]=[];

@@ -47,7 +47,7 @@ import {
   setLastConvoIdGlobal,
   setPanelOpenForOrigin,
 } from "@/shared/storage";
-import { getProviderApiKey } from "@/shared/types";
+import { getProviderApiKey, type RegistrySkill } from "@/shared/types";
 import { createPanel, type Panel, type ImageAttachment } from "@xgoose/ui";
 // Side-effect import: registers per-tool labels for skill_call, list_skills, …
 import "./ui/toolLabels";
@@ -69,6 +69,7 @@ import { createAgent } from "./agent/createAgent";
 import {
   boundedModelText,
   buildSystemReminder,
+  clearStoredResults,
   clearTodos,
   costsFor,
   EMPTY_USAGE,
@@ -259,6 +260,13 @@ async function bootstrap(): Promise<void> {
 
   // Conversation state.
   let modelContext: any[] | null = null;
+  // `modelContext` stands in for the first `modelContextCovers` history
+  // messages; anything appended later (interrupted turns, errors) follows it.
+  let modelContextCovers = 0;
+  const setModelContext = (context: any[] | null): void => {
+    modelContext = context;
+    modelContextCovers = conversationMessages.length;
+  };
   let conversationMessages: any[] = [];
   let currentConvoId: string | null = null;
   let currentConvoTitle = "";
@@ -297,13 +305,17 @@ async function bootstrap(): Promise<void> {
   //
   // `null` means no turn is currently running.
   type InFlightTurn = {
+    /** Text of the current step; earlier steps of the turn are in `priorText`. */
     fullText: string;
+    priorText: string;
     toolNames: Map<string, string>;
     toolInputs: Map<string, unknown>;
     toolOutputs: Map<string, { output?: unknown; error?: string }>;
     navigatedTo: string | null;
   };
   let inFlight: InFlightTurn | null = null;
+  const inFlightText = (turn: InFlightTurn): string =>
+    [turn.priorText, turn.fullText].filter(Boolean).join("\n\n");
 
   // Snapshot the in-flight turn into `conversationMessages` as a proper
   // assistant-(text+tool-call) + tool-(tool-result) pair. Idempotent: clears
@@ -313,7 +325,7 @@ async function bootstrap(): Promise<void> {
   const snapshotInFlightToMessages = (): boolean => {
     if (!inFlight) return false;
     const captured = buildCapturedAssistantTurn({
-      text: inFlight.fullText,
+      text: inFlightText(inFlight),
       toolNames: inFlight.toolNames,
       toolInputs: inFlight.toolInputs,
       toolOutputs: inFlight.toolOutputs,
@@ -413,6 +425,7 @@ async function bootstrap(): Promise<void> {
           : "Untitled"),
       messages,
       modelContext: modelContext ?? undefined,
+      modelContextCovers: modelContext ? modelContextCovers : undefined,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       usage: conversationUsage,
@@ -440,7 +453,7 @@ async function bootstrap(): Promise<void> {
   const checkpoint = window.setInterval(() => {
     if (!running || !inFlight) return;
     persistCurrentConvo([...conversationMessages, ...buildCapturedAssistantTurn({
-      text: inFlight.fullText, toolNames: inFlight.toolNames,
+      text: inFlightText(inFlight), toolNames: inFlight.toolNames,
       toolInputs: inFlight.toolInputs, toolOutputs: inFlight.toolOutputs,
     }), ...(isSafari ? [{role:"xgoose-error",content:interruptionNotice}] : [])]);
   }, 1000);
@@ -470,7 +483,8 @@ async function bootstrap(): Promise<void> {
     currentConvoId = null;
     currentConvoTitle = "";
     conversationMessages = [];
-    modelContext = null;
+    setModelContext(null);
+    clearStoredResults();
     conversationUsage = { ...EMPTY_USAGE };
     clearTodos();
     panel.clear();
@@ -562,10 +576,12 @@ async function bootstrap(): Promise<void> {
     persistCurrentConvo();
     const convo = await getConversation(id);
     if (!convo) return;
-    currentConvoId = newConversationId();
+    currentConvoId = convo.id;
     currentConvoTitle = convo.title;
     conversationMessages = (convo.messages as any[]) ?? [];
     modelContext = convo.modelContext ?? null;
+    modelContextCovers = Math.min(convo.modelContextCovers ?? conversationMessages.length, conversationMessages.length);
+    clearStoredResults();
     conversationUsage = convo.usage
       ? { ...EMPTY_USAGE, ...convo.usage }
       : { ...EMPTY_USAGE };
@@ -582,7 +598,8 @@ async function bootstrap(): Promise<void> {
       currentConvoId = null;
       currentConvoTitle = "";
       conversationMessages = [];
-    modelContext = null;
+      setModelContext(null);
+      clearStoredResults();
       conversationUsage = { ...EMPTY_USAGE };
       clearTodos();
       panel.clear();
@@ -724,6 +741,7 @@ async function bootstrap(): Promise<void> {
     // below can snapshot it atomically.
     inFlight = {
       fullText: "",
+      priorText: "",
       toolNames: new Map(),
       toolInputs: new Map(),
       toolOutputs: new Map(),
@@ -733,6 +751,14 @@ async function bootstrap(): Promise<void> {
     // (e.g. from the navigation branch in `tool-result`). The `catch` /
     // `finally` blocks check this so they don't push it again.
     let snapshotted = false;
+    let navigated = false;
+    const reportStopped = (): void => {
+      panel.setStatus(lifecycleInterrupted ? "Interrupted — send another message to continue" : navigated ? "Navigation stopped the turn" : "Stopped");
+      track(navigated ? "chat_turn_navigated" : "chat_turn_stopped_by_user", {
+        flow_id:turnFlow,duration_ms:Date.now()-turnStarted,provider:getSettings().provider,
+        steps: stepCount,
+      });
+    };
 
     try {
       // Refresh consent before queuing the first message of a Hosted session.
@@ -742,6 +768,12 @@ async function bootstrap(): Promise<void> {
       const candidates = await send("sw:active_skills_for_url", { url: getCurrentPageUrl() });
       const skillsForReminder = (await detectActiveSkills(candidates)).map(s => ({...s, enabled:true}));
       setActiveSkills(skillsForReminder);
+      const loadedSkills = new Set(skillsForReminder.map(s => s.name));
+      await record({
+        type: "skills",
+        skills: skillsForReminder.map(skillVersionInfo),
+        ...(candidates.some(s => !loadedSkills.has(s.name)) ? { notLoaded: candidates.filter(s => !loadedSkills.has(s.name)).map(skillVersionInfo) } : {}),
+      });
       const builtinSite=skillsForReminder.some(s=>!s.filePath.startsWith("user-skill:"));
       permissionGuide.setBuiltinSite(builtinSite);
 
@@ -776,7 +808,7 @@ async function bootstrap(): Promise<void> {
       // Zod validation rejects the conversation with "Invalid prompt: The
       // messages do not match the ModelMessage[] schema." and the user
       // has no way to recover except deleting the conversation.
-      const messagesForModel = modelContext ? [...modelContext,visibleUserMessage] : conversationMessages;
+      const messagesForModel = modelContext ? [...modelContext,...conversationMessages.slice(modelContextCovers)] : conversationMessages;
       const { sanitized: cleanMessages, healed } = sanitizeMessages(messagesForModel);
       if (healed > 0) {
         console.info(
@@ -823,7 +855,7 @@ async function bootstrap(): Promise<void> {
             break;
           }
           case "context-summary": {
-            modelContext=part.modelContext;
+            setModelContext(part.modelContext);
             persistCurrentConvo();
             panel.setLoadingStatus("Context compacted · continuing…");
             break;
@@ -834,13 +866,16 @@ async function bootstrap(): Promise<void> {
               reasoningBlock.finalize();
               reasoningBlock = null;
             }
-            // After the first step we keep accumulating into the same bubble,
-            // exactly like main.js: reset the in-flight bubble so a follow-up
-            // assistant turn lives in its own bubble.
-            if (stepCount > 1) {
+            // A follow-up step gets its own bubble; a continuation of an
+            // answer cut off by the output cap keeps writing into the same one.
+            if (stepCount > 1 && !part.continuation) {
               panel.removeThinking();
+              assistantBubble?.finalize();
               assistantBubble = null;
-              if (inFlight) inFlight.fullText = "";
+              if (inFlight) {
+                inFlight.priorText = inFlightText(inFlight);
+                inFlight.fullText = "";
+              }
             }
             break;
           }
@@ -913,6 +948,7 @@ async function bootstrap(): Promise<void> {
               panel.setLoadingStatus("Navigation detected; stopping turn.");
               snapshotInFlightToMessages();
               snapshotted = true;
+              navigated = true;
               if (currentConvoId) {
                 try {
                   await saveConversation({
@@ -924,6 +960,8 @@ async function bootstrap(): Promise<void> {
                         ? String(conversationMessages[0].content).slice(0, 80)
                         : "Untitled"),
                     messages: conversationMessages,
+                    modelContext: modelContext ?? undefined,
+                    modelContextCovers: modelContext ? modelContextCovers : undefined,
                     createdAt: Date.now(),
                     updatedAt: Date.now(),
                     usage: conversationUsage,
@@ -983,10 +1021,14 @@ async function bootstrap(): Promise<void> {
         // Some providers resolve a canonical response after abort; appending it
         // again would duplicate the preserved text and tool results.
         inFlight=null;snapshotted=true;
+      } else if (navigated) {
+        // The navigation branch already saved the partial turn; the canonical
+        // response repeats the same messages.
+        inFlight = null;
       } else if (response?.messages) {
         renderMissingToolCardsFromMessages(response.messages, toolCards);
         conversationMessages.push(...response.messages);
-        modelContext = response.modelContext;
+        setModelContext(response.modelContext);
         // AI SDK already gave us a canonical message list; the partial
         // mirror in `inFlight` would just duplicate it, so drop it.
         inFlight = null;
@@ -1006,6 +1048,8 @@ async function bootstrap(): Promise<void> {
       }
 
       accumulateUsage(usage as any);
+      if (abortController?.signal.aborted && !turnErrorDisplay) reportStopped();
+      else {
       panel.setStatus(turnErrorDisplay&&settings.provider==="xgoose-hosted"&&isHostedAuthStopped(turnErrorDisplay)?"Listening stopped — sign in to continue":`${stepCount} step${stepCount === 1 ? "" : "s"}`);
       track(turnErrorDisplay?"chat_turn_failed":"chat_turn_finished", {
         flow_id:turnFlow,duration_ms:Date.now()-turnStarted,
@@ -1014,6 +1058,7 @@ async function bootstrap(): Promise<void> {
         provider: getSettings().provider,
         model: getSettings().model,
       });
+      }
 
       void clearResumeGlobal().catch((e) =>
         console.warn("[xgoose:resume] stale clear failed", e),
@@ -1024,19 +1069,12 @@ async function bootstrap(): Promise<void> {
         // Navigation-triggered abort vs user-Stop abort. In both cases we keep
         // the partial transcript, but never resume automatically on another
         // page.
-        const wasNav = snapshotted; // tool-result nav branch set this true
-        if (!wasNav) {
-          if (snapshotInFlightToMessages()) snapshotted = true;
-        }
+        if (!snapshotted && snapshotInFlightToMessages()) snapshotted = true;
         // Aborted turns don't reach the stream `finish` event, so we never get
         // a `result.usage` for them. We still bump the turn counter (so
         // history math stays consistent) but can't credit tokens or cost.
         accumulateUsage(null);
-        panel.setStatus(lifecycleInterrupted ? "Interrupted — send another message to continue" : wasNav ? "Navigation stopped the turn" : "Stopped");
-        track(wasNav ? "chat_turn_navigated" : "chat_turn_stopped_by_user", {
-          flow_id:turnFlow,duration_ms:Date.now()-turnStarted,provider:getSettings().provider,
-          steps: stepCount,
-        });
+        reportStopped();
       } else {
         // True error path: still try to preserve partial work so the user
         // doesn't lose context, then surface the error. We also forward
@@ -1564,9 +1602,19 @@ function replayConversation(panel: Panel, messages: any[]): void {
   // message. Otherwise replayed conversations show every tool card stuck in
   // the "running" state and the output text never appears.
   const cardsByCallId = new Map<string, ReturnType<Panel["addToolCard"]>>();
+  // Consecutive assistant text (an answer continued after the output cap)
+  // shares one bubble; any other element in between starts a new one.
+  let openBubble: { bubble: ReturnType<Panel["addAssistantBubble"]>; text: string } | null = null;
+  const appendAssistantText = (text: string): void => {
+    openBubble ??= { bubble: panel.addAssistantBubble(), text: "" };
+    openBubble.text += text;
+    openBubble.bubble.updateMarkdown(cleanAssistantText(openBubble.text));
+    openBubble.bubble.finalize();
+  };
 
   for (const msg of messages) {
     if (!msg || typeof msg !== "object") continue;
+    if (msg.role !== "assistant") openBubble = null;
 
     if (msg.role === "user") {
       const text =
@@ -1593,19 +1641,19 @@ function replayConversation(panel: Panel, messages: any[]): void {
       panel.addUserMessage(display,images);
     } else if (msg.role === "assistant") {
       if (typeof msg.content === "string") {
-        const bubble = panel.addAssistantBubble();
-        bubble.updateMarkdown(cleanAssistantText(msg.content));
-        bubble.finalize();
+        appendAssistantText(msg.content);
       } else if (Array.isArray(msg.content)) {
         const textParts: string[] = [];
         for (const p of msg.content) {
           if (p?.type === "text" && typeof p.text === "string") {
             textParts.push(p.text);
           } else if (p?.type === "reasoning" && typeof p.text === "string") {
+            openBubble = null;
             const r = panel.addReasoningBlock();
             r.appendDelta(p.text);
             r.finalize();
           } else if (p?.type === "tool-call") {
+            openBubble = null;
             const callId = String(p.toolCallId ?? p.id ?? "");
             const card = panel.addToolCard(
               String(p.toolName ?? p.name ?? "tool"),
@@ -1618,11 +1666,7 @@ function replayConversation(panel: Panel, messages: any[]): void {
             if (inline !== undefined) card.setResult(inline);
           }
         }
-        if (textParts.length) {
-          const bubble = panel.addAssistantBubble();
-          bubble.updateMarkdown(cleanAssistantText(textParts.join("")));
-          bubble.finalize();
-        }
+        if (textParts.join("")) appendAssistantText(textParts.join(""));
       }
     } else if (msg.role === "tool") {
       // Apply results to the matching tool cards rendered above.
@@ -1649,6 +1693,18 @@ function replayConversation(panel: Panel, messages: any[]): void {
       );
     }
   }
+}
+
+function skillVersionInfo(skill: RegistrySkill) {
+  return {
+    name: skill.name,
+    namespace: skill.namespace,
+    version: skill.version,
+    source: skill.filePath.startsWith("user-skill:") ? "user" : "builtin",
+    ...(skill.sha || skill.sourceSha ? { sha: (skill.sha || skill.sourceSha)!.slice(0, 12) } : {}),
+    ...(skill.updatedAt ? { updatedAt: skill.updatedAt } : {}),
+    ...(skill.requires.length ? { requires: skill.requires } : {}),
+  };
 }
 
 function safeStringify(v: unknown): string {

@@ -81,4 +81,4 @@ export type {
 } from "./ports";
 export { NoSkillContext } from "./ports";
 export {websiteEvidence} from './websiteEvidence';
-export {boundedModelText,resultBudgetBytes,setResultBudget,storeResult} from './resultStore';
+export {boundedModelText,clearStoredResults,resultBudgetBytes,setResultBudget,storeResult} from './resultStore';

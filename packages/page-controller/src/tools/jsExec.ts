@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { boundedModelText, defineTool, websiteEvidence, type XgooseBuiltTool } from "@xgoose/core";
+import { boundedModelText, defineTool, storeResult, websiteEvidence, type XgooseBuiltTool } from "@xgoose/core";
 import { callBridge } from "../pageRpc";
 
 const DEFAULT_JS_EXEC_TIMEOUT_MS = 30_000;
@@ -147,6 +147,7 @@ export function jsExecModelOutput(output:unknown) {
   const envelope=output as {ok?:boolean;result?:unknown;resultId?:unknown}|null;
   const id=typeof envelope?.resultId==="string"?envelope.resultId:undefined;
   const shown=envelope?.ok?{...envelope,result:websiteEvidence(envelope.result,location.origin)}:output;
+  if(id&&envelope?.ok)storeResult(id,envelope.result);
   const text=boundedModelText(envelope?.ok?envelope.result:output,safeJson(shown),{id,pageHandle:!!id});
   return [{type:"text" as const,text}];
 }

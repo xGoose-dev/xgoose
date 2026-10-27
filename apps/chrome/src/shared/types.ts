@@ -228,6 +228,8 @@ export type UserSkill = z.infer<typeof UserSkillSchema>;
 
 export type StoredConversation = {
   modelContext?: any[];
+  /** Number of leading `messages` that `modelContext` already represents. */
+  modelContextCovers?: number;
   id: string;
   origin: string;
   title: string;

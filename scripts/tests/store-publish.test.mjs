@@ -11,7 +11,13 @@ test('Edge uploads once, polls, then submits notes as text',async()=>{
  assert.equal(calls.length,5);assert.equal(calls.filter(c=>c.options.method==='POST').length,2);assert.equal(calls[3].options.body,'Review fixture');assert.equal(calls[3].options.headers['content-type'],'text/plain');assert.equal(result.stage,'submitted-for-review');
 });
 test('in-review Edge rejection stops without withdrawal or retry',async()=>{
- let calls=0;await assert.rejects(submitStore({store:'edge',zip:Buffer.from('zip'),credentials:edge,wait:async()=>{},fetchImpl:async()=>++calls===1?new Response(null,{status:202,headers:{location:'upload-id'}}):Response.json({status:'Failed',errorCode:'InProgressSubmission'})}),/InProgressSubmission/);assert.equal(calls,2);
+ let calls=0;await assert.rejects(submitStore({store:'edge',zip:Buffer.from('zip'),credentials:edge,wait:async()=>{},fetchImpl:async()=>++calls===1?new Response(null,{status:202,headers:{location:'upload-id'}}):Response.json({status:'Failed',errorCode:'InProgressSubmission',message:'A submission is already in review.'})}),/InProgressSubmission: A submission is already in review\. A previous submission is still in review/);assert.equal(calls,2);
+});
+test('Chrome HTTP errors name the step and include the store explanation',async()=>{
+ const credentials=Object.fromEntries(['CWS_CLIENT_ID','CWS_CLIENT_SECRET','CWS_REFRESH_TOKEN','CWS_PUBLISHER_ID','CWS_EXTENSION_ID'].map(k=>[k,'fixture']));
+ const responses=[Response.json({access_token:'fixture-token'}),Response.json({error:{code:400,message:'Item is pending review and cannot be updated.'}},{status:400})];
+ await assert.rejects(submitStore({store:'chrome',zip:Buffer.from('zip'),credentials,wait:async()=>{},fetchImpl:async()=>responses.shift()}),
+  /^Error: Chrome upload returned HTTP 400: Item is pending review and cannot be updated\. A previous submission is still in review/);
 });
 test('Chrome uses v2, waits for async upload and then requests automatic publication',async()=>{
  const calls=[];const responses=[Response.json({access_token:'fixture-token'}),Response.json({uploadState:'IN_PROGRESS'}),Response.json({lastAsyncUploadState:'SUCCEEDED'}),Response.json({state:'PENDING_REVIEW'})];

@@ -5,6 +5,7 @@ import {createAgent} from '../packages/core/src/createAgent.ts';
 import {estimateTextTokens,requestContextTokens} from '../packages/core/src/contextTokens.ts';
 import {modelContextWindow,inputTokenBudget} from '../packages/core/src/contextPolicy.ts';
 import {defineTool} from '../packages/core/src/tools/buildTool.ts';
+import {costsFor} from '../packages/core/src/pricing.ts';
 import {z} from 'zod';
 const settings={provider:'openai-compat' as const,model:'luna',baseUrl:'https://fixture.invalid',apiKey:'fixture',thinking:false};
 function response(text:string){return new Response(`data: ${JSON.stringify({choices:[{index:0,delta:{role:'assistant',content:text},finish_reason:null}]})}\n\ndata: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`,{headers:{'content-type':'text/event-stream'}});}
@@ -26,6 +27,20 @@ test('Hosted and known BYOK windows follow the model, with output headroom',()=>
  assert.equal(modelContextWindow('custom-unknown'),128_000);
  assert.equal(createModel({...settings,model:'future-hosted',contextWindowTokens:2_000_000}).contextWindow,2_000_000);
  assert.ok(inputTokenBudget(1_000_000)<1_000_000-4096);
+ assert.equal(modelContextWindow('gpt-6.1-terra'),1_050_000);
+ assert.equal(modelContextWindow('deepseek-flash'),1_000_000);
+ assert.equal(modelContextWindow('claude-sonnet-4-5'),200_000);
+ assert.equal(modelContextWindow('gpt-5-mini'),400_000);
+});
+test('the completion cap follows what each model accepts',()=>{
+ const cap=(model:string)=>createModel({...settings,model}).maxTokens;
+ for(const id of ['luna','gpt-6.1-terra','claude-haiku-5-5','claude-sonnet-4-5','gpt-4o-mini','gpt-4.1','o4-mini','gemini-2.5-pro','gemini-3.1-pro'])assert.equal(cap(id),16384,id);
+ assert.equal(cap('deepseek-flash'),8192);
+ assert.equal(cap('gemini-2.0-flash'),8192);
+ for(const id of ['gpt-4','gpt-3.5-turbo','custom-unknown'])assert.equal(cap(id),4096,id);
+});
+test('Hosted models are priced from the gateway catalogue',()=>{
+ for(const id of ['gpt-6.1-sol','gpt-6.1-terra','claude-sonnet-5-5','claude-haiku-5-5','deepseek-flash'])assert.ok(costsFor('xgoose-hosted' as any,id),id);
 });
 test('an 800K-token prompt uses the large model window without premature compaction',async()=>{
  const text='evidence '.repeat(800000)+'FINAL_GOAL';const tokens=estimateTextTokens(text);

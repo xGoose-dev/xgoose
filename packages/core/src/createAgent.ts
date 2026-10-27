@@ -33,6 +33,7 @@ export interface CreateAgentOpts {
   streamFn?: StreamFn;
 }
 export type AgentBundle = { agent: PageAgentRuntime; tools: Record<string, XgooseBuiltTool> };
+const LENGTH_CONTINUATION = "Your previous reply was cut off by the output limit. Continue exactly where it stopped, without repeating earlier text.";
 const emptyUsage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
 function capContextImages(messages:AgentMessage[]):AgentMessage[] {
   let left=8;
@@ -95,7 +96,7 @@ export class PageAgentRuntime {
     setResultBudget(model.contextWindow);
     const history = toPiMessages(input.messages, model);
     this.modelMessages = history;
-    let steps = 0, lengthContinuations = 0;
+    let steps = 0, lengthContinuations = 0, continueAfterLength = false;
     const completedMessages: AgentMessage[] = [];
     const summaryUsage: AssistantMessage[] = [];
     let gatewayBudget=opts.requestBudgetBytes??requestByteBudget(model.contextWindow);
@@ -264,19 +265,21 @@ export class PageAgentRuntime {
         activeContext=bounded;
         const compacted=await compactContext(bounded,signal);
         const chosen=compacted??bounded;
+        // Providers reject or misread a request that ends with an assistant message.
+        if(continueAfterLength){continueAfterLength=false;chosen.messages.push({role:"user",content:[{type:"text",text:LENGTH_CONTINUATION}],timestamp:Date.now()});}
         await emit({type:'context-usage',tokens:requestContextTokens(chosen.messages,model),contextWindow:model.contextWindow,outputReserve:OUTPUT_RESERVE_TOKENS,estimated:true,model:model.id});
-        if(compacted){activeContext=compacted;return {context:compacted};}
-        return {context:bounded};
+        activeContext=chosen;
+        return {context:chosen};
       },
       finishTurn: (turn) => {
         if (++steps >= (opts.maxSteps ?? 50)) return { action: "end" };
-        if (turn.message.stopReason === "length" && !turn.toolResults.length && lengthContinuations++ < 2) return { action: "continue" };
+        if (turn.message.stopReason === "length" && !turn.toolResults.length && lengthContinuations++ < 2) { continueAfterLength = true; return { action: "continue" }; }
       },
     });
     this.pi = pi;
     const emit = async (event: RuntimeEvent) => { for (const listener of this.listeners) await listener(event); queue.push(event); };
     const unsubscribe = pi.subscribe(async event => {
-      if (event.type === "turn_start") await emit({ type: "start-step" });
+      if (event.type === "turn_start") await emit({ type: "start-step", ...(continueAfterLength ? { continuation: true } : {}) });
       if (event.type === "message_update") {
         const e = event.assistantMessageEvent;
         if (e.type === "text_delta") await emit({ type: "text-delta", text: e.delta });

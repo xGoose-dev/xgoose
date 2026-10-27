@@ -11,7 +11,7 @@ export async function executeUserScript(sender: chrome.runtime.MessageSender, co
   return result.result;
 }
 export async function executePage(sender: chrome.runtime.MessageSender, payload: { code: string; args?: unknown[]; timeoutMs?: number; execId: string }) {
-  const timeout = Math.min(Math.max(payload.timeoutMs ?? 30000, 100), 120000);
+  const timeout = Math.min(Math.max(payload.timeoutMs ?? 30000, 100), 600000);
   const code = `(async () => {
     const jobs = globalThis.__xgooseExecutions ??= new Map();
     const root = globalThis.xgoose ??= { skills: {} }, results = root.results ??= {};
