@@ -24,7 +24,7 @@ test('Discourse list evidence keeps every topic as one line with reply counts an
 
 test('unrecognized skill results, errors and topic bodies remain intact', () => {
   for (const result of [null, 'text', {httpStatus:403}, {posts:[{text:'Full source body'}]},
-    {topic_list:{topics:[{unexpected:'shape'}]}}]) assert.equal(websiteEvidence(result, 'https://forum.example'), result);
+    {topic_list:{topics:[{unexpected:'shape'}]}}]) assert.deepEqual(websiteEvidence(result, 'https://forum.example'), result);
 });
 
 test('thread posts become one line each, keeping floor, author, date changes, likes and non-adjacent reply targets', () => {
@@ -40,7 +40,7 @@ test('thread posts become one line each, keeping floor, author, date changes, li
   assert.deepEqual(projected.posts, [
     '#1 @op 2026-10-01 ♥3: 首发',
     '#2 @dp: 改 payment 成功',
-    '#3 @q 2026-10-02 ↩1: 怎么改？',
+    '#3 @q 2026-10-02 ↩#1: 怎么改？',
     '#4 @long: Part one …[continues at text_offset 8]',
   ]);
   assert.equal(projected.post_url, 'https://forum.example/t/citi-uber/42/{floor}');
@@ -53,7 +53,7 @@ test('reply targets stay visible across gaps and truncation without an offset is
     {post_number: 9, username: 'b', reply_to_post_number: 5, text: 'answers #5 across a gap'},
     {post_number: 10, username: 'c', reply_to_post_number: 9, text: 'Preview', text_truncated: true},
   ], url: 'https://forum.example/t/x/1', hint: 'First five posts only.'}, 'https://forum.example') as any;
-  assert.deepEqual(projected.posts, ['#5 @a: first', '#9 @b ↩5: answers #5 across a gap', '#10 @c: Preview …[truncated]']);
+  assert.deepEqual(projected.posts, ['#5 @a: first', '#9 @b ↩#5: answers #5 across a gap', '#10 @c: Preview …[truncated]']);
   assert.equal(projected.hint, 'First five posts only.');
 });
 
@@ -68,4 +68,27 @@ test('search results keep each hit with its topic and floor and drop search book
   assert.equal(projected.more_results, true);
   assert.equal(projected.hint, 'Search snippets only.');
   assert.equal(projected.grouped_search_result, undefined);
+});
+
+test('reply targets name the user they answer, and inline quotes stay in the line', () => {
+  const projected = websiteEvidence({url: 'https://www.uscardforum.com/t/542092', posts: [
+    {post_number: 66, username: 'Rummy', text: '让codex直接读网页有点复杂 所以我的需求是 有什么本地codex或者claude来高效总结的流程？'},
+    {post_number: 67, username: 'LeeKuanYew', reply_to_post_number: 64, reply_to_username: '索马里二当家', text: '我查一下 log'},
+    {post_number: 68, username: 'LeeKuanYew', reply_to_post_number: 66, reply_to_username: 'Rummy',
+      text: '[quote @Rummy #66: 让codex直接读网页有点复杂] 没有呀，这都是有 skills 的 API [quote @Rummy #66: 所以我的需求是 有什么本地codex或者claude来高效总结的流程？] 你可以选择让 codex 使用一样的 skills'},
+  ]}, 'https://www.uscardforum.com') as any;
+  assert.deepEqual(projected.posts.slice(1), [
+    '#67 @LeeKuanYew ↩@索马里二当家#64: 我查一下 log',
+    '#68 @LeeKuanYew ↩@Rummy#66: [quote @Rummy #66: 让codex直接读网页有点复杂] 没有呀，这都是有 skills 的 API [quote @Rummy #66: 所以我的需求是 有什么本地codex或者claude来高效总结的流程？] 你可以选择让 codex 使用一样的 skills',
+  ]);
+});
+
+test('skill results combined by js_exec code are compacted inside arrays, allSettled entries and objects', () => {
+  const thread = {url: 'https://forum.example/t/42', posts: [{post_number: 1, username: 'op', created_at: '2026-10-01T00:00:00Z', text: 'body'}]};
+  const search = {topics: [{id: 42, title: 'Citi Uber'}], posts: [{topic_id: 42, post_number: 3, blurb: 'snippet'}]};
+  const projected = websiteEvidence({search, reads: [{status: 'fulfilled', value: thread}, {status: 'rejected', reason: 'HTTP 429'}], note: 'kept'}, 'https://forum.example') as any;
+  assert.deepEqual(projected.search.topics, ['#42 Citi Uber']);
+  assert.deepEqual(projected.reads[0].value.posts, ['#1 @op 2026-10-01: body']);
+  assert.deepEqual(projected.reads[1], {status: 'rejected', reason: 'HTTP 429'});
+  assert.equal(projected.note, 'kept');
 });

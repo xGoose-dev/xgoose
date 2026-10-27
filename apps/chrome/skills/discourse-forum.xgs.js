@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discourse-forum
 // @namespace    discourse
-// @version      0.2.12
+// @version      0.2.13
 // @description  Search Discourse forums, read topics and replies, and research community insights.
 // @match        *://meta.discourse.org/*
 // @match        *://*.discourse.org/*
@@ -146,16 +146,23 @@ function compactSearchResult(raw) {
 }
 
 const squash = (text) => String(text || '').replace(/\s+/g, ' ').trim();
-/** Post text without content duplicated elsewhere: quoted floors, link previews and image file metadata. */
-function htmlToText(html) {
+const SELECTED_QUOTE_CHARS = 300, FULL_QUOTE_CHARS = 80;
+/** Post text without content duplicated elsewhere: link previews, image file metadata and whole-post quotes,
+ *  which keep a preview because the quoted floor is in the stream. Selected quotes are what the reply answers. */
+function htmlToText(html, topicId) {
   if (typeof html !== 'string') return '';
   const div = document.createElement('div');
   div.innerHTML = html;
+  // Detached elements have no layout, so innerText would join paragraphs without a separator.
+  div.querySelectorAll?.('p,br,li,h1,h2,h3,h4,h5,h6,tr,blockquote').forEach(block => block.after(' '));
   div.querySelectorAll?.('.lightbox-wrapper .meta').forEach(meta => meta.remove());
   div.querySelectorAll?.('aside.onebox').forEach(box => box.replaceWith(` ${box.getAttribute('data-onebox-src') || box.querySelector('a')?.href || ''} `));
-  div.querySelectorAll?.('aside.quote').forEach(quote => {
-    const body = squash(quote.querySelector('blockquote')?.textContent), who = quote.getAttribute('data-username'), floor = quote.getAttribute('data-post');
-    quote.replaceWith(` [quote${who ? ` @${who}` : ''}${floor ? ` #${floor}` : ''}: ${body.length > 80 ? `${body.slice(0, 80)}…` : body}] `);
+  // Innermost first, so an outer quote carries its nested quote's marker.
+  Array.from(div.querySelectorAll?.('aside.quote') ?? []).reverse().forEach(quote => {
+    const body = squash(quote.querySelector('blockquote')?.textContent), who = quote.getAttribute('data-username'), floor = quote.getAttribute('data-post'), topic = quote.getAttribute('data-topic');
+    const limit = quote.getAttribute('data-full') === 'true' ? FULL_QUOTE_CHARS : SELECTED_QUOTE_CHARS;
+    const ref = `${topic && topicId && topic !== String(topicId) ? `t/${topic}` : ''}${floor ? `#${floor}` : ''}`;
+    quote.replaceWith(` [quote${who ? ` @${who}` : ''}${ref ? ` ${ref}` : ''}: ${body.length > limit ? `${body.slice(0, limit)}…` : body}] `);
   });
   return squash(div.innerText || div.textContent);
 }
@@ -165,18 +172,22 @@ function compactTopicResult(raw, maxChars) {
   if (raw.httpStatus) return raw;
   const postsRaw = raw.post_stream?.posts || raw.posts || [];
   const posts = Array.isArray(postsRaw)
-    ? postsRaw.slice(0, 5).map((p) => ({
-        id: p.id,
-        post_number: p.post_number,
-        username: p.username,
-        created_at: p.created_at,
-        like_count: p.like_count,
-        reply_count: p.reply_count,
-        reply_to_post_number: p.reply_to_post_number ?? null,
-        text: maxChars === undefined ? htmlToText(p.cooked || p.blurb || p.raw) : htmlToText(p.cooked || p.blurb || p.raw).slice(0, maxChars),
-        text_truncated: maxChars !== undefined && htmlToText(p.cooked || p.blurb || p.raw).length > maxChars,
-        url: `${location.origin}/t/${p.topic_id ?? raw.id}/${p.post_number}`,
-      }))
+    ? postsRaw.slice(0, 5).map((p) => {
+        const text = htmlToText(p.cooked || p.blurb || p.raw, p.topic_id ?? raw.id);
+        return {
+          id: p.id,
+          post_number: p.post_number,
+          username: p.username,
+          created_at: p.created_at,
+          like_count: p.like_count,
+          reply_count: p.reply_count,
+          reply_to_post_number: p.reply_to_post_number ?? null,
+          reply_to_username: p.reply_to_user?.username ?? null,
+          text: maxChars === undefined ? text : text.slice(0, maxChars),
+          text_truncated: maxChars !== undefined && text.length > maxChars,
+          url: `${location.origin}/t/${p.topic_id ?? raw.id}/${p.post_number}`,
+        };
+      })
     : [];
   return {
     id: raw.id,
@@ -215,12 +226,14 @@ const TopicResultSchema = z.object({
         created_at: z.string().optional(),
         like_count: z.number().nullable().optional(),
         reply_count: z.number().optional(),
+        reply_to_post_number: z.number().nullable().optional(),
+        reply_to_username: z.string().nullable().optional(),
         text_truncated: z.boolean(),
         url: z.string(),
         text: z
           .string()
           .describe(
-            'Plain-text post body, limited by maxChars.',
+            'Plain-text post body, limited by maxChars. Quotes appear inline as [quote @user #floor: quoted text].',
           ),
       }),
     )
@@ -233,8 +246,8 @@ async function forumJson(path) {
   if (result?.httpStatus) throw new Error(result.message);
   return result;
 }
-function postText(post) {
-  return htmlToText(post.cooked || '') || squash(post.raw);
+function postText(post, topicId) {
+  return htmlToText(post.cooked || '', topicId) || squash(post.raw);
 }
 function topicLink(id) { return `${location.origin}/t/${id}`; }
 async function summaryTopic(topicId, firstReplies=30, latestReplies=100) {
@@ -258,8 +271,8 @@ async function summaryTopic(topicId, firstReplies=30, latestReplies=100) {
     for (const post of result.post_stream?.posts || []) posts.set(post.id,post);
   }
   const result = selected.map(postId=>posts.get(postId)).filter(Boolean).map(post=>{
-    const text=postText(post);
-    return {post_number:post.post_number,username:post.username,created_at:post.created_at,like_count:post.like_count ?? null,reply_to_post_number:post.reply_to_post_number ?? null,text,text_truncated:false,url:`${topicLink(id)}/${post.post_number}`};
+    const text=postText(post,id);
+    return {post_number:post.post_number,username:post.username,created_at:post.created_at,like_count:post.like_count ?? null,reply_to_post_number:post.reply_to_post_number ?? null,reply_to_username:post.reply_to_user?.username ?? null,text,text_truncated:false,url:`${topicLink(id)}/${post.post_number}`};
   });
   return {title:topic.title,url:topicLink(id),posts_count:topic.posts_count,highest_post_number:topic.highest_post_number,
     selection:selected.length===stream.length?'all visible posts':`first post, first ${firstReplies} replies and latest ${latestReplies} replies`,selected_count:selected.length,read_count:result.length,
@@ -307,7 +320,9 @@ const TopicReadResult = z.object({
   posts_count:z.number().optional().describe('Total posts including the opening post.'),
   highest_post_number:z.number().optional().describe('Last floor number; deleted posts can leave gaps.'),
   posts:z.array(z.object({
-    id:z.number(),post_number:z.number(),username:z.string(),url:z.string(),text:z.string(),
+    id:z.number(),post_number:z.number(),username:z.string(),url:z.string(),
+    text:z.string().describe('Plain-text body. Quotes appear inline as [quote @user #floor: quoted text]; another topic is t/<id>#floor.'),
+    reply_to_post_number:z.number().nullable(),reply_to_username:z.string().nullable(),
     like_count:z.number().nullable(),text_truncated:z.boolean(),text_offset:z.number(),total_text_chars:z.number(),next_text_offset:z.number().nullable(),
   }).passthrough()),
   complete:z.boolean().describe('True only if this result contains the entire visible topic and untruncated bodies.'),
@@ -346,11 +361,11 @@ function rangeCursor(state, offset) {
   return JSON.stringify({topicId:state.topic.id,origin:location.origin,revision:state.revision,offset});
 }
 function rangePost(post, maxChars, textOffset=0) {
-  const text = htmlToText(post.cooked || post.raw || post.blurb || '');
+  const text = htmlToText(post.cooked || post.raw || post.blurb || '', post.topic_id);
   const end = maxChars === undefined ? text.length : Math.min(text.length, textOffset+maxChars);
   const likes = post.like_count ?? post.actions_summary?.find(action => action.id === 2)?.count ?? null;
   return {id:post.id,post_number:post.post_number,username:post.username,created_at:post.created_at,
-    like_count:likes,reply_count:post.reply_count,reply_to_post_number:post.reply_to_post_number ?? null,url:`${location.origin}/t/${post.topic_id}/${post.post_number}`,
+    like_count:likes,reply_count:post.reply_count,reply_to_post_number:post.reply_to_post_number ?? null,reply_to_username:post.reply_to_user?.username ?? null,url:`${location.origin}/t/${post.topic_id}/${post.post_number}`,
     text:text.slice(textOffset,end),text_offset:textOffset,total_text_chars:text.length,
     text_truncated:textOffset>0 || end<text.length,next_text_offset:end<text.length?end:null};
 }
@@ -565,6 +580,7 @@ export default defineSkill({
 - Prioritize recent information, helpful topics with high engagement, first-hand experiences and official announcements or policy changes.
 - Use provided action-result first. Search snippets locate discussions; read bodies for content claims. Listing/count questions need the requested metadata only.
 - Check topic size before choosing reading depth. getTopic and getTopicPosts return five posts. Use readTopicPosts for larger ranges with a bounded limit; follow next_cursor sequentially. If expired, resume from next_post_number. Recover needed truncated text with fromPostNumber, limit:1 and textOffset:next_text_offset.
+- Return skill results as they are, alone or combined in an object or array (including Promise.allSettled). They reach you as one compact line per post with date, likes, reply target (↩@user#floor) and inline quotes ([quote @user #floor: text]). Re-mapping posts or a small maxChars drops who is answering whom.
 - Summarize rather than quote whole threads. Describe outcomes, dates, amounts and relevant circumstances; include author, available likes and post links. Follow the user's scope and language.`,
   actions: [
     {label:'Latest topics', prompt:"List the newest topics in action-result by creation time, with a short description and source link for each.",js:"return await xgoose.skills.discourse.getRecentTopics({kind:'new'});"},
