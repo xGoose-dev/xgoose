@@ -341,6 +341,7 @@ async function bootstrap(): Promise<void> {
   // `finish` path (and the navigation-abort path so resumed turns still
   // count). Pricing is best-effort; unknown models bump `unpricedTurns` so the
   // status bar can show a `*` next to the cost.
+  let usageModel: string | undefined;
   const accumulateUsage = (
     u: {
       inputTokens?: number | null;
@@ -373,7 +374,7 @@ async function bootstrap(): Promise<void> {
     // Completions through the xgoose gateway, so price it like openai-compat.
     const costProvider =
       s.provider === "xgoose-hosted" ? "openai-compat" : s.provider;
-    const costs = costsFor(costProvider, s.model);
+    const costs = costsFor(costProvider, usageModel ?? s.model);
     const turnCost = costs
       ? priceTurn(costs, {
           inputTokens,
@@ -834,6 +835,7 @@ async function bootstrap(): Promise<void> {
       // Reminder content changes (navigation, new todos, new memory) DO
       // invalidate the whole prefix — but that was already true before, and
       // those events are rare relative to "user types another question".
+      usageModel = settings.model;
       const bundle = await createAgent({ settings, reminder, onProviderResponse: async event=>{await record(event);} });
       bundle.agent.subscribe(async event => {
         if (event.type === "text-delta" || event.type === "reasoning-delta") return;
@@ -847,6 +849,7 @@ async function bootstrap(): Promise<void> {
       for await (const part of result.fullStream as AsyncIterable<any>) {
         switch (part.type) {
           case 'context-usage': {
+            usageModel = part.model;
             panel.setContextUsage(part);
             break;
           }

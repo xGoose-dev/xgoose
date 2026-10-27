@@ -1,3 +1,4 @@
+import {HOSTED_DEFAULT_CHOICE, resolveHostedModel, hostedModelLabel} from "@/shared/hostedModels";
 import {initializeLocale,saveLanguage,mountAnswerLanguage,translate,type LanguagePreference} from "@/shared/locale";
 import { mountSkillUpdates } from "./skillUpdates";
 import { mountCatalog } from "./catalog";
@@ -30,7 +31,7 @@ import { track,failureReason } from "@/shared/analytics";
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<Provider, string> = {
   ...CORE_DEFAULT_MODEL_BY_PROVIDER,
-  "xgoose-hosted": "claude-haiku-5-5",
+  "xgoose-hosted": HOSTED_DEFAULT_CHOICE,
 };
 
 const SETTINGS_KEY = "xgoose.settings";
@@ -399,7 +400,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
     const apiKey = apiKeyEl.value;
     const baseUrl = baseUrlEl.value.trim();
     testApiKeyBtn.disabled = true;
-    setTestStatus(provider === "xgoose-hosted" ? "Testing Luna… The first connection may take up to 3 minutes." : "Testing…", "info");
+    setTestStatus(provider === "xgoose-hosted" ? "Testing Hosted AI… The first connection may take up to 3 minutes." : "Testing…", "info");
     track("options_api_key_test_clicked", { provider });
     try {
       const res = await send("sw:test_api_key", { provider, apiKey, baseUrl, model: readCurrentChoice()?.id });
@@ -445,8 +446,8 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
       const fallback = DEFAULT_MODEL_BY_PROVIDER["xgoose-hosted"];
       opt.value = fallback;
       opt.textContent = !res.signedIn
-        ? `${fallback} (sign in required)`
-        : `${fallback} (model list unavailable)`;
+        ? translate("Default (sign in required)")
+        : translate("Default (model list unavailable)");
       modelEl.appendChild(opt);
       modelEl.disabled = true;
       modelCustomToggleEl.checked = false;
@@ -454,9 +455,11 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
       modelCustomRowEl.hidden = true;
       return;
     }
-    MODEL_ENTRIES["xgoose-hosted"] = res.models.map(
-      (id): ModelEntry => ({ id, thinking: false, label: id }),
-    );
+    const defaultModel=resolveHostedModel(HOSTED_DEFAULT_CHOICE,res);
+    MODEL_ENTRIES["xgoose-hosted"] = [
+      {id:HOSTED_DEFAULT_CHOICE,thinking:false,label:translate("Default — {model}").replace("{model}",hostedModelLabel(defaultModel))},
+      ...res.models.map((id): ModelEntry => ({id,thinking:false,label:hostedModelLabel(id)})),
+    ];
     hostedStatusHintEl.style.color = "";
     hostedStatusHintEl.textContent = `Hosted models: ${res.models.length} available · routed through your xgoose account.`;
     const current = readCurrentChoice();

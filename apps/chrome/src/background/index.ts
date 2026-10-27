@@ -1,4 +1,4 @@
-import {withHostedSession} from './hostedSession';
+import {listHostedModels} from "./hostedModels";
 import {providerFetch} from './providerFetch';
 import {isSafari} from "@/shared/host";
 import {prepareHost,nativeCommand} from "@/shared/platformBridge";
@@ -53,7 +53,6 @@ import {
   startLogin,
   cancelLogin,
 } from "./account";
-import { apiFetch } from "@/shared/account";
 import { installConfigSyncListeners } from "./configSync";
 import { testApiKey } from "./testApiKey";
 import { recordEvent } from "@/shared/analytics";
@@ -357,35 +356,7 @@ registerRouter({
   },
   "sw:account_refresh": async () => refreshTokens(),
   "sw:test_api_key": async (payload) => testApiKey(payload),
-  "sw:list_xgoose_models": async ({ refresh }) => {
-    // Backed by the worker's `GET /ai/v1/models` route. The worker
-    // requires an authenticated user; without an account we cannot
-    // populate the dropdown, so report that distinctly so the UI can
-    // render a "Sign in to populate" CTA instead of a vague error.
-    const account = await getFreshAccount();
-    if (!account) {
-      return { ok: false, error: "Not signed in", signedIn: false };
-    }
-    const path = `/ai/v1/models${refresh ? "?refresh=1" : ""}`;
-    const res = await withHostedSession(a=>apiFetch<{ data?: Array<{ id?: unknown; context_window?: unknown }> }>(path, {
-      method: "GET",
-      bearer: a.accessToken,
-    }),{accountId:account.user.id});
-    if (!res.ok) {
-      return {
-        ok: false,
-        error: res.error || `HTTP ${res.status}`,
-        signedIn: true,
-      };
-    }
-    const data = res.data?.data ?? [];
-    const models = data
-      .map((m) => (typeof m?.id === "string" ? m.id : null))
-      .filter((s): s is string => !!s)
-      .sort();
-    const contextWindows=Object.fromEntries(data.flatMap(m=>typeof m.id==='string'&&typeof m.context_window==='number'&&Number.isSafeInteger(m.context_window)&&m.context_window>=8192&&m.context_window<=16_000_000?[[m.id,m.context_window]]:[]));
-    return { ok: true, models, contextWindows };
-  },
+  "sw:list_xgoose_models": async ({refresh}) => listHostedModels(refresh),
 
   // ── options / panel ─────────────────────────────────────────────────
   "sw:open_options": async () => {

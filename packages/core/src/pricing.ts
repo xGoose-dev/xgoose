@@ -82,6 +82,7 @@ const PRICES: Record<string, ModelCosts> = {
   "gpt-6.1-terra": { inputPerMTok: 1.0, cachedInputPerMTok: 0.05, outputPerMTok: 5.0 },
   "claude-sonnet-5-5": { inputPerMTok: 2.0, cachedInputPerMTok: 0.1, outputPerMTok: 10.0 },
   "claude-haiku-5-5": { inputPerMTok: 0.1, cachedInputPerMTok: 0.01, outputPerMTok: 0.5 },
+  "deepseek-purge": { inputPerMTok: 0.15, cachedInputPerMTok: 0.003, outputPerMTok: 0.6 },
   "deepseek-flash": { inputPerMTok: 0.15, cachedInputPerMTok: 0.003, outputPerMTok: 0.6 },
 };
 

@@ -5,7 +5,7 @@ import { SettingsSchema } from "../apps/chrome/src/shared/types.ts";
 const ready: HostedQuota = {claimable:false,granted_micros:5e6,remaining_micros:4e6,expires_at:"2100-01-01T00:00:00Z",platform_paused:false};
 test("fresh installs use Hosted AI and only matching sites; saved preferences survive", () => {
   const defaults = SettingsSchema.parse({});
-  assert.equal(defaults.provider, "xgoose-hosted"); assert.equal(defaults.model, "claude-haiku-5-5"); assert.equal(defaults.launcherVisibility, "skill-sites");
+  assert.equal(defaults.provider, "xgoose-hosted"); assert.equal(defaults.model, "default"); assert.equal(defaults.launcherVisibility, "skill-sites");
   assert.equal(SettingsSchema.parse({provider:"xgoose-hosted",model:"luna"}).model,"luna");
   const saved = SettingsSchema.parse({provider:"gemini",model:"saved-model",launcherVisibility:"always"});
   assert.equal(saved.provider,"gemini"); assert.equal(saved.model,"saved-model"); assert.equal(saved.launcherVisibility,"always");

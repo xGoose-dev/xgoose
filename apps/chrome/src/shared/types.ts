@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {isSafari} from "./host";
+import {HOSTED_DEFAULT_CHOICE} from "./hostedModels";
 import {
   ProviderSchema as CoreProviderSchema,
   type Provider as CoreProvider,
@@ -58,7 +59,7 @@ export const SettingsSchema = z.object({
   nativeConfiguredProviders: z.array(z.string()).optional(),
   baseUrls: z.record(z.string(), z.string()).default({}),
   apiKey: z.string().default(""),
-  model: z.string().default("claude-haiku-5-5"),
+  model: z.string().default(HOSTED_DEFAULT_CHOICE),
   baseUrl: z.string().default(""),
   thinking: z.boolean().default(false),
   theme: ThemeSchema.default("system"),
