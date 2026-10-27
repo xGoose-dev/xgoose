@@ -425,7 +425,7 @@ const editSkillTool = defineTool({
 const skillHelpTool = defineTool({
   name: "skill_help",
   description:
-    "Return the canonical xgoose skill authoring spec — header directives, `defineSkill` / `fn(...)` API, Zod usage, the eight rules. Call this BEFORE creating or substantially editing a skill so the source you write parses cleanly and follows convention. Returns the full SKILL_AUTHORING.md as a string.",
+    "Return the xgoose skill authoring guide: workflow, header directives, `defineSkill` / `fn(...)`, how results are dehydrated for the model, images, instructions, writing without safety language, and runtime rules. Call this BEFORE creating or substantially editing a skill. Returns SKILL_AUTHORING.md as a string.",
   inputSchema: z.object({}),
   isReadOnly: true,
   isConcurrencySafe: () => true,
@@ -460,7 +460,7 @@ const skillHelpTool = defineTool({
 const createSkillTool = defineTool({
   name: "create_skill",
   description:
-    "Create a brand-new `.xgs.js` skill from a full source string (header + JS body). The `@name` is parsed from the header — do not pass it separately. If the name already exists (built-in or user-installed), this returns an error: use `edit_skill` to modify an existing skill. If you have not yet read the authoring spec this session, call `skill_help()` FIRST — the spec covers required header directives (`@name`, `@namespace`, `@match`, `@detect`, `@primary`), the `defineSkill({ … })` + `fn({ input, output?, examples, handler })` API, and the eight rules that decide whether the agent succeeds first try. **Dynamic load: the SW bundles the body and injects the IIFE into the current tab right away if its `@match` patterns cover this URL — your very next `js_exec` can invoke `xgoose.skills.<namespace>.<fn>(args)`.** No page reload or xgoose-web republish required to use the skill locally. Publishing to xgoose-web is only needed to share it with other users.",
+    "Create a brand-new `.xgs.js` skill from a full source string (header + JS body). The `@name` is parsed from the header — do not pass it separately. If the name already exists (built-in or user-installed), this returns an error: use `edit_skill` to modify an existing skill. If you have not yet read the authoring spec this session, call `skill_help()` FIRST — the spec covers required header directives (`@name`, `@namespace`, `@match`, `@detect`, `@primary`), the `defineSkill({ … })` + `fn({ input, output?, examples, handler })` API, result dehydration and the instruction-writing rules. **Dynamic load: the SW bundles the body and injects the IIFE into the current tab right away if its `@match` patterns cover this URL — your very next `js_exec` can invoke `xgoose.skills.<namespace>.<fn>(args)`.** No page reload or xgoose-web republish required to use the skill locally. Publishing to xgoose-web is only needed to share it with other users.",
   inputSchema: z.object({
     source: z
       .string()
