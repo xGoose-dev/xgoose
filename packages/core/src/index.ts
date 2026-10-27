@@ -81,4 +81,5 @@ export type {
 } from "./ports";
 export { NoSkillContext } from "./ports";
 export {websiteEvidence} from './websiteEvidence';
+export {detachResultImages,resultImageParts} from './resultImages';
 export {boundedModelText,clearStoredResults,resultBudgetBytes,setResultBudget,storeResult} from './resultStore';

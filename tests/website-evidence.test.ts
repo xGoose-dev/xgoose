@@ -92,3 +92,12 @@ test('skill results combined by js_exec code are compacted inside arrays, allSet
   assert.deepEqual(projected.reads[1], {status: 'rejected', reason: 'HTTP 429'});
   assert.equal(projected.note, 'kept');
 });
+
+test('post lines carry emoji reactions after likes and keep image markers', () => {
+  const projected = websiteEvidence({url: 'https://www.uscardforum.com/t/542092', posts: [
+    {post_number: 1, username: 'op', like_count: 98, reactions: [{id: 'troll', count: 10}, {id: '666', count: 2}], text: 'Statement [image 1]'},
+    {post_number: 2, username: 'reader', like_count: null, reactions: null, text: 'plain'},
+  ]}, 'https://www.uscardforum.com') as any;
+  assert.deepEqual(projected.posts, ['#1 @op ♥98 :troll:×10 :666:×2: Statement [image 1]', '#2 @reader: plain']);
+  assert.match(projected.post_format, /:emoji:×count/);
+});

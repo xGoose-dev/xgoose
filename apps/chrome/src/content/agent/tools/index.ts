@@ -25,7 +25,7 @@ import {
   type XgooseBuiltTool,
   type XgooseToolMeta,
 } from "./buildTool";
-import { boundedModelText, getTodos, websiteEvidence, type TodoItem, type XgooseToolContentPart } from "@xgoose/core";
+import { boundedModelText, detachResultImages, getTodos, resultImageParts, websiteEvidence, type TodoItem, type XgooseToolContentPart } from "@xgoose/core";
 import { buildPageControllerTools as buildPageControllerCoreTools } from "@xgoose/page-controller";
 
 // Image bytes go to the provider as image parts, never into the JSON tool card.
@@ -344,12 +344,12 @@ const skillCallTool = defineTool({
         skillImages.set(output,parts);
       }
     }
-    return result.result;
+    return detachResultImages(result.result);
   },
   toModelOutput: result => {
     const images=result&&typeof result==='object'?skillImages.get(result)??[]:[];
     if(result&&typeof result==='object')skillImages.delete(result);
-    return [{type:"text",text:boundedModelText(result,safeJson(websiteEvidence(result,location.origin)))},...images];
+    return [{type:"text",text:boundedModelText(result,safeJson(websiteEvidence(result,location.origin)))},...images,...resultImageParts(result)];
   },
 });
 

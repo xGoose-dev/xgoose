@@ -1,13 +1,13 @@
 // ==XGooseSkill==
 // @name         uscardforum
 // @namespace    uscf
-// @version      0.2.12
+// @version      0.2.13
 // @description  美卡论坛：搜索信用卡、积分与旅行讨论，汇总社区共识和实测 DP。
 // @match        *://www.uscardforum.com/*
 // @match        *://uscardforum.com/*
 // @detect       location.hostname.endsWith('uscardforum.com')
 // @run-at       document_idle
-// @require      discourse-forum@0.2.13
+// @require      discourse-forum@0.2.14
 // @primary      searchInCategory
 // @keyword      uscardforum
 // @keyword      美卡论坛
