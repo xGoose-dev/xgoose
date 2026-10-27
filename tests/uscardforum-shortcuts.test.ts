@@ -9,7 +9,7 @@ function fixture(count=10, highest=count, name='discourse-forum', origin='https:
  const posts=Array.from({length:count},(_,i)=>({id:i+1,post_number:i+1,username:'reader',cooked:`Floor ${i+1} evidence`,topic_id:42}));
  const requests:string[]=[];
  const context:any={z,Headers,URLSearchParams,Math,Map,Set,Number,Date,setTimeout:(done:()=>void)=>{done();return 0;},location:{origin,pathname:'/t/example/42'},
-  document:{querySelector:()=>null,createElement(){return {innerHTML:'',get textContent(){return this.innerHTML;}};}},
+  document:{querySelector:()=>null,implementation:{createHTMLDocument(){return {createElement(){return {innerHTML:'',get textContent(){return this.innerHTML;}};}};}}},
   defineSkill(spec:any,options:any){context.actions=options.actions;return Object.fromEntries(Object.entries(spec).map(([key,value]:any)=>[key,value.handler]));},fn:(x:any)=>x,
   window:{xgoose:{skills:{discourse:{getTopic:async({id}:any)=>({posts:[{text:`Read topic ${id}`,url:`https://www.uscardforum.com/t/${id}/1`}]}),searchTopics:async()=>({topics:[{id:1,title:'Deal',created_at:'2026-10-22'}]})}}}},
   fetch:async(path:string)=>{requests.push(path);return {ok:true,json:async()=>{

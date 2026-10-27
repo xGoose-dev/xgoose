@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discourse-forum
 // @namespace    discourse
-// @version      0.2.13
+// @version      0.2.14
 // @description  Search Discourse forums, read topics and replies, and research community insights.
 // @match        *://meta.discourse.org/*
 // @match        *://*.discourse.org/*
@@ -146,13 +146,33 @@ function compactSearchResult(raw) {
 }
 
 const squash = (text) => String(text || '').replace(/\s+/g, ' ').trim();
+/** With discourse-reactions, likes are the heart reaction and posts JSON has no like_count. */
+function postLikes(post) {
+  return post.like_count ?? post.actions_summary?.find(action => action.id === 2)?.count ?? post.reactions?.find(reaction => reaction.id === 'heart')?.count ?? null;
+}
+function postReactions(post) {
+  const reactions = (post.reactions || []).filter(reaction => reaction?.id && reaction.id !== 'heart' && reaction.count > 0)
+    .sort((a, b) => b.count - a.count).map(reaction => ({id: reaction.id, count: reaction.count}));
+  return reactions.length ? reactions : null;
+}
+/** Pictures the author posted, numbered as the [image N] markers in post text. */
+const contentImages = (root) => Array.from(root.querySelectorAll?.('img') ?? [])
+  .filter(img => !img.closest('aside.quote, aside.onebox') && !img.classList.contains('emoji') && !img.classList.contains('avatar'));
+/** Parsed in a document without a browsing context, so reading a post downloads none of its images. */
+let inertDocument;
+function parsePost(html) {
+  inertDocument ??= document.implementation.createHTMLDocument('');
+  const div = inertDocument.createElement('div');
+  div.innerHTML = html;
+  return div;
+}
 const SELECTED_QUOTE_CHARS = 300, FULL_QUOTE_CHARS = 80;
 /** Post text without content duplicated elsewhere: link previews, image file metadata and whole-post quotes,
  *  which keep a preview because the quoted floor is in the stream. Selected quotes are what the reply answers. */
 function htmlToText(html, topicId) {
   if (typeof html !== 'string') return '';
-  const div = document.createElement('div');
-  div.innerHTML = html;
+  const div = parsePost(html);
+  contentImages(div).forEach((img, index) => img.replaceWith(` [image ${index + 1}] `));
   // Detached elements have no layout, so innerText would join paragraphs without a separator.
   div.querySelectorAll?.('p,br,li,h1,h2,h3,h4,h5,h6,tr,blockquote').forEach(block => block.after(' '));
   div.querySelectorAll?.('.lightbox-wrapper .meta').forEach(meta => meta.remove());
@@ -179,7 +199,8 @@ function compactTopicResult(raw, maxChars) {
           post_number: p.post_number,
           username: p.username,
           created_at: p.created_at,
-          like_count: p.like_count,
+          like_count: postLikes(p),
+          reactions: postReactions(p),
           reply_count: p.reply_count,
           reply_to_post_number: p.reply_to_post_number ?? null,
           reply_to_username: p.reply_to_user?.username ?? null,
@@ -205,6 +226,8 @@ function compactTopicResult(raw, maxChars) {
   };
 }
 
+const ReactionsSchema = z.array(z.object({id:z.string(),count:z.number()})).nullable().optional().describe('Emoji reactions other than likes, most frequent first.');
+
 // Output shape of compactTopicResult — declared so the agent reads posts[].text
 // instead of guessing the raw Discourse shape (post_stream.posts[].cooked).
 const TopicResultSchema = z.object({
@@ -225,6 +248,7 @@ const TopicResultSchema = z.object({
         username: z.string(),
         created_at: z.string().optional(),
         like_count: z.number().nullable().optional(),
+        reactions: ReactionsSchema,
         reply_count: z.number().optional(),
         reply_to_post_number: z.number().nullable().optional(),
         reply_to_username: z.string().nullable().optional(),
@@ -233,7 +257,7 @@ const TopicResultSchema = z.object({
         text: z
           .string()
           .describe(
-            'Plain-text post body, limited by maxChars. Quotes appear inline as [quote @user #floor: quoted text].',
+            'Plain-text post body, limited by maxChars. Quotes appear inline as [quote @user #floor: quoted text]; pictures as [image N].',
           ),
       }),
     )
@@ -272,7 +296,7 @@ async function summaryTopic(topicId, firstReplies=30, latestReplies=100) {
   }
   const result = selected.map(postId=>posts.get(postId)).filter(Boolean).map(post=>{
     const text=postText(post,id);
-    return {post_number:post.post_number,username:post.username,created_at:post.created_at,like_count:post.like_count ?? null,reply_to_post_number:post.reply_to_post_number ?? null,reply_to_username:post.reply_to_user?.username ?? null,text,text_truncated:false,url:`${topicLink(id)}/${post.post_number}`};
+    return {post_number:post.post_number,username:post.username,created_at:post.created_at,like_count:postLikes(post),reactions:postReactions(post),reply_to_post_number:post.reply_to_post_number ?? null,reply_to_username:post.reply_to_user?.username ?? null,text,text_truncated:false,url:`${topicLink(id)}/${post.post_number}`};
   });
   return {title:topic.title,url:topicLink(id),posts_count:topic.posts_count,highest_post_number:topic.highest_post_number,
     selection:selected.length===stream.length?'all visible posts':`first post, first ${firstReplies} replies and latest ${latestReplies} replies`,selected_count:selected.length,read_count:result.length,
@@ -321,9 +345,9 @@ const TopicReadResult = z.object({
   highest_post_number:z.number().optional().describe('Last floor number; deleted posts can leave gaps.'),
   posts:z.array(z.object({
     id:z.number(),post_number:z.number(),username:z.string(),url:z.string(),
-    text:z.string().describe('Plain-text body. Quotes appear inline as [quote @user #floor: quoted text]; another topic is t/<id>#floor.'),
+    text:z.string().describe('Plain-text body. Quotes appear inline as [quote @user #floor: quoted text]; another topic is t/<id>#floor. Pictures appear as [image N].'),
     reply_to_post_number:z.number().nullable(),reply_to_username:z.string().nullable(),
-    like_count:z.number().nullable(),text_truncated:z.boolean(),text_offset:z.number(),total_text_chars:z.number(),next_text_offset:z.number().nullable(),
+    like_count:z.number().nullable(),reactions:ReactionsSchema,text_truncated:z.boolean(),text_offset:z.number(),total_text_chars:z.number(),next_text_offset:z.number().nullable(),
   }).passthrough()),
   complete:z.boolean().describe('True only if this result contains the entire visible topic and untruncated bodies.'),
   next_cursor:z.string().nullable().describe('Continue pages sequentially with this value. Null means there are no more post IDs, not that every body was untruncated.'),
@@ -363,9 +387,8 @@ function rangeCursor(state, offset) {
 function rangePost(post, maxChars, textOffset=0) {
   const text = htmlToText(post.cooked || post.raw || post.blurb || '', post.topic_id);
   const end = maxChars === undefined ? text.length : Math.min(text.length, textOffset+maxChars);
-  const likes = post.like_count ?? post.actions_summary?.find(action => action.id === 2)?.count ?? null;
   return {id:post.id,post_number:post.post_number,username:post.username,created_at:post.created_at,
-    like_count:likes,reply_count:post.reply_count,reply_to_post_number:post.reply_to_post_number ?? null,reply_to_username:post.reply_to_user?.username ?? null,url:`${location.origin}/t/${post.topic_id}/${post.post_number}`,
+    like_count:postLikes(post),reactions:postReactions(post),reply_count:post.reply_count,reply_to_post_number:post.reply_to_post_number ?? null,reply_to_username:post.reply_to_user?.username ?? null,url:`${location.origin}/t/${post.topic_id}/${post.post_number}`,
     text:text.slice(textOffset,end),text_offset:textOffset,total_text_chars:text.length,
     text_truncated:textOffset>0 || end<text.length,next_text_offset:end<text.length?end:null};
 }
@@ -426,7 +449,50 @@ async function readTopicRange(rawArgs) {
   return makeResult();
 }
 
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024, MAX_IMAGE_DATA_CHARS = 500_000;
+/** Downscaled JPEG in the image shape hosts attach to the model; the page's own CORS and cookie rules apply. */
+async function modelImage(url) {
+  const response = await fetch(url, {credentials: 'same-origin'});
+  if (!response.ok) throw new Error(`Image returned HTTP ${response.status}`);
+  if (Number(response.headers.get('content-length')) > MAX_IMAGE_BYTES) throw new Error('Image exceeds 10 MB');
+  const blob = await response.blob();
+  if (!/^image\/(png|jpeg|webp|gif|avif)$/.test(blob.type)) throw new Error(`Unsupported image type ${blob.type || 'unknown'}`);
+  if (blob.size > MAX_IMAGE_BYTES) throw new Error('Image exceeds 10 MB');
+  const bitmap = await createImageBitmap(blob);
+  try {
+    let scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+    for (let attempt = 0; attempt < 4; attempt++, scale *= .75) {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const data = canvas.toDataURL('image/jpeg', attempt ? .75 : .85).split(',')[1];
+      if (data.length <= MAX_IMAGE_DATA_CHARS) return {type: 'image', mimeType: 'image/jpeg', data, width: canvas.width, height: canvas.height};
+    }
+    throw new Error('Image is too detailed for the model context');
+  } finally { bitmap.close(); }
+}
+async function readPostImages({topicId, postNumber, images}) {
+  const post = await forumJson(`/posts/by_number/${topicId}/${postNumber}.json`);
+  const found = contentImages(parsePost(post.cooked || ''));
+  const chosen = images ? [...new Set(images)] : found.slice(0, 3).map((_, index) => index + 1);
+  return {topic_id: topicId, post_number: postNumber, url: `${topicLink(topicId)}/${postNumber}`, total_images: found.length,
+    images: await Promise.all(chosen.map(async number => {
+      const img = found[number - 1];
+      if (!img) return {image: number, error: `The post has ${found.length} images.`};
+      // The lightbox links the original; the inline source is a smaller rendition to fall back on.
+      const sources = [...new Set([img.closest('a.lightbox')?.getAttribute('href'), img.getAttribute('src')].filter(Boolean).map(src => new URL(src, location.origin).href))];
+      let error;
+      for (const url of sources) {
+        try { return {image: number, url, ...await modelImage(url)}; } catch (failure) { error = failure; }
+      }
+      return {image: number, url: sources[0] ?? null, error: String(error?.message ?? 'Image has no source')};
+    }))};
+}
+
 export default defineSkill({
+
   readTopicPosts: fn({
     summary: 'Read full post bodies in a topic range with automatic batching; follow next_cursor for more posts.',
     input: TopicReadInput,
@@ -485,6 +551,17 @@ export default defineSkill({
     output: TopicReadResult,
     handler: async ({ topicId, postNumber, maxChars }) =>
       readTopicRange({topicId,fromPostNumber:postNumber ?? 1,limit:5,maxChars}),
+  }),
+
+  readPostImages: fn({
+    summary: 'Attach up to three pictures from one post so you can see them. Post text marks them as [image N].',
+    input: z.object({
+      topicId: z.number().int().positive(),
+      postNumber: z.number().int().positive(),
+      images: z.array(z.number().int().min(1)).min(1).max(3).optional().describe('[image N] numbers from the post text. Default: the first three.'),
+    }).strict(),
+    examples: [{args: {topicId: 542092, postNumber: 7, images: [1]}}],
+    handler: readPostImages,
   }),
 
   getCategories: fn({
@@ -580,7 +657,8 @@ export default defineSkill({
 - Prioritize recent information, helpful topics with high engagement, first-hand experiences and official announcements or policy changes.
 - Use provided action-result first. Search snippets locate discussions; read bodies for content claims. Listing/count questions need the requested metadata only.
 - Check topic size before choosing reading depth. getTopic and getTopicPosts return five posts. Use readTopicPosts for larger ranges with a bounded limit; follow next_cursor sequentially. If expired, resume from next_post_number. Recover needed truncated text with fromPostNumber, limit:1 and textOffset:next_text_offset.
-- Return skill results as they are, alone or combined in an object or array (including Promise.allSettled). They reach you as one compact line per post with date, likes, reply target (↩@user#floor) and inline quotes ([quote @user #floor: text]). Re-mapping posts or a small maxChars drops who is answering whom.
+- Return skill results as they are, alone or combined in an object or array (including Promise.allSettled). They reach you as one compact line per post with date, likes, other reactions, reply target (↩@user#floor) and inline quotes ([quote @user #floor: text]). Re-mapping posts or a small maxChars drops who is answering whom.
+- Post text marks pictures as [image N]. When a screenshot, chart or photo matters to the answer, call readPostImages({topicId, postNumber, images:[N]}) to see it; skip decorative ones.
 - Summarize rather than quote whole threads. Describe outcomes, dates, amounts and relevant circumstances; include author, available likes and post links. Follow the user's scope and language.`,
   actions: [
     {label:'Latest topics', prompt:"List the newest topics in action-result by creation time, with a short description and source link for each.",js:"return await xgoose.skills.discourse.getRecentTopics({kind:'new'});"},
