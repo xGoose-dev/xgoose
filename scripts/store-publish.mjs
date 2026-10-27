@@ -55,7 +55,7 @@ export async function submitStore({store,zip,credentials,notes='',fetchImpl=fetc
    await wait(10000);const status=await(await request(`https://chromewebstore.googleapis.com/v2/${name}:fetchStatus`,{headers},'Chrome upload status')).json();upload={uploadState:status.lastAsyncUploadState};
   }
   if(!['SUCCEEDED','SUCCESS'].includes(upload.uploadState))throw Error(`Chrome upload did not succeed: ${upload.uploadState??'unknown'}`);
-  const result=await(await request(`https://chromewebstore.googleapis.com/v2/${name}:publish`,{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({publishType:'DEFAULT_PUBLISH'})},'Chrome publish')).json();
+  const result=await(await request(`https://chromewebstore.googleapis.com/v2/${name}:publish`,{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({publishType:'STAGED_PUBLISH'})},'Chrome publish')).json();
   if(!['PENDING_REVIEW','PUBLISHED','STAGED'].includes(result.state))throw Error(`Chrome submission state was not confirmed: ${result.state??'unknown'}`);
   return {store,stage:result.state==='PUBLISHED'?'published':'submitted-for-review',state:result.state};
  }
