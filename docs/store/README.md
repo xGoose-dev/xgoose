@@ -6,6 +6,8 @@ Historical screenshots show actual extension UI: an existing uscardforum researc
 
 `research.png`, `skills.png`, and `email.png` are full 1280×800 captures. The settings `*-raw.png` files are 1280×640 captures for the store layouts. `node scripts/render-store-assets.mjs` composes the 1280×800 store images, 440×280 small tile, 1400×560 marquee, and 1200×630 social image. The artwork adds explanatory headings without fabricating or rewriting the product interface or model output.
 
+CI submits Chrome updates with deferred publishing (`STAGED_PUBLISH`): an approved version waits as Staged until it is published manually from the developer dashboard. Older entries below record automatic publication, which was the setting at the time.
+
 The 0.2.1 package changes the icon, short description, and settings guidance. PI, Hosted routing, permissions and privacy behavior are unchanged from 0.2.0. Submission and publication are separate states; check the developer dashboard for the current review status.
 
 The 0.2.2 update bundles the default website skills, improves Hosted/BYOK setup and User Scripts onboarding, and updates LinkedIn and Substack readers. The store description reflects Hosted conversation retention and local-only BYOK conversations. The extension manifest permissions are unchanged.

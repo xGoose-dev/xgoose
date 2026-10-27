@@ -7,6 +7,12 @@ const profile=await mkdtemp(resolve(tmpdir(),'xgoose-discourse-range-')),dist=re
 const context=await chromium.launchPersistentContext(profile,{channel:'chromium',headless:true,args:[`--disable-extensions-except=${dist}`,`--load-extension=${dist}`]});
 context.setDefaultTimeout(20000);const reads=[];
 const posts=Array.from({length:660},(_,i)=>i+1).filter(n=>n!==640).map(n=>({id:10000+n,topic_id:42,post_number:n,username:'fixture',cooked:n===633?'<aside class="quote" data-username="fixture" data-post="632"><div class="title">fixture:</div><blockquote><p>Evidence from floor 632</p></blockquote></aside><p>Evidence from floor 633</p><div class="lightbox-wrapper"><a class="lightbox"><img alt="image"><div class="meta"><span>image</span><span>1920×1080 245 KB</span></div></a></div>':`<p>Evidence from floor ${n}</p>`,actions_summary:[{id:2,count:n%7}]}));
+const quote=(who,floor,body,attrs='',topic=45)=>`<aside class="quote no-group" data-username="${who}" data-post="${floor}" data-topic="${topic}"${attrs}><div class="title"><div class="quote-controls"></div><img alt="" class="avatar"> ${who}:</div><blockquote>${body}</blockquote></aside>`;
+const quotePosts=[
+ {id:4501,topic_id:45,post_number:1,username:'Rummy',cooked:'<p>让codex直接读网页有点复杂</p><p>所以我的需求是 有什么本地codex或者claude来高效总结的流程？</p>'},
+ {id:4502,topic_id:45,post_number:2,username:'LeeKuanYew',reply_to_post_number:1,reply_to_user:{username:'Rummy'},cooked:`${quote('Rummy',1,'<p>让codex直接读网页有点复杂</p>')}<p>没有呀，这都是有 skills 的 API</p>${quote('Rummy',1,'<p>所以我的需求是 有什么本地codex或者claude来高效总结的流程？</p>')}<p>你可以选择让 codex 使用一样的 skills</p>`},
+ {id:4503,topic_id:45,post_number:3,username:'mixed',cooked:`${quote('Rummy',1,`<p>${'整'.repeat(100)}</p>`,' data-full="true"')}<p>full</p>${quote('other',7,'<p>other topic</p>','',99)}${quote('LeeKuanYew',2,`${quote('Rummy',1,'<p>inner</p>')}<p>outer</p>`)}${quote('Rummy',1,`<p>${'长'.repeat(400)}</p>`)}<p>Line one</p><p>Line two</p>`},
+];
 try{
  const registry=JSON.parse(await readFile(resolve(dist,'skills/registry.json'),'utf8')),skill=registry.find(s=>s.name==='discourse-forum');
  assert.ok(skill.functions.some(f=>f.name==='readTopicPosts'));assert.equal(skill.actions.length,3);
@@ -19,6 +25,7 @@ try{
   if(url.pathname.endsWith('.json')){
    reads.push({path:url.pathname,query:url.search,at:Date.now()});
    if(url.pathname==='/t/43/posts.json')return route.fulfill({status:429,headers:{'retry-after':'60'},json:{error:'synthetic_rate_limit'}});
+   if(url.pathname.startsWith('/t/45'))return route.fulfill({json:url.pathname.endsWith('/posts.json')?{post_stream:{posts:quotePosts}}:{id:45,title:'Quote thread',posts_count:3,highest_post_number:3,post_stream:{stream:quotePosts.map(p=>p.id),posts:quotePosts}}});
    if(url.pathname.endsWith('/posts.json')){const ids=url.searchParams.getAll('post_ids[]').map(Number);return route.fulfill({json:{post_stream:{posts:posts.filter(p=>ids.includes(p.id)).reverse()}}});}
    const topicId=Number(url.pathname.match(/\/t\/(\d+)/)?.[1]??42),topicPosts=topicId===44?posts.slice(0,19):posts,anchor=Number(url.searchParams.get('post_number')??1),at=Math.max(0,posts.findIndex(p=>p.post_number>=anchor));
    return route.fulfill({json:{id:topicId,title:'Synthetic thread',posts_count:topicPosts.length,highest_post_number:topicId===44?19:660,post_stream:{stream:topicPosts.map(p=>p.id),posts:(topicId===44?topicPosts:posts.slice(Math.max(0,at-5),at+15)).map(p=>({...p,topic_id:topicId}))}}});
@@ -32,6 +39,12 @@ try{
  const last=await page.evaluate(cursor=>window.xgoose.skills.discourse.readTopicPosts({topicId:42,cursor,limit:20}),first.next_cursor);
  assert.deepEqual([...first.posts,...last.posts].map(p=>p.post_number),Array.from({length:29},(_,i)=>632+i).filter(n=>n!==640));assert.equal(last.next_cursor,null);assert.equal(first.origin,'https://forum.example.test');assert.equal(first.posts[0].like_count,632%7);assert.ok(first.posts[0].url.endsWith('/632'));
  assert.equal(first.posts[1].text,'[quote @fixture #632: Evidence from floor 632] Evidence from floor 633');
+ const quoted=await page.evaluate(()=>window.xgoose.skills.discourse.readTopicPosts({topicId:45,limit:10}));
+ assert.equal(quoted.posts[0].text,'让codex直接读网页有点复杂 所以我的需求是 有什么本地codex或者claude来高效总结的流程？');
+ assert.equal(quoted.posts[1].text,'[quote @Rummy #1: 让codex直接读网页有点复杂] 没有呀，这都是有 skills 的 API [quote @Rummy #1: 所以我的需求是 有什么本地codex或者claude来高效总结的流程？] 你可以选择让 codex 使用一样的 skills');
+ assert.equal(quoted.posts[1].reply_to_username,'Rummy');assert.equal(quoted.posts[1].reply_to_post_number,1);
+ assert.equal(quoted.posts[2].text,`[quote @Rummy #1: ${'整'.repeat(80)}…] full [quote @other t/99#7: other topic] [quote @LeeKuanYew #2: [quote @Rummy #1: inner] outer] [quote @Rummy #1: ${'长'.repeat(300)}…] Line one Line two`);
+ const quotedTopic=await page.evaluate(()=>window.xgoose.skills.discourse.getTopic({id:45}));assert.equal(quotedTopic.posts[1].reply_to_username,'Rummy');
  const sixth=await page.evaluate(()=>window.xgoose.skills.discourse.getTopicPosts({topicId:44,postNumber:6}));assert.deepEqual(sixth.posts.map(p=>p.post_number),[6,7,8,9,10]);
  const eleventh=await page.evaluate(()=>window.xgoose.skills.discourse.getTopicPosts({topicId:44,postNumber:11}));assert.deepEqual(eleventh.posts.map(p=>p.post_number),[11,12,13,14,15]);
  const all=await page.evaluate(()=>window.xgoose.skills.discourse.readTopicPosts({topicId:44,limit:100}));assert.deepEqual(all.posts.map(p=>p.post_number),Array.from({length:19},(_,i)=>i+1));assert.equal(all.complete,true);
