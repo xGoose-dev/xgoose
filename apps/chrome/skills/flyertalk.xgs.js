@@ -1,15 +1,18 @@
 // ==XGooseSkill==
 // @name         flyertalk
 // @namespace    ft
-// @version      0.2.2
+// @version      0.2.4
 // @description  FlyerTalk site-specific helpers — WordPress article search (anonymous /wp-json), URL parsing for the vBulletin SEO routes, a curated forum-slug-to-id map (airlines, hotels, credit cards), and a parallel searchAll fan-out across articles + forum posts + threads.
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*
 // @detect       location.hostname.endsWith('flyertalk.com')
 // @run-at       document_idle
-// @require      vbulletin-forum@0.2.0
+// @require      vbulletin-forum@0.2.1
 // @connect      <self>
 // @primary      searchAll
+// @action       Latest topics | Call xgoose.skills.ft.getThreads({kind:'new'}) and list the newest threads by start date, each with a one-line description and its link.
+// @action       Summarize this thread | Call xgoose.skills.ft.summarizeCurrentThread({}) and summarize the original post, first 30 and latest 100 replies, deduplicating overlaps. Give the community consensus and data points with authors, dates and post links. Follow user-specified ranges.
+// @action       Surprise me randomly | Call xgoose.skills.ft.getThreads({kind:'random'}) and recommend the sampled threads: title, what makes it interesting, latest activity date and link.
 // @keyword      flyertalk
 // @keyword      miles
 // @keyword      points
@@ -275,6 +278,51 @@ async function getVbulletin() {
   );
 }
 
+/* ───── Current page: forum and thread ───── */
+
+function currentThreadId() {
+  if (location.pathname.endsWith('/showthread.php')) return Number(new URLSearchParams(location.search).get('t')) || null;
+  return parseThreadUrlImpl(location.href)?.threadId ?? null;
+}
+
+/** Thread URLs carry only the forum slug; the breadcrumb link with that slug carries the id. */
+function currentForumId() {
+  const forum = parseForumUrlImpl(location.href);
+  if (forum) return forum.forumId;
+  const slug = parseThreadUrlImpl(location.href)?.forumSlug;
+  if (!slug) return null;
+  return [...document.querySelectorAll('a[href]')].map((a) => parseForumUrlImpl(a.href)).find((f) => f?.forumSlug === slug)?.forumId ?? null;
+}
+
+function shuffled(items) {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/** new = newest started threads, active = latest replies; random reads three active threads. Outside a forum: site-wide RSS. */
+async function forumThreads({ kind = 'new', forumId }) {
+  const vb = await getVbulletin();
+  const id = forumId ?? currentForumId();
+  let scope, threads;
+  if (id) {
+    const forum = await vb.getForum({ id, sort: kind === 'new' ? 'dateline' : undefined });
+    scope = { forum_id: id, title: forum.title, url: forum.url };
+    threads = forum.threads.filter((t) => !t.sticky);
+  } else {
+    scope = { title: 'FlyerTalk (all forums)' };
+    threads = await vb.getRecentThreads({});
+  }
+  if (kind !== 'random') return { kind, scope, threads };
+  const picked = shuffled(threads.slice(0, 30)).slice(0, 3);
+  const read = [];
+  for (const t of picked) read.push(await vb.summarizeThread({ threadId: t.id, firstReplies: 5, latestReplies: 10 }));
+  return { kind, scope, threads: read };
+}
+
 export default defineSkill({
   searchAll: fn({
     summary:
@@ -302,18 +350,15 @@ export default defineSkill({
               search: query,
             });
             const arr = (await fetchJson(`/wp-json/wp/v2/posts?${sp}`)) ?? [];
-            return Array.isArray(arr) ? arr.map(toSummary) : [];
-          })().catch(() => []);
+            return arr.map(toSummary);
+          })();
 
       const postsParams = { query, page: 1 };
       if (author) {
         postsParams.author = author;
         postsParams.exactName = true;
       }
-      const postsPromise = ns
-        .searchPosts(postsParams)
-        .then((r) => r.results.slice(0, cap))
-        .catch(() => []);
+      const postsPromise = ns.searchPosts(postsParams).then((r) => r.results.slice(0, cap));
 
       const threadsParams = { query, page: 1 };
       if (author) {
@@ -321,15 +366,35 @@ export default defineSkill({
         threadsParams.exactName = true;
         threadsParams.starterOnly = true;
       }
-      const threadsPromise = ns
-        .searchThreads(threadsParams)
-        .then((r) => r.results.slice(0, cap))
-        .catch(() => []);
+      const threadsPromise = ns.searchThreads(threadsParams).then((r) => r.results.slice(0, cap));
 
       const [articles, posts, threads] = await Promise.all([articlesPromise, postsPromise, threadsPromise]);
       const out = { articles, posts, threads, query };
       if (author) out.author = author;
       return out;
+    },
+  }),
+
+  getThreads: fn({
+    summary: 'Threads in the forum open in this tab (or forumId): new = newest started, active = latest replies, random = three active threads read with opening post and recent replies. Site-wide recent threads outside a forum.',
+    input: z.object({
+      kind: z.enum(['new', 'active', 'random']).optional(),
+      forumId: z.number().int().positive().optional(),
+    }),
+    examples: [{ args: { kind: 'new' } }, { args: { kind: 'active', forumId: 701 } }],
+    handler: forumThreads,
+  }),
+
+  summarizeCurrentThread: fn({
+    summary: 'Read the thread open in this tab: original post, first 30 and latest 100 replies.',
+    input: z.object({
+      firstReplies: z.number().int().min(0).max(300).optional(),
+      latestReplies: z.number().int().min(0).max(300).optional(),
+    }),
+    handler: async ({ firstReplies = 30, latestReplies = 100 }) => {
+      const threadId = currentThreadId();
+      if (!threadId) throw new Error('This tab is not a FlyerTalk thread. Open a thread first.');
+      return (await getVbulletin()).summarizeThread({ threadId, firstReplies, latestReplies });
     },
   }),
 
@@ -425,6 +490,13 @@ export default defineSkill({
   instructions: `Start research with searchAll; it covers articles, forum posts and thread titles.
 - Search in English; the forum index does not tokenize Chinese or other CJK text. Translate the user's terms first.
 - Snippets only locate discussions. Read the top 2-3 threads with xgoose.skills.vbulletin.summarizeThread({threadId}) before answering.
+- For the forum or thread open in this tab, use getThreads and summarizeCurrentThread; getForum lists any forum by id.
 - Use only thread, post and forum ids from tool results. Keep search results in their relevance order.
-- Leave forumIds unset unless the user names a forum; getForumMap lists the main forum ids.`,
+- Leave forumIds unset unless the user names a forum; getForumMap lists the main forum ids.
+- Use provided action-result first.`,
+  actions: [
+    {label:'Latest topics', prompt:'List the newest threads in action-result by start date, each with a one-line description and its link.', js:"return await xgoose.skills.ft.getThreads({kind:'new'});"},
+    {label:'Summarize this thread', prompt:'Summarize the original post, first 30 and latest 100 replies, deduplicating overlaps. Give the community consensus and data points with authors, dates and post links. Follow user-specified ranges.', js:'return await xgoose.skills.ft.summarizeCurrentThread({});'},
+    {label:'Surprise me randomly', prompt:'Recommend the sampled threads in action-result: title, what makes it interesting, latest activity date and link.', js:"return await xgoose.skills.ft.getThreads({kind:'random'});"},
+  ],
 });

@@ -1,11 +1,11 @@
 // ==XGooseSkill==
 // @name         vbulletin-forum
 // @namespace    vbulletin
-// @version      0.2.0
+// @version      0.2.1
 // @description  Generic helpers for vBulletin 3.x/4.x forums (search posts/threads, read threads, see post pictures, recent threads, forum listings).
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*
-// @detect       !!document.querySelector('meta[name="generator"][content*="vBulletin"]') || /vbulletin/i.test(document.documentElement.outerHTML.slice(0, 4000))
+// @detect       location.hostname.endsWith('flyertalk.com') || !!document.querySelector('meta[name="generator"][content*="vBulletin"]') || /vbulletin/i.test(document.documentElement.outerHTML.slice(0, 4000))
 // @run-at       document_idle
 // @primary      searchPosts
 // @keyword      vbulletin
@@ -462,13 +462,13 @@ export default defineSkill({
   }),
 
   getRecentThreads: fn({
-    summary: 'Recent threads in one or more forums (RSS). With full=true also returns each first post as text.',
+    summary: 'Recent threads (RSS) in the given forums, or site-wide without forumIds. With full=true also returns each first post as text.',
     input: z.object({
-      forumIds: z.array(z.number().int().positive()).min(1),
+      forumIds: z.array(z.number().int().positive()).optional(),
       full: z.boolean().optional(),
     }),
     handler: async ({ forumIds, full }) => {
-      const r = await fetch(forumUrl(`external.php?type=RSS2&forumids=${forumIds.join(',')}`), { credentials: 'include', headers: { Accept: 'application/rss+xml' } });
+      const r = await fetch(forumUrl(`external.php?type=RSS2${forumIds?.length ? `&forumids=${forumIds.join(',')}` : ''}`), { credentials: 'include', headers: { Accept: 'application/rss+xml' } });
       if (!r.ok) throw new Error(`getRecentThreads → HTTP ${r.status}`);
       const doc = new DOMParser().parseFromString(await decodedText(r), 'application/xml');
       return [...doc.querySelectorAll('item')].map((item) => {
@@ -488,9 +488,13 @@ export default defineSkill({
 
   getForum: fn({
     summary: 'A forum listing page: title, slug and threads with starter, replies, views, pages and last post.',
-    input: z.object({ id: z.number().int().positive(), page: z.number().int().min(1).optional() }),
-    handler: async ({ id, page }) => {
-      const { doc, url } = await fetchPage(forumUrl(`forumdisplay.php?f=${id}${page > 1 ? `&page=${page}` : ''}`));
+    input: z.object({
+      id: z.number().int().positive(),
+      page: z.number().int().min(1).optional(),
+      sort: z.enum(['lastpost', 'dateline', 'replies', 'views']).optional().describe('Descending order. Default lastpost (recent activity); dateline = newest threads.'),
+    }),
+    handler: async ({ id, page, sort }) => {
+      const { doc, url } = await fetchPage(forumUrl(`forumdisplay.php?f=${id}${page > 1 ? `&page=${page}` : ''}${sort ? `&sort=${sort}&order=desc` : ''}`));
       return compact({
         id,
         slug: url.match(/\/forum\/([^/?#]+)-\d+/)?.[1],
