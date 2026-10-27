@@ -3,6 +3,8 @@ import { apiFetch } from "@/shared/account";
 import { hostedBlocker, type HostedQuota } from "@/shared/hosted";
 import { getFreshAccount } from "./account";
 import { getConsent, setConsent } from "./transcripts";
+import {HOSTED_DEFAULT_CHOICE, resolveHostedModel} from "@/shared/hostedModels";
+import {listHostedModels} from "./hostedModels";
 
 export async function hostedStatus(claim = false, useHosted = false) {
   const account = await getFreshAccount();
@@ -20,12 +22,14 @@ export async function hostedStatus(claim = false, useHosted = false) {
   return { quota: quota.data, consent: {...consent, hosted:consent.hosted || useHosted}, blocker: hostedBlocker(quota.data, true) };
 }
 
-export async function testHosted(model = "luna") {
+export async function testHosted(choice = HOSTED_DEFAULT_CHOICE) {
   try {
     const state = await hostedStatus(false, true);
     if (state.blocker) return {ok:false as const,error:state.blocker};
     const account = await getFreshAccount();
     if (!account) throw new Error("Sign in before testing Hosted AI.");
+    const catalogue=choice===HOSTED_DEFAULT_CHOICE?await listHostedModels():null;
+    const model=resolveHostedModel(choice,catalogue?.ok?catalogue:null);
     const result = await withHostedSession(a=>apiFetch<{choices?: unknown[]}>("/ai/v1/chat/completions", {
       method:"POST", bearer:a.accessToken, signal:AbortSignal.timeout(210000),
       body:JSON.stringify({model,messages:[{role:"user",content:"Reply with OK."}],stream:false,max_tokens:16}),
