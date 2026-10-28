@@ -5,7 +5,7 @@ import SafariServices
     @StateObject private var model = AppModel()
     @Environment(\.scenePhase) private var phase
     var body: some Scene {
-        WindowGroup { RootView().environmentObject(model)
+        WindowGroup { RootView().environmentObject(model).tint(Color("AccentColor"))
             .onOpenURL { _ in Task { await model.reload() } }
             .preferredColorScheme(model.settings["theme"] as? String == "dark" ? .dark : model.settings["theme"] as? String == "light" ? .light : nil)
         }.onChange(of:phase) { _, next in if next == .active { Task { await model.reload() } } }
@@ -60,7 +60,7 @@ struct RootView: View {
                 Section {
                     HStack(spacing:16) {
                         Image("LargeIcon").resizable().scaledToFit().frame(width:64,height:64).accessibilityHidden(true)
-                        VStack(alignment:.leading,spacing:5) { Text("xgoose").font(.largeTitle.bold()); Text(model.t("Your AI, on the page.","在网页上，与你的 AI 一起。","Tu IA, en la página.")).foregroundStyle(.secondary) }
+                        VStack(alignment:.leading,spacing:5) { Text("xgoose").font(.largeTitle.bold()); Text(model.t("Your AI, on the page.","你的 AI，就在当前网页。","Tu IA, en la página.")).foregroundStyle(.secondary) }
                     }.padding(.vertical,12)
                 }
                 Section(model.t("Get ready in Safari","在 Safari 开始使用","Empieza en Safari")) {
@@ -79,7 +79,7 @@ struct RootView: View {
                 }
             }
             .navigationTitle("xgoose").navigationBarTitleDisplayMode(.inline)
-            .tint(Color(red:0.36,green:0.21,blue:0.93))
+            .tint(Color("AccentColor"))
             .alert(model.t("Please try again","请重试","Inténtalo de nuevo"),isPresented:Binding(get:{model.error != nil},set:{if !$0 {model.error=nil}})) { Button("OK") {model.error=nil} } message: {Text(model.error ?? "")}
             .overlay { if model.busy { ProgressView().padding().background(.regularMaterial,in:RoundedRectangle(cornerRadius:16)) } }
             .task {await model.reload();setupPresented=model.state["dismissed"] as? Bool != true && model.state["firstAnswerAt"] == nil}
