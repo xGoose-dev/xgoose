@@ -274,6 +274,7 @@ export type MessageMap = {
     request: {
       event: string;
       params?: Record<string, string | number | boolean>;
+      device?: {language?:string;screen_resolution?:string};
     };
     response: void;
   };

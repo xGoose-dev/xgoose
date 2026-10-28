@@ -3,8 +3,9 @@ import {mountAccountSection} from "@/shared/accountSection";
 import {initializeLocale,mountAnswerLanguage} from "@/shared/locale";
 void initializeLocale(document.body);
 import {send} from "@/shared/messages";
-import {track} from "@/shared/analytics";
+import {track,setAnalyticsActive} from "@/shared/analytics";
 let permissionKnown:boolean|undefined;
+setAnalyticsActive(true);
 track("onboarding_viewed");
 async function checkPermission() {
   const status = document.querySelector<HTMLElement>("#permissionState")!;
