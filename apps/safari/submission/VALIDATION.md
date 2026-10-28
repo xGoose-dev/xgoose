@@ -1,3 +1,11 @@
+# iOS 1.8 branding validation
+
+Built from current monorepo main 3f8731a, retaining 1.7 behavior and analytics fixes. New canonical icons, brand tint, localized store metadata and 22 screenshot compositions. Safari typecheck, Safari viewport suite and seven native tests passed; final simulator build also passed. Metadata was saved and read back in English and Simplified Chinese. Archive, screenshot processing and review submission results will be appended after verification.
+
+The following records are historical evidence for the 1.6 replacement, not checks claimed for this branding change.
+
+---
+
 # iOS 1.6 replacement validation
 
 App Store 6770188718; existing app/extension bundle IDs, group and Keychain sharing

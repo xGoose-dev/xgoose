@@ -1,0 +1,204 @@
+{
+  "version": "1.8",
+  "source": "Real simulator captures with editorial framing",
+  "assets": [
+    {
+      "file": "en-iphone-67-1-research.png",
+      "locale": "en-US",
+      "displayType": "APP_IPHONE_67",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "efa3ce3bdcc592d67d0f74a788ec1518aa42e6793e0dbc5ec6a96f1538b39b0c",
+      "source": "raw/phone-research-en.png"
+    },
+    {
+      "file": "en-iphone-67-2-skills.png",
+      "locale": "en-US",
+      "displayType": "APP_IPHONE_67",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "82ade6695fa10b673008c55ea289aa1c0f01f17e1bf0bd5df53055ecb11762c4",
+      "source": "raw/phone-skills-en.png"
+    },
+    {
+      "file": "en-iphone-67-3-provider.png",
+      "locale": "en-US",
+      "displayType": "APP_IPHONE_67",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "089b224cf7eca43c446ef1febc13d1aa846141232b1db9780078d110145c3814",
+      "source": "raw/phone-provider-en.png"
+    },
+    {
+      "file": "en-iphone-67-4-home.png",
+      "locale": "en-US",
+      "displayType": "APP_IPHONE_67",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "a59b41d58aafde827f44a5f146302169cc8044ef018ef660f65cc17423f8dea9",
+      "source": "raw/phone-home-en.png"
+    },
+    {
+      "file": "en-iphone-61-1-research.png",
+      "locale": "en-US",
+      "displayType": "APP_IPHONE_61",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "1567250f907f6fd04eaa45bcba71f44fefa04d8d701fe17f5c41cf28621dfedb",
+      "source": "raw/phone-research-en.png"
+    },
+    {
+      "file": "en-iphone-61-2-skills.png",
+      "locale": "en-US",
+      "displayType": "APP_IPHONE_61",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "4761b401ea7fde22aa83adf5e4a34b4de12514ceb44c3988ac18b329eda6a6ab",
+      "source": "raw/phone-skills-en.png"
+    },
+    {
+      "file": "en-iphone-61-3-provider.png",
+      "locale": "en-US",
+      "displayType": "APP_IPHONE_61",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "77ced9246ac2d99f9f8fdb1e3bba7e202fa4e2d3f341c150ef795e00350fe262",
+      "source": "raw/phone-provider-en.png"
+    },
+    {
+      "file": "en-iphone-61-4-home.png",
+      "locale": "en-US",
+      "displayType": "APP_IPHONE_61",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "abc1745e04530f9e2d93bcff78e4fe65ecc6bf4cb1f4a6519198334725a74359",
+      "source": "raw/phone-home-en.png"
+    },
+    {
+      "file": "en-ipad-13-1-home.png",
+      "locale": "en-US",
+      "displayType": "APP_IPAD_PRO_3GEN_129",
+      "width": 2752,
+      "height": 2064,
+      "sha256": "9b3364a9e5b3f71bc25b7c5be44911e4173728f5f447d7c3d72e19228d17706c",
+      "source": "raw/ipad-home-en.png"
+    },
+    {
+      "file": "en-ipad-13-2-skills.png",
+      "locale": "en-US",
+      "displayType": "APP_IPAD_PRO_3GEN_129",
+      "width": 2752,
+      "height": 2064,
+      "sha256": "5ef0c8152471768cc00a08d1b705168f5b095c69e87b1e1bbe305eef27a1c48d",
+      "source": "raw/ipad-skills-en.png"
+    },
+    {
+      "file": "en-ipad-13-3-provider.png",
+      "locale": "en-US",
+      "displayType": "APP_IPAD_PRO_3GEN_129",
+      "width": 2752,
+      "height": 2064,
+      "sha256": "0bbefd92a4e21e1b3132dbb3b95193f5db2be80bce9d657c6d35e45cdd1218c0",
+      "source": "raw/ipad-provider-en.png"
+    },
+    {
+      "file": "zh-iphone-67-1-research.png",
+      "locale": "zh-Hans",
+      "displayType": "APP_IPHONE_67",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "dfbe46b9cc8bf6710603e4c4ddf452346802effdf64551b766e524838d08fc4a",
+      "source": "raw/phone-research-zh.png"
+    },
+    {
+      "file": "zh-iphone-67-2-skills.png",
+      "locale": "zh-Hans",
+      "displayType": "APP_IPHONE_67",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "934b15d1d7321b0a84f6ce51289608f7e1de27b64115e23d3a5b4016ec6da4f7",
+      "source": "raw/phone-skills-zh.png"
+    },
+    {
+      "file": "zh-iphone-67-3-provider.png",
+      "locale": "zh-Hans",
+      "displayType": "APP_IPHONE_67",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "7af92815beb4b3a4918eb0089f92b7bb67b0577184e2907aa9af149d43b3e5d8",
+      "source": "raw/phone-provider-zh.png"
+    },
+    {
+      "file": "zh-iphone-67-4-home.png",
+      "locale": "zh-Hans",
+      "displayType": "APP_IPHONE_67",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "59142dde0511f41b8ba94ae788f704197f749f80f50a95059fefc620e41841e5",
+      "source": "raw/phone-home-zh.png"
+    },
+    {
+      "file": "zh-iphone-61-1-research.png",
+      "locale": "zh-Hans",
+      "displayType": "APP_IPHONE_61",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "45fbd3d1c442721bddd1779e517c2cef4dc447dc52034bbf085a904d868dfe08",
+      "source": "raw/phone-research-zh.png"
+    },
+    {
+      "file": "zh-iphone-61-2-skills.png",
+      "locale": "zh-Hans",
+      "displayType": "APP_IPHONE_61",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "e82c85ccba2aad7a3eb9f796cf8d2a8c0248aa8fbd34ea04a2d354f807631123",
+      "source": "raw/phone-skills-zh.png"
+    },
+    {
+      "file": "zh-iphone-61-3-provider.png",
+      "locale": "zh-Hans",
+      "displayType": "APP_IPHONE_61",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "3cada268219f1666c270f60578aa02709eae41904d122f66b992f20ede777cce",
+      "source": "raw/phone-provider-zh.png"
+    },
+    {
+      "file": "zh-iphone-61-4-home.png",
+      "locale": "zh-Hans",
+      "displayType": "APP_IPHONE_61",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "7904836b5ea13c9ad40286974af921d56c36b51f0f765b10835ad181e65eaa40",
+      "source": "raw/phone-home-zh.png"
+    },
+    {
+      "file": "zh-ipad-13-1-home.png",
+      "locale": "zh-Hans",
+      "displayType": "APP_IPAD_PRO_3GEN_129",
+      "width": 2752,
+      "height": 2064,
+      "sha256": "b8839afac05e6bfa06c17700d4e3ef91cfa16f794d8bb7970c4a6dc81c9aa735",
+      "source": "raw/ipad-home-zh.png"
+    },
+    {
+      "file": "zh-ipad-13-2-skills.png",
+      "locale": "zh-Hans",
+      "displayType": "APP_IPAD_PRO_3GEN_129",
+      "width": 2752,
+      "height": 2064,
+      "sha256": "90520286a8f78fa7cbca6519f7f307438c638aa7813ee4ceec4da64f468ee739",
+      "source": "raw/ipad-skills-zh.png"
+    },
+    {
+      "file": "zh-ipad-13-3-provider.png",
+      "locale": "zh-Hans",
+      "displayType": "APP_IPAD_PRO_3GEN_129",
+      "width": 2752,
+      "height": 2064,
+      "sha256": "107066ad4cd80508403dc8138cdd3a4cc7c76c6eb75e6fd95ee55acbd92d44f1",
+      "source": "raw/ipad-provider-zh.png"
+    }
+  ]
+}
