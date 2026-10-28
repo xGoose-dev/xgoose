@@ -40,6 +40,8 @@ try{
  assert.ok(image,'The continuation sent to the model must include actual image bytes');
  const toolText=requests[1].messages.filter(m=>m.role==='tool').map(m=>typeof m.content==='string'?m.content:JSON.stringify(m.content)).join('');
  assert.match(toolText,/image_parts/);assert.match(toolText,/"attached":1/);assert.ok(!toolText.includes(image.image_url.url.split(',')[1]));
+ await mkdir('artifacts/tieba-images',{recursive:true});
+ for(const [i,part] of allImages.entries())await writeFile(`artifacts/tieba-images/model-part-${i+1}.jpg`,Buffer.from(part.image_url.url.split(',')[1],'base64'));
  const dimensions=await page.evaluate(async data=>{const b=await createImageBitmap(await(await fetch(data)).blob());const d={width:b.width,height:b.height};b.close();return d;},image.image_url.url);
  assert.equal(allImages.length,2);assert.equal(dimensions.width,1828);assert.equal(dimensions.height,1733);
  for(const part of allImages)assert.ok(part.image_url.url.length<=320050,'Hosted image transport limit');
