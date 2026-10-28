@@ -84,4 +84,4 @@ The original master is `branding/icon.svg`, shared with Chrome, Edge and Firefox
 
 Home, skills and provider screenshots were captured on fresh iOS 26.5 simulators running the 1.8 app, in English and Simplified Chinese. The research images retain the real Safari research captures previously prepared for the public app, showing the unchanged chat interface. These are real UI captures with editorial framing, not fabricated product screens. No customer account, private conversation or credential appears in the assets.
 
-The same iOS app/extension IDs, App Group and Keychain sharing are retained. Use the existing manual profiles for unsigned archive → signed export. Review credentials stay solely in App Store Connect Notes and are not part of this repository or artwork.
+The same iOS app/extension IDs, App Group and Keychain sharing are retained. Use the existing manual profiles for unsigned archive → `scripts/sign-ios-archive.py` → signed export. Check both shared entitlements in the exported IPA before uploading. Review credentials stay solely in App Store Connect Notes and are not part of this repository or artwork.

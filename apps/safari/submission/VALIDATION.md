@@ -1,6 +1,6 @@
 # iOS 1.8 branding validation
 
-Built from current monorepo main 3f8731a, retaining 1.7 behavior and analytics fixes. New canonical icons, brand tint, localized store metadata and 22 screenshot compositions. Safari typecheck, Safari viewport suite and seven native tests passed; final simulator build also passed. Metadata was saved and read back in English and Simplified Chinese. Archive, screenshot processing and review submission results will be appended after verification.
+Built from current monorepo main 3f8731a, retaining 1.7 behavior and analytics fixes. New canonical icons, brand tint, localized store metadata and 22 screenshot compositions. Safari typecheck, Safari viewport suite and seven native tests passed; final simulator build also passed. Metadata was saved and read back in English and Simplified Chinese. The unsigned archive/export path dropped App Group and Keychain entitlements during validation; build 14 was not used. Build 15 signs the archive with existing profiles before export. Both app and extension signatures, shared App Group and shared Keychain entitlements are verified in the final IPA. Screenshot processing and review submission results will be appended after verification.
 
 The following records are historical evidence for the 1.6 replacement, not checks claimed for this branding change.
 
