@@ -206,3 +206,16 @@ Built-in skills live in `apps/chrome/skills/`. When changing one: bump `@version
 ### Publishing
 
 **Publish to xgoose-web** on the skill's chip in the panel, or the form at [xgoose.org/publish/](https://xgoose.org/publish/), uploads the `.xgs.js` source. Republishing a name with a version that is not greater bumps the patch automatically. Local use never needs publishing.
+
+## Shared image reads
+
+The host exposes `read_images({urls:["https://cdn.example/image.jpg"]})` on every page, including pages without an active skill. It returns actual model image parts. Preserve URL query parameters. The background downloads without cookies, caches successful images for five minutes, and splits long screenshots into readable segments within three image parts per call.
+
+Any skill may request the same transport by returning this object, including from `js_exec`:
+
+```js
+{ imageContext: { requested: true, delivery: "urls_only_until_host_attaches",
+  images: [{url, postUrl, postNumber}] } }
+```
+
+The host replaces pending URLs with image parts and keeps attribution plus segment/crop metadata in the dehydrated result. Image bytes are excluded from tool text and transcripts. Each encoded JPEG fits the Hosted image limit (240 KB before base64).

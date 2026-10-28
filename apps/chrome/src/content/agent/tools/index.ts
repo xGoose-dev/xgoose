@@ -519,7 +519,19 @@ export function buildPageControllerTools(): XgooseBuiltTool[] {
   });
 }
 
+const readImagesTool = defineTool({
+  name:"read_images",
+  description:"View images from HTTPS URLs as actual model image parts. Available on every website and to every skill. Use complete img.currentSrc/src URLs, including query parameters. Downloads happen in the extension background without cookies or page CORS restrictions. Long screenshots are split into readable segments within three image parts per call. A skill can also return imageContext:{requested:true,delivery:'urls_only_until_host_attaches',images:[{url,postUrl?,postNumber?}]} for automatic attachment. No local OCR is needed.",
+  inputSchema:z.object({urls:z.array(z.string().url()).min(1).max(3)}),
+  isReadOnly:true,
+  isConcurrencySafe:()=>true,
+  label:()=>"Read image pixels",
+  execute:async({urls},opts)=>detachResultImages(await attachHostImages({imageContext:{requested:true,delivery:"urls_only_until_host_attaches",images:urls.map(url=>({url}))}},opts.abortSignal)),
+  toModelOutput:result=>[{type:"text",text:safeJson(result)},...resultImageParts(result)],
+});
+
 const SKILL_TOOLS: XgooseBuiltTool[] = [
+  readImagesTool,
   skillCallTool,
   listSkillsTool,
   readSkillTool,
