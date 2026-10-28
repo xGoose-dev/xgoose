@@ -151,8 +151,18 @@ export function injectedSkillNames(): string[] {
   return Array.from(injectedSkills.keys());
 }
 
-/** URL matches are candidates; a bundle's @detect gate can still reject it. */
-export async function detectActiveSkills(candidates: RegistrySkill[]): Promise<RegistrySkill[]> {
+// Skills that match every site are checked here, in the content script, so
+// their bundles are not injected into unrelated pages. Inline script text is
+// readable from the isolated world; page globals are not.
+const PLATFORM_MARKERS: Record<string, () => boolean> = {
+  "discuz-forum": () =>
+    !!document.querySelector('meta[name="generator"][content^="Discuz!"]') ||
+    Array.from(document.scripts).some(s => !s.src && /\bdiscuz_uid\s*=/.test(s.textContent ?? "")),
+};
+
+/** URL matches are candidates; platform markers and a bundle's @detect gate can still reject them. */
+export async function detectActiveSkills(urlCandidates: RegistrySkill[]): Promise<RegistrySkill[]> {
+  const candidates = urlCandidates.filter(s => PLATFORM_MARKERS[s.name]?.() ?? true);
   let loaded: Awaited<ReturnType<typeof send<"sw:skill_snapshot">>>;
   try {
     await injectSkills(candidates);
