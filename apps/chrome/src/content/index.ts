@@ -29,7 +29,7 @@ import { installSubstackReadContentBridge } from "@/shared/substackReadBridge";
 /// <reference types="chrome" />
 
 import { registerRouter, send } from "@/shared/messages";
-import { track,failureReason } from "@/shared/analytics";
+import { track,failureReason,setAnalyticsActive } from "@/shared/analytics";
 import {
   clearResumeGlobal,
   deleteConversation,
@@ -151,11 +151,13 @@ async function bootstrap(): Promise<void> {
   chrome.storage.onChanged.addListener(applyLauncherVisibility);
 
   panel.onOpen(async () => {
+    setAnalyticsActive(true);
     track("panel_opened");
     void permissionGuide.check();
     if (origin) await setPanelOpenForOrigin(origin, true);
   });
   panel.onClose(async () => {
+    setAnalyticsActive(false);
     track("panel_closed");
     if (origin) await setPanelOpenForOrigin(origin, false);
   });

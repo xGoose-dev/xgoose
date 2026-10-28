@@ -1,4 +1,4 @@
-import {chromium} from '@playwright/test';
+import {chromium,expect} from '@playwright/test';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {resolve} from 'node:path';
@@ -22,10 +22,11 @@ context.setDefaultTimeout(15000);
 try{
  const sw=context.serviceWorkers()[0]??await context.waitForEvent('serviceworker');const id=sw.url().split('/')[2];
  await sw.evaluate(()=>{
-  globalThis.analyticsFixture={requests:[],failed:false};const original=fetch;
+  globalThis.analyticsFixture={requests:[],failed:false,refreshes:0,rejectOnce:false};const original=fetch;
   globalThis.fetch=async(input,init)=>{
    const url=typeof input==='string'?input:input.url;if(!url.startsWith('https://api.xgoose.org'))return original(input,init);
-   if(url.endsWith('/a/collect')){globalThis.analyticsFixture.requests.push({body:JSON.parse(init.body),headers:init.headers});return new Response(null,{status:globalThis.analyticsFixture.failed?503:204});}
+   if(url.endsWith('/auth/refresh')){globalThis.analyticsFixture.refreshes++;return Response.json({access_token:'renewed-'+globalThis.analyticsFixture.refreshes,refresh_token:'renewed-refresh',access_token_expires_at:'2100-01-01T00:00:00Z'});}
+   if(url.endsWith('/a/collect')){globalThis.analyticsFixture.requests.push({body:JSON.parse(init.body),headers:init.headers});if(globalThis.analyticsFixture.rejectOnce){globalThis.analyticsFixture.rejectOnce=false;return new Response(null,{status:401});}return new Response(null,{status:globalThis.analyticsFixture.failed?503:204});}
    if(url.endsWith('/me/transcript-consent'))return Response.json({hosted:true,byok:false});
    return Response.json({data:[{id:'luna'}]});
   };
@@ -47,15 +48,29 @@ try{
  await new Promise(r=>setTimeout(r,2200));
  await bridge.waitForFunction(async()=>!((await chrome.storage.local.get('xgoose.analytics.queue-v2'))['xgoose.analytics.queue-v2']??[]).length);
  const retries=await sw.evaluate(()=>globalThis.analyticsFixture.requests.flatMap(r=>r.body.events).filter(e=>e.name==='analytics_fixture_started'));assert.ok(retries.length>=2);assert.equal(retries[0].params.event_id,retries.at(-1).params.event_id);
- const page=await context.newPage();await page.goto(base+'/private-path?secret=private');await page.locator('#xgoose-root').waitFor({state:'attached'});
+ // The telemetry path renews expired tokens instead of silently losing identity.
+ await bridge.evaluate(async()=>{const a=(await chrome.storage.local.get('xgoose.account'))['xgoose.account'];await chrome.storage.local.set({'xgoose.account':{...a,accessTokenExpiresAt:'2000-01-01T00:00:00Z'}});await chrome.runtime.sendMessage({kind:'sw:track',payload:{event:'analytics_expired_fixture'}});});
+ await bridge.waitForFunction(async()=>((await chrome.storage.local.get('xgoose.analytics.queue-v2'))['xgoose.analytics.queue-v2']??[]).some(e=>e.name==='analytics_expired_fixture'));
+ await bridge.waitForFunction(async()=>!((await chrome.storage.local.get('xgoose.analytics.queue-v2'))['xgoose.analytics.queue-v2']??[]).length);
+ await expect.poll(()=>sw.evaluate(()=>globalThis.analyticsFixture.requests.some(r=>r.body.events.some(e=>e.name==='analytics_expired_fixture'))),{timeout:15000}).toBe(true);
+ let refreshed=await sw.evaluate(()=>globalThis.analyticsFixture.requests.find(r=>r.body.events.some(e=>e.name==='analytics_expired_fixture')));assert.match(refreshed.headers.authorization,/Bearer renewed-/);
+ await sw.evaluate(()=>globalThis.analyticsFixture.rejectOnce=true);
+ await bridge.evaluate(()=>chrome.runtime.sendMessage({kind:'sw:track',payload:{event:'analytics_rejected_fixture'}}));
+ await bridge.waitForFunction(async()=>((await chrome.storage.local.get('xgoose.analytics.queue-v2'))['xgoose.analytics.queue-v2']??[]).some(e=>e.name==='analytics_rejected_fixture'));
+ await bridge.waitForFunction(async()=>!((await chrome.storage.local.get('xgoose.analytics.queue-v2'))['xgoose.analytics.queue-v2']??[]).length);
+ await expect.poll(()=>sw.evaluate(()=>globalThis.analyticsFixture.requests.filter(r=>r.body.events.some(e=>e.name==='analytics_rejected_fixture')).length),{timeout:15000}).toBe(2);
+ const rejected=await sw.evaluate(()=>globalThis.analyticsFixture.requests.filter(r=>r.body.events.some(e=>e.name==='analytics_rejected_fixture')));assert.equal(rejected.length,2);assert.notEqual(rejected[0].headers.authorization,rejected[1].headers.authorization);
+ const page=await context.newPage();await page.goto(base+'/private-path?secret=private');await page.bringToFront();await page.locator('#xgoose-root').waitFor({state:'attached'});
  await page.locator('.toggle').click();await page.locator('.in-text').fill('Synthetic private prompt');await page.locator('.btn-send').click();
  await page.waitForFunction(()=>document.querySelector('#xgoose-root')?.shadowRoot?.textContent?.includes('Analytics fixture response.'));
  await new Promise(r=>setTimeout(r,2200));
  await bridge.waitForFunction(async()=>!((await chrome.storage.local.get('xgoose.analytics.queue-v2'))['xgoose.analytics.queue-v2']??[]).length);
- const events=await sw.evaluate(()=>globalThis.analyticsFixture.requests.flatMap(r=>r.body.events));const sent=events.find(e=>e.name==='chat_message_sent');assert.ok(sent);for(const name of ['chat_first_response','chat_turn_finished'])assert.ok(events.some(e=>e.name===name&&e.params.flow_id===sent.params.flow_id));
+ let events=await sw.evaluate(()=>globalThis.analyticsFixture.requests.flatMap(r=>r.body.events));const sent=events.find(e=>e.name==='chat_message_sent');assert.ok(sent);for(const name of ['chat_first_response','chat_turn_finished'])assert.ok(events.some(e=>e.name===name&&e.params.flow_id===sent.params.flow_id));
  assert.ok(!JSON.stringify(events).includes('Synthetic private prompt'));assert.ok(!JSON.stringify(events).includes('/private-path'));
  const journal=await sw.evaluate(()=>new Promise((resolve,reject)=>{const r=indexedDB.open('xgoose-sessions',1);r.onerror=()=>reject(r.error);r.onsuccess=()=>{const q=r.result.transaction('events').objectStore('events').getAll();q.onsuccess=()=>resolve(q.result);};}));
  assert.ok(journal.length);assert.ok(journal.every(e=>e.event.site==='127.0.0.1'));assert.ok(!JSON.stringify(journal.map(e=>e.event.site)).includes('secret'));
+ const contexts=await sw.evaluate(()=>globalThis.analyticsFixture.requests.filter(r=>r.body.device));assert.ok(contexts.length);assert.ok(contexts.every(r=>r.body.device.screen_resolution&&r.body.device.language));
+ await expect.poll(()=>sw.evaluate(()=>globalThis.analyticsFixture.requests.flatMap(r=>r.body.events).some(e=>e.name==='extension_engagement'&&e.params.engagement_time_msec>1)),{timeout:20000}).toBe(true);
  await bridge.evaluate(async()=>{const settings=(await chrome.storage.local.get('xgoose.settings'))['xgoose.settings'];await chrome.storage.local.set({'xgoose.settings':{...settings,analyticsEnabled:false}});});
  await new Promise(r=>setTimeout(r,100));const count=await sw.evaluate(()=>globalThis.analyticsFixture.requests.length);
  await bridge.evaluate(()=>chrome.runtime.sendMessage({kind:'sw:track',payload:{event:'analytics_fixture_opted_out'}}));await new Promise(r=>setTimeout(r,2000));
