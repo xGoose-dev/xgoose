@@ -23,7 +23,7 @@ test('Chrome uses v2, waits for async upload and then requests automatic publica
  const calls=[];const responses=[Response.json({access_token:'fixture-token'}),Response.json({uploadState:'IN_PROGRESS'}),Response.json({lastAsyncUploadState:'SUCCEEDED'}),Response.json({state:'PENDING_REVIEW'})];
  const credentials=Object.fromEntries(['CWS_CLIENT_ID','CWS_CLIENT_SECRET','CWS_REFRESH_TOKEN','CWS_PUBLISHER_ID','CWS_EXTENSION_ID'].map(k=>[k,'fixture']));
  const result=await submitStore({store:'chrome',zip:Buffer.from('zip'),credentials,wait:async()=>{},fetchImpl:async(url,options)=>{calls.push({url,options});return responses.shift();}});
- assert.match(calls[1].url,/upload\/v2\/publishers\/fixture\/items\/fixture:upload$/);assert.equal(calls[3].options.body,'{"publishType":"STAGED_PUBLISH"}');assert.equal(result.stage,'submitted-for-review');
+ assert.match(calls[1].url,/upload\/v2\/publishers\/fixture\/items\/fixture:upload$/);assert.equal(calls[3].options.body,'{"publishType":"DEFAULT_PUBLISH"}');assert.equal(result.stage,'submitted-for-review');
 });
 test('Chrome service account signs a scoped short-lived assertion without a user refresh token',async()=>{
  const {generateKeyPairSync,verify}=await import('node:crypto');
