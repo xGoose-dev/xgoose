@@ -1,6 +1,16 @@
 # iOS 1.8 branding validation
 
-Built from current monorepo main 3f8731a, retaining 1.7 behavior and analytics fixes. New canonical icons, brand tint, localized store metadata and 22 screenshot compositions. Safari typecheck, Safari viewport suite and seven native tests passed; final simulator build also passed. Metadata was saved and read back in English and Simplified Chinese. The unsigned archive/export path dropped App Group and Keychain entitlements during validation; build 14 was not used. Build 15 signs the archive with existing profiles before export. Both app and extension signatures, shared App Group and shared Keychain entitlements are verified in the final IPA. Screenshot processing and review submission results will be appended after verification.
+Built from current monorepo main 3f8731a, retaining 1.7 behavior and analytics fixes. New canonical icons, brand tint, localized store metadata and 22 screenshot compositions. Safari typecheck, Safari viewport suite and seven native tests passed; final simulator build also passed. Metadata was saved and read back in English and Simplified Chinese. The unsigned archive/export path dropped App Group and Keychain entitlements during validation; build 14 was not used. Build 15 signs the archive with existing profiles before export. Both app and extension signatures, shared App Group and shared Keychain entitlements are verified in the final IPA. All localized screenshot processing and final review submission were verified as recorded below.
+
+## 1.8 distribution evidence
+
+- Source integrated as main `67be928227fb762e303d43b60c64dc3183c9e92a`, PR #29. Both CI runs on `8f585507e7463d133e8c61b50b1caea8bcc4526b` passed: 40741121829 and 40741136432. The Safari tree in the integration merge matches the built source.
+- Final signed IPA 1.8 (15), SHA-256 `6f69bd0c9fa88cc94f6e7e016b911b0413694b910dd9dcadd6d08bd40465b0ba`. Existing app/extension identifiers, App Group, Keychain group and manual profiles verified after export.
+- Apple upload succeeded with no errors, delivery/build-upload ID `6a62c6f2-8283-439c-9e6b-0922ffefceea`. Build 14's incomplete upload is not attached or submitted.
+- All 22 English/Simplified Chinese screenshots processed COMPLETE, ordered and read back through the API: four iPhone images per locale at each supported size and three iPad images per locale. Public 1.7 assets preserved; old cloned 1.8 galleries and the stale 11-inch override removed.
+- English and Chinese descriptions, promotional text, keywords, release notes, subtitle and privacy URL saved and read back. Authenticated ASC UI confirms the localized artwork and “Tampermonkey for AI” positioning. Reviewer credential/contact fields preserved privately.
+- Submitted 2026-10-28 18:16:10 UTC. Apple build processing is VALID. Review submission `261af154-70f1-4eb8-baf9-d2cb39047ecc` contains exactly one iOS item; both API and authenticated ASC UI confirm WAITING_FOR_REVIEW. Release type remains MANUAL. No macOS item was included.
+- Sanitized machine-readable evidence: `evidence/app-store-1.8.json`. ASC screenshots are local-only in the ignored `screenshots/brand-1.8/` directory; account/reviewer details are excluded from committed artwork.
 
 The following records are historical evidence for the 1.6 replacement, not checks claimed for this branding change.
 

@@ -1,0 +1,105 @@
+{
+  "appId": "6770188718",
+  "platform": "IOS",
+  "version": "1.8",
+  "build": "15",
+  "versionId": "e5566152-db80-4c20-b369-c46ee3a7c2e3",
+  "buildId": "6a62c6f2-8283-439c-9e6b-0922ffefceea",
+  "processingState": "VALID",
+  "reviewSubmissionId": "261af154-70f1-4eb8-baf9-d2cb39047ecc",
+  "reviewState": "WAITING_FOR_REVIEW",
+  "submittedDate": "2026-10-28T18:16:10.489Z",
+  "releaseType": "MANUAL",
+  "items": 1,
+  "sourceCommit": "67be928227fb762e303d43b60c64dc3183c9e92a",
+  "builtSourceCommit": "8f585507e7463d133e8c61b50b1caea8bcc4526b",
+  "sourcePR": "https://github.com/xGoose-dev/xgoose/pull/29",
+  "ipaSha256": "6f69bd0c9fa88cc94f6e7e016b911b0413694b910dd9dcadd6d08bd40465b0ba",
+  "gallery": [
+    {
+      "locale": "en-US",
+      "displayType": "APP_IPHONE_67",
+      "count": 4,
+      "state": "COMPLETE",
+      "files": [
+        "en-iphone-67-1-research.png",
+        "en-iphone-67-2-skills.png",
+        "en-iphone-67-3-provider.png",
+        "en-iphone-67-4-home.png"
+      ]
+    },
+    {
+      "locale": "en-US",
+      "displayType": "APP_IPAD_PRO_3GEN_129",
+      "count": 3,
+      "state": "COMPLETE",
+      "files": [
+        "en-ipad-13-1-home.png",
+        "en-ipad-13-2-skills.png",
+        "en-ipad-13-3-provider.png"
+      ]
+    },
+    {
+      "locale": "en-US",
+      "displayType": "APP_IPHONE_61",
+      "count": 4,
+      "state": "COMPLETE",
+      "files": [
+        "en-iphone-61-1-research.png",
+        "en-iphone-61-2-skills.png",
+        "en-iphone-61-3-provider.png",
+        "en-iphone-61-4-home.png"
+      ]
+    },
+    {
+      "locale": "zh-Hans",
+      "displayType": "APP_IPHONE_67",
+      "count": 4,
+      "state": "COMPLETE",
+      "files": [
+        "zh-iphone-67-1-research.png",
+        "zh-iphone-67-2-skills.png",
+        "zh-iphone-67-3-provider.png",
+        "zh-iphone-67-4-home.png"
+      ]
+    },
+    {
+      "locale": "zh-Hans",
+      "displayType": "APP_IPAD_PRO_3GEN_129",
+      "count": 3,
+      "state": "COMPLETE",
+      "files": [
+        "zh-ipad-13-1-home.png",
+        "zh-ipad-13-2-skills.png",
+        "zh-ipad-13-3-provider.png"
+      ]
+    },
+    {
+      "locale": "zh-Hans",
+      "displayType": "APP_IPHONE_61",
+      "count": 4,
+      "state": "COMPLETE",
+      "files": [
+        "zh-iphone-61-1-research.png",
+        "zh-iphone-61-2-skills.png",
+        "zh-iphone-61-3-provider.png",
+        "zh-iphone-61-4-home.png"
+      ]
+    }
+  ],
+  "signing": {
+    "appGroup": "group.org.xgoose.xgoose-safari",
+    "keychainGroup": "2L6B6ZA57F.org.xgoose.xgoose-safari",
+    "appAndExtensionVerified": true
+  },
+  "checks": {
+    "safariTypecheck": true,
+    "safariViewport": true,
+    "nativeTests": 7,
+    "ciRuns": [
+      40741121829,
+      40741136432
+    ],
+    "ci": "success"
+  }
+}
