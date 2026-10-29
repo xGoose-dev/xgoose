@@ -27,6 +27,12 @@ try{
     const summary=JSON.stringify(body).includes('Summarize this browser-agent history');
     if(summary)state.summaries++;else state.normal++;
     state.requests.push({path:url.pathname,body,credentialCorrect:true,summary});
+    // Match OpenAI's rejection rather than accepting any syntactically valid
+    // fixture request: a green test must prove the actual extension wire shape.
+    if(state.mode==='openai-compat'){
+     if(body.model!=='gpt-6-luna'||body.max_tokens!==undefined||!body.max_completion_tokens||(!summary&&body.reasoning_effort!=='none'))return Response.json({error:{message:"Unsupported parameter: 'max_tokens'. Use 'max_completion_tokens' instead, with reasoning_effort none for Luna tools.",code:'unsupported_parameter'}},{status:400});
+    }
+    if(state.mode==='xgoose-hosted'&&(body.max_completion_tokens!==undefined||body.reasoning_effort!==undefined||!body.max_tokens))throw new Error('Hosted request format changed');
     if(state.mode==='xgoose-hosted'&&!summary&&state.normal===2)return Response.json({error:{code:'context_length_exceeded',message:'Text context exceeds the gateway limit; compact and retry.'}},{status:400,headers:{'x-xgoose-context-target-bytes':'100000'}});
     const text=summary?'read_page completed. Evidence: BROWSER_PROVIDER_728. Never replay the read.':`Provider browser verified: ${state.mode}.`;
     const call=!summary&&state.normal===1;
@@ -48,10 +54,10 @@ try{
  for(const provider of ['gemini','gemini-litellm','openai-compat','xgoose-hosted']){
   await sw.evaluate(mode=>{globalThis.byokFixture={requests:[],normal:0,summaries:0,tests:0,mode};},provider);
   await options.evaluate(provider=>chrome.storage.local.set({
-   'xgoose.settings':{provider,model:provider==='xgoose-hosted'?'luna':'gemini-2.5-flash',language:'en',thinking:false,analyticsEnabled:false,launcherVisibility:'always',apiKeys:{gemini:'synthetic-byok-key','gemini-litellm':'synthetic-byok-key','openai-compat':'synthetic-byok-key'},baseUrls:{gemini:'https://byok.fixture.test','gemini-litellm':'https://byok.fixture.test/v1beta','openai-compat':'https://byok.fixture.test/v1beta/openai'}},
+   'xgoose.settings':{provider,model:provider==='xgoose-hosted'?'luna':provider==='openai-compat'?'gpt-6-luna':'gemini-2.5-flash',language:'en',thinking:provider==='openai-compat',analyticsEnabled:false,launcherVisibility:'always',apiKeys:{gemini:'synthetic-byok-key','gemini-litellm':'synthetic-byok-key','openai-compat':'synthetic-byok-key'},baseUrls:{gemini:'https://byok.fixture.test','gemini-litellm':'https://byok.fixture.test/v1beta','openai-compat':'https://byok.fixture.test/v1'}},
    'xgoose.account':{user:{id:'byok-fixture',email:'test@example.test',name:'Fixture',avatar_url:null,email_verified:true,is_admin:false},accessToken:'synthetic-hosted-token',refreshToken:'synthetic-refresh',accessTokenExpiresAt:'2100-01-01T00:00:00Z',lastSeenAt:Date.now()},
   }),provider);
-  const result=await options.evaluate(provider=>chrome.runtime.sendMessage({kind:'sw:test_api_key',payload:{provider,apiKey:'synthetic-byok-key',baseUrl:provider==='gemini-litellm'?'https://byok.fixture.test/v1beta':provider==='openai-compat'?'https://byok.fixture.test/v1beta/openai':'https://byok.fixture.test',model:'luna'}}),provider);
+  const result=await options.evaluate(provider=>chrome.runtime.sendMessage({kind:'sw:test_api_key',payload:{provider,apiKey:'synthetic-byok-key',baseUrl:provider==='gemini-litellm'?'https://byok.fixture.test/v1beta':provider==='openai-compat'?'https://byok.fixture.test/v1':'https://byok.fixture.test',model:provider==='openai-compat'?'gpt-6-luna':'luna'}}),provider);
   assert.equal(result.ok,true,JSON.stringify(result));
   const page=await context.newPage();await page.goto('https://page.fixture.test/');await page.locator('#xgoose-root').waitFor({state:'attached'});if(await page.locator('.toggle').isVisible())await page.locator('.toggle').click();
   await page.locator('.in-text').fill('Read the fixture evidence.');await page.locator('.btn-send').click();

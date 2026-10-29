@@ -133,7 +133,19 @@ export class PageAgentRuntime {
           },
         });
       }
-      return openai(m as any, context, requestOptions);
+      return openai(m as any, context, {
+        ...requestOptions,
+        onPayload: async (payload: any, model) => {
+          const next = await requestOptions.onPayload?.(payload, model) ?? payload;
+          // GPT-6 Luna only supports Chat Completions function calling with
+          // reasoning disabled. Apply this to tool requests and saved tool
+          // history, regardless of the user's thinking toggle. Plain summary
+          // requests and Hosted/other compatible providers keep their policy.
+          const luna = /^gpt-6-luna(?:-|$)/i.test(m.id) && m.compat && "maxTokensField" in m.compat && m.compat.maxTokensField === "max_completion_tokens";
+          const hasTools = next.tools?.length || next.messages?.some((message: any) => message.role === "tool" || message.tool_calls?.length);
+          return luna && hasTools ? { ...next, reasoning_effort: "none" } : next;
+        },
+      });
     });
     const compactContext = async (context:AgentContext,signal?:AbortSignal,force=false) => {
         this.modelMessages = context.messages;

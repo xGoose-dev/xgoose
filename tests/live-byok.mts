@@ -14,7 +14,7 @@ const sanitize=(value:string)=>secrets.reduce((s,key)=>s.replaceAll(key,'[redact
 const variants=[
  {name:'gemini-native',provider:'gemini' as const,model:'gemini-2.5-flash',apiKey:geminiKey,baseUrl:''},
  {name:'gemini-openai-format',provider:'openai-compat' as const,model:'gemini-2.5-flash',apiKey:geminiKey,baseUrl:'https://generativelanguage.googleapis.com/v1beta/openai/'},
- ...(process.env.OPENAI_API_KEY?[{name:'openai-direct',provider:'openai-compat' as const,model:'gpt-4o-mini',apiKey:process.env.OPENAI_API_KEY,baseUrl:''}]:[]),
+ ...(process.env.OPENAI_API_KEY?[{name:'openai-direct',provider:'openai-compat' as const,model:process.env.XGOOSE_OPENAI_MODEL??'gpt-4o-mini',apiKey:process.env.OPENAI_API_KEY,baseUrl:''}]:[]),
 ];
 const outcomes=[];
 for(const variant of variants.filter(v=>!process.env.XGOOSE_LIVE_PROVIDERS||process.env.XGOOSE_LIVE_PROVIDERS.split(',').includes(v.name))){
