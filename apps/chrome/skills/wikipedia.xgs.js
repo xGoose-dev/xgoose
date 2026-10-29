@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         wikipedia
 // @namespace    wikipedia
-// @version      0.2.1
+// @version      0.2.2
 // @description  Wikipedia history and governance API reader: revisions, diffs, protection, logs, contributions, blocks, recent changes and your watchlist through the current wiki session.
 // @match        https://*.wikipedia.org/*
 // @connect      <self>
@@ -203,7 +203,7 @@ function createClient(site, policy, allowed) {
   function request(input, options = {}) {
     const url = new URL(input, location.href);
     if (url.protocol !== 'https:' || url.username || url.password || !allowed(url)) throw fault('invalid_endpoint', 'Request is outside the declared read-only site endpoints.');
-    const cacheKey = `${options.cacheScope ?? 'public'}:${options.type ?? 'json'}:${url.href}`;
+    const cacheKey = `${options.cacheScope ?? 'public'}:${options.type ?? 'json'}:${options.method ?? 'GET'}:${options.body ?? ''}:${url.href}`;
     const ttl = options.ttl ?? 30000;
     const cached = state.cache.get(cacheKey);
     if (ttl && cached?.until > Date.now()) return Promise.resolve(structuredClone(cached.value));
@@ -222,7 +222,7 @@ function createClient(site, policy, allowed) {
           ['hacker-news.firebaseio.com','hn.algolia.com','www.sov2ex.com','sov2ex.com'].includes(url.hostname) &&
           typeof globalThis.__xgoose?.publicReaderFetch === 'function';
         const response = usePublicRelay ? await globalThis.__xgoose.publicReaderFetch(url.href, { signal: controller.signal }) : await fetch(url.href, {
-          method: 'GET', credentials: url.origin === location.origin ? 'include' : 'omit',
+          method: options.method ?? 'GET', body: options.body, credentials: url.origin === location.origin ? 'include' : 'omit',
           headers: options.headers, signal: controller.signal, redirect: 'error', cache: options.cache,
         });
         const retry = response.headers.get('retry-after');
@@ -310,7 +310,7 @@ function checkApi(data){
 }
 async function api(params,a={},personal=false){
   return client.request(`/w/api.php?${new URLSearchParams({...params,format:'json',formatversion:2,maxlag:5,errorformat:'plaintext'})}`,{signal:a.signal,ttl:personal?0:30000,cache:personal?'no-store':undefined,parseResponse:async response=>{
-    let data;try{data=await response.json();}catch{throw fault('invalid_json','Wikipedia returned a non-JSON page, possibly an authentication/access challenge. No automatic retry.');}
+    let data;try{data=await response.json();}catch{throw fault('invalid_json','Wikipedia returned a non-JSON response.');}
     return checkApi(data);
   }});
 }
@@ -321,15 +321,15 @@ function paged(data,rows,sources=[]){
   // Text, author, date and title live in sources once. Keep IDs, flags and
   // operation details separately for programmatic filtering and continuation.
   const repeated=sources.length===rows.length&&sources.length>0?new Set(['title','user','timestamp','comment','snippet']):new Set();
-  return result(sources,{items:rows.map(row=>Object.fromEntries(Object.entries(row).filter(([key])=>!repeated.has(key)))),continuation:data.continue??null,warnings:data.warnings??null,coverage:'One API page; sources contain text/author/date/title, items contain remaining metadata. Hidden fields stay absent.'});
+  return result(sources,{items:rows.map(row=>Object.fromEntries(Object.entries(row).filter(([key])=>!repeated.has(key)))),continuation:data.continue??null,warnings:data.warnings??null,coverage:'One API page; sources contain text/author/date/title, items contain remaining metadata.'});
 }
 function revisionResult(p,a){
   const r=p.revisions?.[0];if(!r)throw fault('revision_not_found','Revision is missing or inaccessible.');
   const content=r.slots?.main?.content;
-  return result(content===undefined?[]:[source({id:r.revid,url:wikiUrl(p.title,{oldid:r.revid}),title:p.title,author:r.user,publishedAt:r.timestamp,text:content,scope:'revision_wikitext'},a)],{revision:{...pick(r,['revid','parentid','minor','anon','userhidden','commenthidden','texthidden','suppressed']),...(r.slots?{slots:Object.fromEntries(Object.entries(r.slots).map(([name,slot])=>[name,pick(slot,['contentmodel','contenthidden','texthidden','suppressed'])]))}:{})},contentAvailable:content!==undefined,contentModel:r.slots?.main?.contentmodel??null,coverage:'Exact main-slot revision wikitext, not rendered article text.'});
+  return result(content===undefined?[]:[source({id:r.revid,url:wikiUrl(p.title,{oldid:r.revid}),title:p.title,author:r.user,publishedAt:r.timestamp,text:content,scope:'revision_wikitext'},a)],{revision:{...pick(r,['revid','parentid','minor','anon','userhidden','commenthidden','texthidden','suppressed']),...(r.slots?{slots:Object.fromEntries(Object.entries(r.slots).map(([name,slot])=>[name,pick(slot,['contentmodel','contenthidden','texthidden','suppressed'])]))}:{})},contentAvailable:content!==undefined,contentModel:r.slots?.main?.contentmodel??null,coverage:'Main-slot revision wikitext.'});
 }
 const skill={
-  getHistory:siteFn('Read revision metadata for a page, newest first by default. Pass returned rvcontinue verbatim; summaries are not revision content.',z.object({...pageArgs,...range,user:z.string().optional(),rvcontinue:cursor}),async a=>{
+  getHistory:siteFn('Read revision IDs, editors, timestamps, edit summaries and tags, newest first by default. Continue with rvcontinue.',z.object({...pageArgs,...range,user:z.string().optional(),rvcontinue:cursor}),async a=>{
     const data=await api({action:'query',prop:'revisions',titles:pageTitle(a.title),rvprop:'ids|timestamp|user|comment|size|flags|tags',...nativeRange(a,'rv'),...(a.user?{rvuser:a.user}:{}),...(a.rvcontinue?{rvcontinue:a.rvcontinue}:{})},a);const p=requirePage(data);
     return {...paged(data,p.revisions??[],(p.revisions??[]).map(r=>changeSource(r,p.title))),page:{pageid:p.pageid,title:p.title}};
   }),
@@ -381,6 +381,6 @@ const skill={
   }),
   readCurrent:siteFn('Read the current article or discussion.',reading,a=>currentPage(['#mw-content-text','.mw-parser-output'],a)),
   getCapabilities:siteFn('List functions, current wiki and rate limits.',empty,()=>({readOnly:true,wiki:location.origin,dehydrated:true,history:['getHistory','getRevision','getDiff'],content:['getPage','getTalkPage','readCurrent'],governance:['getPageInfo','getLogs','getContributions','getRecentChanges','getBlocks','getUser'],session:['getSession','getWatchlist'],talkPages:'getTalkPage uses native talkid; getPage reads a known localized discussion title.',limits:client.status()})),
-  getRateLimit:siteFn('Inspect local request budgets and server cooldown; no automatic retry.',empty,()=>client.status()),
+  getRateLimit:siteFn('Read request budgets, usage and cooldown.',empty,()=>client.status()),
 };
 export default defineSkill(skill,{instructions:'Use the current language wiki. Page titles default to the current article/history page. getPage/getTalkPage/getRevision return main-slot wikitext with revision permalinks. getHistory/getLogs/getContributions/getRecentChanges/getWatchlist return one API page and native continuation fields; pass the matching cursor back to continue. Results use readerVersion/sources dehydration: text, author, date and title appear once in sources; items contain other metadata. getDiff includes structured removed/added pairs with includeChanges:true. offset/maxChars continues text. getSession reports login; getWatchlist requires login. getRateLimit reports request budgets and cooldown.'});
