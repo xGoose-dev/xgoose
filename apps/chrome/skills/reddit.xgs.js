@@ -1,8 +1,8 @@
 // ==XGooseSkill==
 // @name         reddit
 // @namespace    reddit
-// @version      0.2.0
-// @description  Reddit web read APIs: subreddit feeds/search/about/rules, posts, comment trees and morechildren, users and current-account subscriptions. Native sorting, time ranges, fullnames and cursors; Shreddit search and native comment listings.
+// @version      0.3.0
+// @description  Read Reddit posts, search comments, browse user profiles/posts/comments, community feeds and wikis with native pagination.
 // @match        https://www.reddit.com/*
 // @match        https://reddit.com/*
 // @match        https://old.reddit.com/*
@@ -280,7 +280,10 @@ function credentialDialog(label, save) {
   return { status: 'awaiting_user_entry', instruction: 'The user can enter the token in the page dialog. Do not ask for it in chat.' };
 }
 
-const client=createClient('reddit',{minIntervalMs:1100,perMinute:50,perHour:600},u=>u.origin===location.origin && (u.pathname==='/svc/shreddit/search' || 
+const client=createClient('reddit',{minIntervalMs:1100,perMinute:50,perHour:600},u=>u.origin===location.origin && (u.pathname==='/svc/shreddit/search' || /^\/svc\/shreddit\/r\/[A-Za-z0-9_]+\/search\/$/.test(u.pathname) ||
+  /^\/(?:r\/[A-Za-z0-9_]+\/)?comments\.json$/.test(u.pathname) ||
+  /^\/duplicates\/[a-z0-9]+\.json$/.test(u.pathname) ||
+  /^\/r\/[A-Za-z0-9_]+\/wiki\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.json$/.test(u.pathname) ||
   /^\/(?:r\/[A-Za-z0-9_+]+\/)?(?:hot|new|top|rising|controversial|best|search)\.json$/.test(u.pathname) ||
   /^\/(?:comments\/[a-z0-9]+|by_id\/t3_[a-z0-9]+|r\/[A-Za-z0-9_]+\/about(?:\/rules)?|user\/[A-Za-z0-9_-]+\/(?:about|overview|submitted|comments|saved|upvoted|downvoted|hidden|gilded)|subreddits\/(?:search|mine\/(?:subscriber|moderator|contributor))|api\/(?:me|morechildren))\.json$/.test(u.pathname)));
 async function api(path,params={},a={},personal=false){
@@ -335,6 +338,8 @@ function commentPage(raw,a){
     more:{children:more.slice(a.moreOffset,a.moreOffset+100),nextOffset:a.moreOffset+100<more.length?a.moreOffset+100:null,total:more.length},
     coverage:'comment_tree',pagination:'Top-level nextOffset continues rows; source.nextOffset continues text at commentIndex; more.nextOffset continues unexpanded IDs.'});
 }
+const userOptions={name:username,sort:z.enum(['hot','new','top','controversial']).default('new'),t:time,...listingOptions};
+const wikiOptions={subreddit:z.string().regex(/^[A-Za-z0-9_]+$/),page:z.string().regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/).default('index')};
 const commentOptions={offset,textOffset:offset,maxChars:z.number().int().positive().optional(),moreOffset:offset};
 const skill={
   getPosts:siteFn('GET [r/subreddit/]sort.json: global/subreddit/multi-subreddit feed. Choose native sort, t, limit, after/before/count.',z.object({subreddit:subreddit.optional(),sort:z.enum(['hot','new','top','rising','controversial','best']).default('hot'),t:time,...listingOptions}),a=>listing(`${prefix(a)}/${a.sort}.json`,{t:a.t},a)),
@@ -357,6 +362,41 @@ const skill={
     const cursor=next?new URL(next,location.origin).searchParams.get('cursor'):null,end=a.offset+a.limit;
     return result(rows.slice(a.offset,end),{returned:rows.slice(a.offset,end).length,loadedCount:rows.length,nextOffset:end<rows.length?end:null,cursor:end>=rows.length?cursor:null,transport:'shreddit_search'});
   }),
+  // Shreddit comment cards: tracking context supplies comment/post IDs; the inner card supplies author, timestamp and body.
+  searchComments:siteFn('Search comment text within a subreddit using native Shreddit cards. Returns bodies, authors, scores, post IDs and comment permalinks; cursor advances the server page.',z.object({
+    subreddit:z.string().regex(/^[A-Za-z0-9_]+$/),q:z.string().trim().min(1).max(500),sort:z.enum(['relevance','top','new']).default('relevance'),t:time,limit:count(25,100),offset,cursor:z.string().min(1).optional(),
+  }),async a=>{
+    const query=new URLSearchParams({q:a.q,type:'comments',sort:a.sort,t:a.t});if(a.cursor)query.set('cursor',a.cursor);
+    const doc=documentOf(await client.request(`/svc/shreddit/r/${a.subreddit}/search/?${query}`,{signal:a.signal,type:'text',ttl:30000}));
+    const rows=[...doc.querySelectorAll('[data-testid="search-sdui-comment-unit"]')].map(card=>{
+      const meta=JSON.parse(card.querySelector('search-telemetry-tracker').getAttribute('data-faceplate-tracking-context'));
+      const content=card.querySelector('[data-testid="search-comment-content"]');
+      const link=content.querySelector('a[aria-labelledby]');
+      return {...source({id:meta.comment.id,kind:'comment',title:meta.post.title,url:new URL(link.getAttribute('href'),location.origin).href,
+        author:content.querySelector('[data-id="user-hover-card"] > a').textContent.trim(),text:textOf(content.querySelector('[id^="search-comment-"]').innerHTML),
+        publishedAt:content.querySelector('faceplate-timeago')?.getAttribute('ts'),score:Number(content.querySelector('faceplate-number')?.getAttribute('number')),
+        scope:'search_snippet',complete:false}),subreddit:meta.subreddit.name,fullname:meta.comment.id,link_id:meta.comment.post_id};
+    });
+    const next=doc.querySelector('faceplate-partial[src*="/search"][src*="cursor="]')?.getAttribute('src');
+    const cursor=next?new URL(next,location.origin).searchParams.get('cursor'):null,end=a.offset+a.limit;
+    return result(rows.slice(a.offset,end),{returned:rows.slice(a.offset,end).length,nextOffset:end<rows.length?end:null,cursor:end>=rows.length?cursor:null});
+  },[{args:{subreddit:'churningcanada',q:'supplementary'}}]),
+  getRecentComments:siteFn('Read newest community comments with text, authors, scores, parent/post IDs and listing cursors.',z.object({subreddit:z.string().regex(/^[A-Za-z0-9_]+$/).optional(),...listingOptions}),a=>listing(`${prefix(a)}/comments.json`,{},a),[{args:{subreddit:'churningcanada',limit:25}}]),
+  getDuplicates:siteFn('Read posts sharing the original post link. Returns the original post and a paginated duplicate-post listing.',z.object({id:postId,sort:z.enum(['num_comments','new']).default('num_comments'),...listingOptions}),async a=>{
+    const raw=await api(`/duplicates/${a.id.replace(/^t3_/,'')}.json`,{...listingParams(a),sort:a.sort},a);
+    return {...sourcePage(raw[1].data.children,a,{after:raw[1].data.after??null,before:raw[1].data.before??null}),original:raw[0].data.children.map(p=>itemSource(p))};
+  },[{args:{id:'1xczwv1'}}]),
+  // Wiki JSON: content_md, revision_by.data.name, revision_date and revision_id.
+  getWikiPage:siteFn('Read a community wiki page as Markdown, with revision author, date and ID. offset/maxChars continue page text.',z.object({...wikiOptions,...readOptions}),async a=>{
+    const d=(await api(`/r/${a.subreddit}/wiki/${a.page}.json`,{},a)).data;
+    return result([source({id:d.revision_id,kind:'wiki',title:`r/${a.subreddit} wiki/${a.page}`,url:`https://www.reddit.com/r/${a.subreddit}/wiki/${a.page}`,text:d.content_md,author:d.revision_by?.data?.name,publishedAt:d.revision_date},a)],{revisionId:d.revision_id,reason:d.reason});
+  },[{args:{subreddit:'churningcanada',page:'index'}}]),
+  getWikiPages:siteFn('List community wiki page paths and original URLs.',z.object({subreddit:wikiOptions.subreddit}),async a=>({pages:(await api(`/r/${a.subreddit}/wiki/pages.json`,{},a)).data.map(page=>({page,url:`https://www.reddit.com/r/${a.subreddit}/wiki/${page}`}))}),[{args:{subreddit:'churningcanada'}}]),
+  // Revision Listing children are flat revision objects; their native cursor starts with WikiRevision_.
+  getWikiHistory:siteFn('Read wiki revisions with author, timestamp, reason and revision URL. after is the native WikiRevision_ cursor.',z.object({...wikiOptions,limit:count(25,100),after:z.string().optional()}),async a=>{
+    const d=(await api(`/r/${a.subreddit}/wiki/revisions/${a.page}.json`,{limit:a.limit,after:a.after},a)).data;
+    return {revisions:d.children.map(r=>({id:r.id,page:r.page,author:r.author?.data?.name,publishedAt:isoTime(r.timestamp),reason:r.reason,url:`https://www.reddit.com/r/${a.subreddit}/wiki/${r.page}?v=${r.id}`})),after:d.after??null,before:d.before??null};
+  },[{args:{subreddit:'churningcanada',page:'index',limit:10}}]),
   getPost:siteFn('GET comments/id.json: read the original post from the first listing. Supports body character continuation; comments use getComments.',z.object({id:postId,...readOptions}),async a=>{
     const raw=await api(`/comments/${a.id.replace(/^t3_/,'')}.json`,{limit:1,depth:1},a);
     return result(raw[0].data.children.map(p=>itemSource(p,a)),{coverage:'post_body_only'});
@@ -380,14 +420,16 @@ const skill={
     const subreddit={};for(const key of ['id','name','display_name','title','public_description','description','subscribers','active_user_count','created_utc','lang','over18','subreddit_type','url','user_is_subscriber'])if(d[key]!==undefined)subreddit[key]=d[key];
     return {subreddit};
   }),
-  getUser:siteFn('GET user/name/about.json: structured public profile; excludes modhash, preferences and credentials.',z.object({name:username}),async a=>profile(await api(`/user/${a.name}/about.json`,{},a))),
-  getMe:siteFn('GET api/me.json: current browser-session identity and public profile fields. No token extraction.',empty,async a=>profile(await api('/api/me.json',{},a,true))),
+  getUser:siteFn('GET user/name/about.json: profile with bio, avatar, registration date and post/comment karma.',z.object({name:username}),async a=>profile(await api(`/user/${a.name}/about.json`,{},a))),
+  getMe:siteFn('GET api/me.json: current browser-session identity and profile fields.',empty,async a=>profile(await api('/api/me.json',{},a,true))),
   getUserContent:siteFn('GET user/name/section.json: overview, posts, comments or account-only saved/voted/hidden lists. Choose section/sort/t and native listing cursors; private lists require their owner session.',z.object({
     name:username,section:z.enum(['overview','submitted','comments','saved','upvoted','downvoted','hidden','gilded']).default('overview'),sort:z.enum(['hot','new','top','controversial']).default('new'),t:time,...listingOptions,
   }),a=>listing(`/user/${a.name}/${a.section}.json`,{sort:a.sort,t:a.t},a,['saved','upvoted','downvoted','hidden'].includes(a.section))),
+  getUserComments:siteFn('Read comments written by a user: full text, date, score, subreddit, parent/post IDs and permalinks. Supports sort/t and native listing cursors.',z.object(userOptions),a=>listing(`/user/${a.name}/comments.json`,{sort:a.sort,t:a.t},a),[{args:{name:'csgonoob0',sort:'new',limit:25}}]),
+  getUserPosts:siteFn('Read posts submitted by a user: title, body, date, score, subreddit and permalinks. Supports sort/t and native listing cursors.',z.object(userOptions),a=>listing(`/user/${a.name}/submitted.json`,{sort:a.sort,t:a.t},a),[{args:{name:'csgonoob0',sort:'new',limit:25}}]),
   getMySubreddits:siteFn('GET subreddits/mine/where.json: current account subscriptions, moderation or contributor communities.',z.object({where:z.enum(['subscriber','moderator','contributor']).default('subscriber'),...listingOptions}),a=>listing(`/subreddits/mine/${a.where}.json`,{},a,true)),
   getCapabilities:siteFn('Describe read API coverage, available parameters, authentication and limits. No endpoint probe.',empty,()=>({readOnly:true,authentication:'Current-origin browser session, no extracted OAuth tokens',
-    posts:['getPosts','searchPosts','getPost'],comments:['getComments','getMoreComments'],communities:['searchSubreddits','getSubreddit','getMySubreddits'],users:['getUser','getMe','getUserContent'],
+    posts:['getPosts','searchPosts','getPost','getDuplicates'],comments:['searchComments','getRecentComments','getComments','getMoreComments'],communities:['searchSubreddits','getSubreddit','getMySubreddits'],users:['getUser','getMe','getUserContent','getUserComments','getUserPosts'],wiki:['getWikiPage','getWikiPages','getWikiHistory'],
     pagination:'Native fullnames after/before/count; consume local nextOffset first. Comment more IDs are explicit.',
     transports:{search:'/svc/shreddit/search',post:'/comments/id.json, first listing',comments:'/comments/id.json, second listing'},limits:client.status()})),
   getRateLimit:siteFn('Inspect request budgets and server cooldown.',empty,()=>client.status()),
@@ -398,4 +440,4 @@ function profile(raw){
   if(d.subreddit)user.description=d.subreddit.public_description;
   return {user,url:`https://www.reddit.com/user/${d.name}/`};
 }
-export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+" Reddit uses Shreddit search fragments and native JSON listings. searchPosts returns search cards and an opaque cursor; getPost reads the first listing of comments/id.json. Choose subreddit, sort, t, query and cursors for the task. Consume nextOffset before advancing a listing after/before or a search cursor. Expand more IDs or focus getComments on a comment. Body source.nextOffset is a character offset."});
+export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+" Use getUser for a profile, getUserComments for comments written by that user, and getUserPosts for their submissions. searchComments searches comment text within a subreddit; getRecentComments reads its newest replies. getWikiPages lists paths for getWikiPage; getWikiHistory reads revisions. Reddit uses Shreddit search fragments and native JSON listings. searchPosts returns search cards and an opaque cursor; getPost reads the first listing of comments/id.json. Choose subreddit, sort, t, query and cursors for the task. Consume nextOffset before advancing a listing after/before or a search cursor. Expand more IDs or focus getComments on a comment. Body source.nextOffset is a character offset."});
