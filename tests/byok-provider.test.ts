@@ -70,6 +70,67 @@ test('OpenAI format: fragmented tool arguments, tool response IDs, images and st
  assert.equal(requests.length,2);assert.ok(events.some(e=>e.text==='OpenAI format verified.'));assert.deepEqual(events.filter(e=>e.type==='error'),[]);
 });
 
+for (const [model, thinking] of [['gpt-6-luna',false], ['gpt-6-luna',true], ['gpt-6-sol',true], ['gpt-6.1-terra',true], ['gpt-5-mini',true], ['o3',true], ['o4-mini',true]] as const) {
+ test(`OpenAI BYOK ${model} (thinking=${thinking}): modern completion limit survives tools and follow-up`, async () => {
+  const requests:any[]=[];
+  let toolCalls=0;
+  const lookup=defineTool({name:'lookup',description:'Read fixture evidence',inputSchema:z.object({}),execute:()=>{toolCalls++;return {evidence:'LUNA_BYOK_EVIDENCE'};}});
+  const fetchImpl:typeof fetch=async (input,init)=>{
+   const req=new Request(input,init),body=await req.json();requests.push(body);
+   assert.equal(req.url,'https://api.openai.com/v1/chat/completions');
+   assert.equal(req.headers.get('authorization'),'Bearer fixture-key');
+   assert.equal(body.max_tokens,undefined);
+   assert.equal(body.max_completion_tokens,16384);
+   assert.equal(body.store,undefined);
+   if(model==='gpt-6-luna')assert.equal(body.reasoning_effort,'none');
+   if(requests.length===1)return openaiFrame({tool_calls:[{index:0,id:'luna-call',type:'function',function:{name:'lookup',arguments:'{}'}}]},'tool_calls');
+   assert.match(JSON.stringify(body.messages),/LUNA_BYOK_EVIDENCE/);
+   return openaiFrame({content:'Luna BYOK works.'},'stop');
+  };
+  const bundle=createAgent({settings:{...settings,provider:'openai-compat',model,baseUrl:'',thinking},fetchImpl,tools:[lookup]});
+  const first=await drain(bundle,[{role:'user',content:'Read this thread.'}]);
+  assert.deepEqual(first.events.filter(e=>e.type==='error'),[]);
+  const followUp=await drain(bundle,[...bundle.agent.snapshot().messages,{role:'user',content:'Continue.'}]);
+  assert.deepEqual(followUp.events.filter(e=>e.type==='error'),[]);
+  assert.equal(toolCalls,1);
+  assert.equal(requests.length,3);
+ });
+}
+
+test('modern OpenAI BYOK compaction uses max_completion_tokens too',async()=>{
+ let summaries=0;
+ const fetchImpl:typeof fetch=async(input,init)=>{
+  const body=await new Request(input,init).json();
+  const summary=JSON.stringify(body).includes('Summarize this browser-agent history');
+  assert.equal(body.max_tokens,undefined);
+  assert.equal(body.max_completion_tokens,summary?2048:16384);
+  if(summary)summaries++;
+  return openaiFrame({content:summary?'Earlier page read completed.':'Continued.'},'stop');
+ };
+ const {events}=await drain(createAgent({settings:{...settings,provider:'openai-compat',model:'gpt-6-luna',baseUrl:''},fetchImpl,tools:[],contextBudgetChars:1000}),[{role:'user',content:'Earlier question'},{role:'assistant',content:'History '.repeat(500)},{role:'user',content:'Continue'}]);
+ assert.ok(summaries>0);
+ assert.ok(events.some(e=>e.type==='context-summary'));
+ assert.deepEqual(events.filter(e=>e.type==='error'),[]);
+});
+
+test('Hosted catalogue models and legacy compatible APIs keep their existing request format',async()=>{
+ const hosted=['luna','claude-haiku-5-5','claude-sonnet-5-5','gpt-6.1-sol','deepseek-flash','deepseek-purge','gpt-6.1-terra'];
+ for(const [model,baseUrl] of [...hosted.map(model=>[model,'https://api.xgoose.org/ai']),['gpt-4o-mini',''],['custom-model','https://proxy.test/v1'],['gemini-2.5-flash','https://generativelanguage.googleapis.com/v1beta/openai']] as [string,string][]){
+  const requests:any[]=[];
+  const {events}=await drain(createAgent({settings:{...settings,provider:'openai-compat',model,baseUrl},tools:[],fetchImpl:async(input,init)=>{
+   const body=await new Request(input,init).json();requests.push(body);
+   assert.ok(body.max_tokens>0,`${model}: missing legacy token limit`);
+   assert.equal(body.max_completion_tokens,undefined);
+   assert.equal(body.reasoning_effort,undefined);
+   return openaiFrame({content:'Unchanged.'},'stop');
+  }}),[{role:'user',content:'Hello'}]);
+  assert.deepEqual(events.filter(e=>e.type==='error'),[]);
+  assert.equal(requests.length,1);
+ }
+ const compatible=createModel({...settings,provider:'openai-compat',model:'gpt-6-luna',baseUrl:'https://proxy.test/v1'});
+ assert.equal(compatible.compat?.maxTokensField,'max_completion_tokens');
+});
+
 test('Gemini compaction uses the same background transport',async()=>{
  let summaries=0;
  const fetchImpl:typeof fetch=async(input,init)=>{
