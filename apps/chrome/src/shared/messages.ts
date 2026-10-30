@@ -31,6 +31,8 @@ if(isSafari && documentNonce){
  });}
 }
 export type MessageMap = {
+  "sw:search_web": {request:{query:string;requestId:string;accountId:string};response:import("./search").SearchReply};
+  "sw:search_abort": {request:{requestId:string};response:void};
   "sw:peer": {request: import("./peers").PeerRequest; response: import("./peers").PeerReply};
  "sw:public_read":{request:{url:string};response:{status:number;body:string;headers:Record<string,string>}};
   "cs:document_nonce":{request:void;response:string};

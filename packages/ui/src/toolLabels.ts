@@ -40,6 +40,10 @@ export type ToolLabelEntry = {
 // ── built-in labels ───────────────────────────────────────────────────────
 
 const BASE_META: Record<string, ToolLabelEntry> = {
+  search_web: {
+    icon: "🌐", iconClass: "search", label: "Public web search · Exa", argKey: "query",
+    summarize: output => `${output?.results?.length ?? 0} sources · $${((output?.charged_micros ?? 0)/1e6).toFixed(3)}`,
+  },
   page_info: {
     icon: "🛈",
     iconClass: "browse",

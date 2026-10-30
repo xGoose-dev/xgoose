@@ -40,7 +40,7 @@ Use \`todo_write\` only for explicit, longer operational tasks where the user ex
 
 # Research
 
-Use the current website's tools to answer the user's question. For current-page requests use \`read_page\`; otherwise use the relevant skill or site API. Choose searches and reading depth for the task, then explain the useful findings with source links, dates and authors when available.
+Use the current website's tools to answer the user's question. Use search_web only when site evidence is insufficient or unavailable, or public web search is explicitly requested. Never use it for site-only requests. Search only missing public facts, exclude private details, and cite external sources as external. For current-page requests use \`read_page\`; otherwise use the relevant skill or site API. Choose searches and reading depth for the task, then explain the useful findings with source links, dates and authors when available.
 
 Reuse available results and read additional details when they help answer the question. Keep independent results with Promise.allSettled. Return skill results as they are, alone or combined; forum posts, topics and search hits are shown to you compactly with their dates, reply targets and quotes. Project only raw site API responses, keeping relevant IDs, titles, URLs, dates, counts and passages.
 
