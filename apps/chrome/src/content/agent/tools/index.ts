@@ -521,7 +521,7 @@ export function buildPageControllerTools(): XgooseBuiltTool[] {
 
 const readImagesTool = defineTool({
   name:"read_images",
-  description:"View images from HTTPS URLs as actual model image parts. Available on every website and to every skill. Use complete img.currentSrc/src URLs, including query parameters. Downloads happen in the extension background without cookies or page CORS restrictions. Long screenshots are split into readable segments within three image parts per call. A skill can also return imageContext:{requested:true,delivery:'urls_only_until_host_attaches',images:[{url,postUrl?,postNumber?}]} for automatic attachment. No local OCR is needed.",
+  description:"View up to three image URLs as model image attachments. Reads matching loaded webpage images first, then downloads remaining URLs in the extension background. Keep URL query parameters. Use screenshot_page for the current viewport. Skills can return imageContext:{requested:true,delivery:'urls_only_until_host_attaches',images:[{url}]} to use the same transport.",
   inputSchema:z.object({urls:z.array(z.string().url()).min(1).max(3)}),
   isReadOnly:true,
   isConcurrencySafe:()=>true,
@@ -530,8 +530,20 @@ const readImagesTool = defineTool({
   toModelOutput:result=>[{type:"text",text:safeJson(result)},...resultImageParts(result)],
 });
 
+const screenshotPageTool = defineTool({
+  name: "screenshot_page",
+  description: "See a screenshot as a model image attachment. Choose tabId (default current tab), selector for an image/element, or fullPage for the complete scrollable webpage. Default: current viewport.",
+  inputSchema: z.object({tabId:z.number().int().optional(),selector:z.string().optional(),fullPage:z.boolean().optional()}),
+  isReadOnly: true,
+  isConcurrencySafe: () => false,
+  label: () => "See webpage screenshot",
+  execute: async args => detachResultImages({imageContext: {requested: true, delivery: 'image_parts', images: await send('sw:capture_page', args)}}),
+  toModelOutput: result => [{type: "text", text: safeJson(result)}, ...resultImageParts(result)],
+});
+
 const SKILL_TOOLS: XgooseBuiltTool[] = [
   readImagesTool,
+  screenshotPageTool,
   skillCallTool,
   listSkillsTool,
   readSkillTool,

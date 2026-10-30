@@ -1,3 +1,4 @@
+import {readPageImage} from "./pageImages";
 import { send } from "../../shared/messages";
 
 /** At most three pictures per tool call reach the model; `detachResultImages` applies the same cap. */
@@ -23,8 +24,12 @@ export async function attachHostImages(result: unknown, signal?: AbortSignal): P
   const urls = [...new Set(contexts.flatMap(value => value.imageContext.images.map((image: any) => image?.url))
     .filter((url): url is string => typeof url === "string"))].slice(0, MAX_IMAGES);
   if (!urls.length) return result;
-  const fetched = await send("sw:read_images", {urls})
-    .catch(error => urls.map(url => ({url, error: error instanceof Error ? error.message : String(error)})));
+  const budget = Math.max(1, Math.floor(MAX_IMAGES / urls.length));
+  const pageImages = await Promise.all(urls.map(url => readPageImage(url, budget)));
+  const missing = urls.filter((_, index) => !pageImages[index]);
+  const downloaded = missing.length ? await send("sw:read_images", {urls: missing, maxParts: budget * missing.length})
+    .catch(error => missing.map(url => ({url, error: error instanceof Error ? error.message : String(error)}))) : [];
+  const fetched = pageImages.filter(item => item !== null).concat(downloaded as any);
   signal?.throwIfAborted();
   const loaded = new Map(fetched.map(item => [item.url, item]));
   const rewrite = (value: unknown, depth: number): unknown => {
