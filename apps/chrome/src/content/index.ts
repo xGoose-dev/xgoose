@@ -875,7 +875,7 @@ async function bootstrap(): Promise<void> {
       // invalidate the whole prefix — but that was already true before, and
       // those events are rare relative to "user types another question".
       usageModel = settings.model;
-      const bundle = await createAgent({ settings, reminder, peerTools: peers.tools(), shouldYield: () => peers.waiting, onProviderResponse: async event=>{await record(event);} });
+      const bundle = await createAgent({ settings, reminder, notificationRunId:journalRunId,notificationTabId:peers.agent?.tabId??undefined, peerTools: peers.tools(), shouldYield: () => peers.waiting, onProviderResponse: async event=>{await record(event);} });
       bundle.agent.subscribe(async event => {
         if (event.type === "text-delta" || event.type === "reasoning-delta") return;
         await record(event);
@@ -1160,7 +1160,7 @@ async function bootstrap(): Promise<void> {
       if (abortController?.signal.aborted) peerOutcome = "cancelled";
       await record({type:abortController?.signal.aborted?"run-interrupted":"run-end",
         outcome:turnErrorDisplay ? "failed" : peers.waiting && peerOutcome === "completed" ? "waiting" : peerOutcome,
-        durationMs:Date.now()-turnStarted});
+        durationMs:Date.now()-turnStarted,sourceTabId:peers.agent?.tabId});
       assistantBubble?.finalize();
 
       abortController = null;

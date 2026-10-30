@@ -369,5 +369,11 @@
   "Default — {model}": "Predeterminado — {model}",
   "Default (sign in required)": "Predeterminado (requiere iniciar sesión)",
   "Default (model list unavailable)": "Predeterminado (lista de modelos no disponible)",
-  "Testing Hosted AI… The first connection may take up to 3 minutes.": "Probando la IA alojada… La primera conexión puede tardar hasta 3 minutos."
+  "Testing Hosted AI… The first connection may take up to 3 minutes.": "Probando la IA alojada… La primera conexión puede tardar hasta 3 minutos.",
+  "Notify user": "Notificar al usuario",
+  "Notification sent": "Notificación enviada",
+  "Agent notifications": "Notificaciones del agente",
+  "Off by default. Allow agent alerts and completion notifications for inactive pages. This setting applies only to this browser.": "Desactivadas por defecto. Permite avisos del agente y notificaciones de finalización en páginas inactivas. Solo se aplica a este navegador.",
+  "Notification permission was denied. You can enable it in browser settings.": "Se denegó el permiso de notificaciones. Puedes activarlo en los ajustes del navegador.",
+  "Notifications are unavailable in this browser.": "Las notificaciones no están disponibles en este navegador."
 }

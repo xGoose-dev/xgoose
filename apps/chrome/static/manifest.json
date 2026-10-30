@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extensionName__",
   "short_name": "xgoose",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "__MSG_extensionDescription__",
   "default_locale": "en",
   "minimum_chrome_version": "138",
@@ -19,6 +19,9 @@
     "activeTab",
     "tabs",
     "alarms"
+  ],
+  "optional_permissions": [
+    "notifications"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -1,4 +1,5 @@
 import {createSearchTool} from "./searchTool";
+import {createNotificationTool} from "./notificationTool";
 import {isSafari,hostCapabilities} from "@/shared/host";
 import {isAgentPage} from "@/shared/peers";
 import type {XgooseBuiltTool} from "@xgoose/core";
@@ -48,17 +49,21 @@ function getFetchImpl(): ReturnType<typeof createChromeProviderFetch> {
 export async function createAgent(opts: {
   settings: Settings;
   reminder?: string | null;
+  notificationRunId?:string;
+  notificationTabId?:number;
   peerTools?: XgooseBuiltTool[];
   shouldYield?: () => boolean;
   onProviderResponse?: (event: {type:"model-response";requestId:string|null;status:number;firstResponseMs:number;contextTextBytes?:number;contextLimitBytes?:number;contextWindowTokens?:number;contextTargetTokens?:number;contextTargetBytes?:number}) => Promise<unknown>;
 }): Promise<AgentBundle> {
   const coreSettings = await projectToCoreSettings(opts.settings);
   const searchAccountId=coreSettings.hostedAccountId ?? (await send("sw:account_get",undefined).catch(()=>null))?.user.id;
+  const notifications=await send("sw:notification_status",undefined).catch(()=>({enabled:false}));
   const tools = [
     ...buildCoreTools({ memory: chromeMemoryPort, origin: chromeOriginPort }),
     ...(isAgentPage() ? [] : buildLegacyTools()),
     ...(opts.peerTools ?? []),
     createSearchTool(searchAccountId),
+    ...(notifications.enabled?[createNotificationTool(opts.notificationRunId??crypto.randomUUID(),opts.notificationTabId)]:[]),
   ];
   const fetchProvider=opts.settings.provider==="xgoose-hosted"?createChromeProviderFetch({hostedAccountId:coreSettings.hostedAccountId}):getFetchImpl();
   return coreCreateAgent({

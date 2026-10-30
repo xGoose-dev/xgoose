@@ -10,6 +10,7 @@
 		2BDC887E282C3C319382A122 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 94AF4481D7D7CBA8821D066F /* PrivacyInfo.xcprivacy */; };
 		34E3891E89923A32979BC8DC /* skills.json in Resources */ = {isa = PBXBuildFile; fileRef = 750EBB372E6496ED69CECC36 /* skills.json */; };
 		375139A8E74A3748DD0EF278 /* third-party-notices.txt in Resources */ = {isa = PBXBuildFile; fileRef = AF628712EC87D244D5D6BCEA /* third-party-notices.txt */; };
+		37D934569AB2ACD2D0DB5005 /* agent.css in Resources */ = {isa = PBXBuildFile; fileRef = 1470670A5C0A14F116625A45 /* agent.css */; };
 		4DDCED019BFD313B2AE94A84 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 2235CEF00B8E72FAF6E84E51 /* manifest.json */; };
 		50D915BC6242A74CAAA344A7 /* NativeServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D79724DCB5B9ECF9D72EF5 /* NativeServiceTests.swift */; };
 		53C6D297AE31995FA83F05BA /* pageBridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 739AD40BBA4479CF4B7355AC /* pageBridge.js */; };
@@ -23,6 +24,7 @@
 		B227B681447B4DF57C8CB9AF /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 0D75987129D2957C629F7D67 /* background.js */; };
 		B4EDA96F2057CE88EEE70761 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F9DC7638B166F34FEBE487BF /* Assets.xcassets */; };
 		C767E0BA3F73E2B37D4F7660 /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = E2908B9D8FEBC13C65BD8D96 /* popup.css */; };
+		CAD6EFCC4BAE605A56F0531D /* agent.html in Resources */ = {isa = PBXBuildFile; fileRef = 9AF477FADF592D453B2FA6DB /* agent.html */; };
 		D739453C7A100DBBB6D50F9C /* XGooseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9255C5C22F3044299D78A0AE /* XGooseApp.swift */; };
 		DF3A3590E6CABFB63838A83A /* NativeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30DE80143A2E87D453284C8E /* NativeService.swift */; };
 		E39591C7357E1DC47CD49F5D /* NativeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30DE80143A2E87D453284C8E /* NativeService.swift */; };
@@ -65,6 +67,7 @@
 /* Begin PBXFileReference section */
 		0BA0C32989E0594EB9037B44 /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
 		0D75987129D2957C629F7D67 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = background.js; sourceTree = "<group>"; };
+		1470670A5C0A14F116625A45 /* agent.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = agent.css; sourceTree = "<group>"; };
 		2235CEF00B8E72FAF6E84E51 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
 		2946E0D88BEB6BC75E64C167 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
 		30DE80143A2E87D453284C8E /* NativeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeService.swift; sourceTree = "<group>"; };
@@ -78,6 +81,7 @@
 		9255C5C22F3044299D78A0AE /* XGooseApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XGooseApp.swift; sourceTree = "<group>"; };
 		92CD3915248D39C2B553AA9E /* xgoose.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = xgoose.entitlements; sourceTree = "<group>"; };
 		94AF4481D7D7CBA8821D066F /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		9AF477FADF592D453B2FA6DB /* agent.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = agent.html; sourceTree = "<group>"; };
 		A6D79724DCB5B9ECF9D72EF5 /* NativeServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeServiceTests.swift; sourceTree = "<group>"; };
 		ADC27F1E42C0AE4FD602F113 /* NativeTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = NativeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF628712EC87D244D5D6BCEA /* third-party-notices.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "third-party-notices.txt"; sourceTree = "<group>"; };
@@ -142,6 +146,8 @@
 		EF7B68B3EE2B0682813FCC9B /* dist */ = {
 			isa = PBXGroup;
 			children = (
+				1470670A5C0A14F116625A45 /* agent.css */,
+				9AF477FADF592D453B2FA6DB /* agent.html */,
 				0D75987129D2957C629F7D67 /* background.js */,
 				55AB5544C4895498D37DF137 /* content.js */,
 				DC56DE2586E02CA6FAC029CA /* images */,
@@ -252,11 +258,9 @@
 					};
 					9AEB6475E1C190F05B4D371F = {
 						DevelopmentTeam = 2L6B6ZA57F;
-						ProvisioningStyle = Automatic;
 					};
 					F23EBAD677944C8946264976 = {
 						DevelopmentTeam = 2L6B6ZA57F;
-						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -297,6 +301,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				81816B6E30222A704184FB61 /* PrivacyInfo.xcprivacy in Resources */,
+				37D934569AB2ACD2D0DB5005 /* agent.css in Resources */,
+				CAD6EFCC4BAE605A56F0531D /* agent.html in Resources */,
 				B227B681447B4DF57C8CB9AF /* background.js in Resources */,
 				E65E8F1100EE97B987E4CCF9 /* content.js in Resources */,
 				7C9D6597B7D6449471812C2A /* images in Resources */,
@@ -462,7 +468,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 2L6B6ZA57F;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -478,7 +484,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MARKETING_VERSION = 1.8;
+				MARKETING_VERSION = 1.9;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -495,13 +501,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Native/App/xgoose.entitlements;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
 				INFOPLIST_FILE = Native/App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "org.xgoose.xgoose-safari";
+				PROVISIONING_PROFILE_SPECIFIER = "xgoose iOS App AppStore";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -512,6 +520,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = "";
 				CODE_SIGN_ENTITLEMENTS = Native/Extension/xgoose.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
 				INFOPLIST_FILE = Native/Extension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -519,6 +529,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "org.xgoose.xgoose-safari.Extension";
+				PROVISIONING_PROFILE_SPECIFIER = "xgoose iOS Ext AppStore";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -561,7 +572,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 2L6B6ZA57F;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -583,7 +594,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MARKETING_VERSION = 1.8;
+				MARKETING_VERSION = 1.9;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

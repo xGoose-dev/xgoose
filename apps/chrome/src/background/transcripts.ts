@@ -1,3 +1,4 @@
+import {emitNotification} from "./notifications";
 import { getFreshAccount } from "./account";
 import { apiFetch, getAccount } from "@/shared/account";
 import { redactTranscript } from "@/shared/redact";
@@ -30,7 +31,12 @@ export async function recordJournal(value:JournalEvent,sender:chrome.runtime.Mes
   let site:string|undefined;
   try {const url=new URL(sender.url??sender.tab?.url??"");if(url.protocol==="https:"||url.protocol==="http:")site=url.hostname;}catch{}
   const event={...value,ownerId:account?.user.id,event:redactTranscript({...value.event,site,tabId:sender.tab?.id,documentId:sender.documentId})};
-  await journal(event,value.provider==="hosted"&&!!account&&!!cached?.hosted);
+  const upload=value.provider==="hosted"&&!!account&&!!cached?.hosted;
+  await journal(event,upload);
+  if(value.event.type==="run-end"&&value.event.outcome==="completed"){
+    const receipt=await emitNotification({mode:"completion",runId:value.runId,tabId:value.event.sourceTabId},sender);
+    if(receipt.reason!=="disabled")await journal({...event,id:crypto.randomUUID(),at:Date.now(),event:{...(event.event as Record<string,unknown>),type:"notification",mode:"completion",receipt}},upload);
+  }
   if(value.event.type==="run-end"||value.event.type==="run-interrupted")void flushTranscripts().catch(()=>{});
 }
 let flushing=false;

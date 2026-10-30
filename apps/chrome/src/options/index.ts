@@ -1,3 +1,4 @@
+import {mountNotifications} from "./notifications";
 import {HOSTED_DEFAULT_CHOICE, resolveHostedModel, hostedModelLabel} from "@/shared/hostedModels";
 import {initializeLocale,saveLanguage,mountAnswerLanguage,translate,type LanguagePreference} from "@/shared/locale";
 import { mountSkillUpdates } from "./skillUpdates";
@@ -73,6 +74,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   await initializeLocale(document.body);
   void mountAccountSection().catch(err => console.error("[xgoose] account init failed", err));
   mountSetup();
+  void mountNotifications().catch(()=>{});
   const settings = await loadSettings();
   const connectionModeEl = $<HTMLSelectElement>("#connectionMode");
   const providerEl = $<HTMLSelectElement>("#provider");
@@ -568,6 +570,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
       !confirm(translate("Reset all settings to defaults? Your API key will be cleared."))
     )
       return;
+    await chrome.storage.local.remove("xgoose.notifications.enabled");
     await persistSettings({ ...DEFAULT_SETTINGS });
     location.reload();
   });
