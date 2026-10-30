@@ -1,4 +1,5 @@
 import {searchWeb,abortSearch} from "./search";
+import {notificationStatus,emitNotification,installNotificationEvents} from "./notifications";
 import {readImages} from './images';
 import {peerCommand, installPeerEvents} from './peers';
 import {listHostedModels} from "./hostedModels";
@@ -75,9 +76,12 @@ chrome.runtime.onInstalled.addListener(async ({reason}) => {
 });
 
 installPeerEvents();
+installNotificationEvents();
 registerRouter({
   "sw:search_web": searchWeb,
   "sw:search_abort": abortSearch,
+  "sw:notification_status": notificationStatus,
+  "sw:notification_emit": emitNotification,
   "sw:peer": peerCommand,
   "sw:public_read": async (payload,sender)=>{
     if(!isSafari)throw new Error("Public native transport is unavailable");

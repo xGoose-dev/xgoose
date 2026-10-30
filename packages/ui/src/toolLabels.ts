@@ -44,6 +44,10 @@ const BASE_META: Record<string, ToolLabelEntry> = {
     icon: "🌐", iconClass: "search", label: "Public web search · Exa", argKey: "query",
     summarize: output => `${output?.results?.length ?? 0} sources · $${((output?.charged_micros ?? 0)/1e6).toFixed(3)}`,
   },
+  emit_notification: {
+    icon:"🔔",iconClass:"user",label:"Notify user",argKey:"title",
+    summarize:output=>output?.sent?"Notification sent":String(output?.reason??"unavailable"),
+  },
   page_info: {
     icon: "🛈",
     iconClass: "browse",

@@ -369,5 +369,11 @@
   "Default — {model}": "默认 — {model}",
   "Default (sign in required)": "默认（需登录）",
   "Default (model list unavailable)": "默认（模型列表暂不可用）",
-  "Testing Hosted AI… The first connection may take up to 3 minutes.": "正在测试托管 AI… 首次连接可能需要最多 3 分钟。"
+  "Testing Hosted AI… The first connection may take up to 3 minutes.": "正在测试托管 AI… 首次连接可能需要最多 3 分钟。",
+  "Notify user": "通知用户",
+  "Notification sent": "通知已发送",
+  "Agent notifications": "Agent 通知",
+  "Off by default. Allow agent alerts and completion notifications for inactive pages. This setting applies only to this browser.": "默认关闭。开启后允许 agent 主动提醒，并在后台页面任务完成时通知。此设置仅适用于当前浏览器。",
+  "Notification permission was denied. You can enable it in browser settings.": "通知权限未获允许，可在浏览器设置中开启。",
+  "Notifications are unavailable in this browser.": "此浏览器暂不支持通知。"
 }

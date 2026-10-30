@@ -31,6 +31,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Browser regressions
         run: npm run e2e
+      - name: Notification and transcript regression
+        run: npm run test:notifications
       - name: Safari viewport regression
         run: node tests/browser/safari-viewport.mjs
       - name: Reproducible release archive
