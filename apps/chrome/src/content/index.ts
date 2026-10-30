@@ -1,4 +1,6 @@
 import {HOSTED_AUTH_STOPPED,isHostedAuthStopped} from '@/shared/hosted';
+import {PagePeers} from './peers';
+import {isAgentPage, type PeerModel} from '@/shared/peers';
 import {initializeLocale,localizeRoot,languageReminder,translate} from "@/shared/locale";
 import {isSafari,safariExecutionReminder} from "@/shared/host";
 import {mountUserScriptsGuide} from "./userScriptsGuide";
@@ -85,7 +87,7 @@ import {
 // Chrome MV3 ships `chrome.*` only — no browser polyfill needed.
 
 const contentGlobal=globalThis as typeof globalThis & {__xgooseContentStarted?:boolean};
-if (location.protocol.startsWith("http") && !contentGlobal.__xgooseContentStarted) {
+if ((location.protocol.startsWith("http") || isAgentPage()) && !contentGlobal.__xgooseContentStarted) {
   contentGlobal.__xgooseContentStarted=true;
   bootstrap().catch((err) => console.warn("[xgoose] bootstrap error", err));
 }
@@ -217,6 +219,7 @@ async function bootstrap(): Promise<void> {
 
   // Active skills.
   const refreshSkills = async (): Promise<void> => {
+    if (isAgentPage()) {panel.open(); return;}
     panel.setLoadingStatus("Loading skills…");
     try {
       const [candidates, all] = await Promise.all([
@@ -291,6 +294,21 @@ async function bootstrap(): Promise<void> {
   const queuedMessages: PendingPrompt[] = [];
   const queueLabel=(item:PendingPrompt)=>item.text+(item.images.length?` [${item.images.length} image(s)]`:"");
   let agentLoopActive = false;
+  let peerSessionId = newConversationId();
+  let peerModel: PeerModel | undefined;
+  const peers = new PagePeers({
+    sessionId: () => currentConvoId ?? peerSessionId,
+    model: () => {const s = {...getSettings(), ...peerModel}; return {provider:s.provider, model:s.model, thinking:s.thinking};},
+    busy: () => running || agentLoopActive,
+    lock: () => {agentLoopActive = true;},
+    unlock: () => {agentLoopActive = false; if (queuedMessages.length) void processQueue();},
+    status: text => panel.setStatus(text),
+    receive: async (message, agent) => {
+      if (!currentConvoId) {peerSessionId = agent.sessionId; peerModel = agent.model;}
+      const label = message.kind === "task" ? "Task from peer" : message.kind === "result" ? `Peer result (${message.outcome})` : "Message from peer";
+      await runAgentTurn(`${label} ${message.from}${message.taskId ? ` [task ${message.taskId}]` : ""}:\n${message.text}`, {hidden:true});
+    },
+  });
   // Per-conversation rolling token / cost / cache metrics. Webagent-style:
   // accumulated on every turn-end and persisted with the conversation so
   // history items keep their totals across reloads.
@@ -409,11 +427,11 @@ async function bootstrap(): Promise<void> {
     }
   }
 
-  const persistCurrentConvo = (snapshotMessages?: any[]): void => {
-    if (!currentConvoId) return;
+  const persistCurrentConvo = (snapshotMessages?: any[]): Promise<void> => {
+    if (!currentConvoId) return Promise.resolve();
     const messages = snapshotMessages ?? conversationMessages;
-    if (!messages.length) return;
-    void saveConversation({
+    if (!messages.length) return Promise.resolve();
+    return saveConversation({
       id: currentConvoId,
       // We deliberately overwrite `origin` on every save with the *current*
       // page origin rather than the conversation's birth origin. A single
@@ -453,13 +471,14 @@ async function bootstrap(): Promise<void> {
   });
 
   // Each document starts a fresh session. History is opened explicitly.
-  const checkpoint = window.setInterval(() => {
+  const saveCheckpoint = () => {
     if (!running || !inFlight) return;
     persistCurrentConvo([...conversationMessages, ...buildCapturedAssistantTurn({
       text: inFlightText(inFlight), toolNames: inFlight.toolNames,
       toolInputs: inFlight.toolInputs, toolOutputs: inFlight.toolOutputs,
-    }), ...(isSafari ? [{role:"xgoose-error",content:interruptionNotice}] : [])]);
-  }, 1000);
+    })]);
+  };
+  const checkpoint = window.setInterval(saveCheckpoint, 1000);
   function interruptPageRun(reason:string):void {
     if(!isSafari || !running || lifecycleInterrupted)return;
     lifecycleInterrupted=true;
@@ -475,12 +494,13 @@ async function bootstrap(): Promise<void> {
     window.clearInterval(checkpoint);
     abortController?.abort(new Error("document_closed"));
   }, { once: true });
-  if(isSafari)document.addEventListener("visibilitychange",()=>{
-    if(document.visibilityState==="hidden")interruptPageRun("safari_suspended");
+  document.addEventListener("visibilitychange",()=>{
+    if(document.visibilityState==="hidden")saveCheckpoint();
   });
 
   panel.onNew(async () => {
     await stopBeforeConversationSwitch();
+    await peers.reset(); peerSessionId = newConversationId(); peerModel = undefined;
     snapshotInFlightToMessages();
     persistCurrentConvo();
     currentConvoId = null;
@@ -506,6 +526,7 @@ async function bootstrap(): Promise<void> {
 
   panel.onStop(() => {
     abortController?.abort(new Error("user_abort"));
+    void peers.stop();
     // Stop = halt everything: also clear pending queue so it doesn't
     // auto-process after this turn unwinds. If the user wanted the queue
     // to keep going they would have just let the current turn finish.
@@ -575,6 +596,7 @@ async function bootstrap(): Promise<void> {
   });
   panel.onLoadConversation(async (id) => {
     await stopBeforeConversationSwitch();
+    await peers.reset(); peerModel = undefined;
     snapshotInFlightToMessages();
     persistCurrentConvo();
     const convo = await getConversation(id);
@@ -655,12 +677,13 @@ async function bootstrap(): Promise<void> {
   ): Promise<void> {
     if (running) return;
     const turnStarted=Date.now(),turnFlow=crypto.randomUUID();let firstResponse=false;
-    const settings = getSettings();
+    const settings = {...getSettings(), ...peerModel} as ReturnType<typeof getSettings>;
     // Hosted provider: account-token auth, handled inside createAgent.
     // Every other provider needs an explicit per-provider API key.
     if (settings.provider !== "xgoose-hosted" && !getProviderApiKey(settings)) {
       track("panel_api_key_empty_state_shown", { provider: settings.provider });
       panel.setApiKeyMissing(true, () => send("sw:open_options", undefined));
+      await peers.begin(); await peers.finish("failed", "Configure an AI provider before running this peer");
       return;
     }
 
@@ -675,7 +698,7 @@ async function bootstrap(): Promise<void> {
 
     const isFreshConversation = !currentConvoId;
     if (!currentConvoId) {
-      currentConvoId = newConversationId();
+      currentConvoId = peerSessionId;
       currentConvoTitle = prompt.slice(0, 80);
     }
     const images=opts.images??[];
@@ -713,9 +736,9 @@ async function bootstrap(): Promise<void> {
     panel.setStatus("");
     panel.setGenerating(true);
     panel.setLoadingStatus(
-      opts.hidden ? "Continuing on new page…" : "Thinking…",
+      opts.hidden ? "Processing peer message…" : "Thinking…",
     );
-    panel.showThinking(opts.hidden ? "Continuing on new page…" : "Thinking…");
+    panel.showThinking(opts.hidden ? "Processing peer message…" : "Thinking…");
     running = true;
     lifecycleInterrupted = false;
     runSettled = new Promise<void>(resolve => { resolveRunSettled = resolve; });
@@ -732,6 +755,8 @@ async function bootstrap(): Promise<void> {
     // Error text shown this turn (in-stream `error` part). Persisted into the
     // conversation as an `xgoose-error` message so it survives reload.
     let turnErrorDisplay: string | null = null;
+    let peerOutcome: "completed" | "failed" | "cancelled" = "completed";
+    let peerResult = "";
     let assistantBubble: ReturnType<Panel["addAssistantBubble"]> | null = null;
     let reasoningBlock: ReturnType<Panel["addReasoningBlock"]> | null = null;
     // UI ref map — separate from the lifted `inFlight.*` because cards never
@@ -764,12 +789,13 @@ async function bootstrap(): Promise<void> {
     };
 
     try {
+      await peers.begin();
       // Refresh consent before queuing the first message of a Hosted session.
       if (journalProvider === "hosted") await send("sw:consent_get", undefined);
       await record({type:"user-message",content:prompt,...(images.length?{attachments:images.map(image=>({type:"image",mimeType:image.mimeType,width:image.width,height:image.height}))}:{})});
-      const scriptsEnabled=await permissionGuide.check();
-      const candidates = await send("sw:active_skills_for_url", { url: getCurrentPageUrl() });
-      const skillsForReminder = (await detectActiveSkills(candidates)).map(s => ({...s, enabled:true}));
+      const scriptsEnabled=isAgentPage() ? false : await permissionGuide.check();
+      const candidates = isAgentPage() ? [] : await send("sw:active_skills_for_url", { url: getCurrentPageUrl() });
+      const skillsForReminder = (isAgentPage() ? [] : await detectActiveSkills(candidates)).map(s => ({...s, enabled:true}));
       setActiveSkills(skillsForReminder);
       const loadedSkills = new Set(skillsForReminder.map(s => s.name));
       await record({
@@ -802,6 +828,7 @@ async function bootstrap(): Promise<void> {
       });
       const reminder =
         baseReminder +
+        `\n# Peer agents\nYour agent ID is ${peers.agent?.id}. All agents are equal peers with separate contexts. Use list_tabs to find open pages, spawn_agent to start work in an existing tabId or a new background page, send_message to collaborate, and wait_agents to yield until results arrive. Task completion sends a result receipt to the requesting peer. Ordinary messages need no acknowledgement unless a reply is useful. ${isAgentPage() ? "This is the built-in agent page. Use peers on website tabs for webpage tools." : "Your page tools operate only on this tab."}\n` +
         languageReminder(settings.answerLanguage) +
         (isSafari ? safariExecutionReminder : scriptsEnabled ? "\n# Chrome skill execution\nAllow User Scripts is on. js_exec works like a CLI over this page: call skills with `await xgoose.skills.<ns>.<fn>(args)`, chain and paginate, filter and aggregate in code, and return what the answer needs. skill_call still runs single skill functions.\n" : "\n# Chrome skill execution\nUse skill_call({skill,function,args}) for website skill calls. This structured tool works for bundled skills without Allow User Scripts. Examples using xgoose.skills.ns.fn(args) describe the same function and arguments; translate them to skill_call. js_exec requires Allow User Scripts.\n") +
         (isSafari || scriptsEnabled?"":userScriptsReminder(chrome.runtime.id,builtinSite));
@@ -838,7 +865,7 @@ async function bootstrap(): Promise<void> {
       // invalidate the whole prefix — but that was already true before, and
       // those events are rare relative to "user types another question".
       usageModel = settings.model;
-      const bundle = await createAgent({ settings, reminder, onProviderResponse: async event=>{await record(event);} });
+      const bundle = await createAgent({ settings, reminder, peerTools: peers.tools(), shouldYield: () => peers.waiting, onProviderResponse: async event=>{await record(event);} });
       bundle.agent.subscribe(async event => {
         if (event.type === "text-delta" || event.type === "reasoning-delta") return;
         await record(event);
@@ -1020,6 +1047,8 @@ async function bootstrap(): Promise<void> {
       }
 
       const response = await Promise.resolve(result.response).catch(() => null);
+      peerResult = response?.messages.filter(m => m.role === "assistant").flatMap(m => Array.isArray(m.content) ? m.content.filter((p:any) => p.type === "text").map((p:any) => p.text) : [m.content]).join("\n") ?? "";
+      if (response?.reachedStepLimit) {peerOutcome = "failed"; peerResult = "Peer reached its step limit.\n" + peerResult;}
       const usage = await Promise.resolve(result.usage).catch(() => null);
       if (isSafari && lifecycleInterrupted) {
         // The lifecycle snapshot already contains the received partial turn.
@@ -1069,6 +1098,8 @@ async function bootstrap(): Promise<void> {
         console.warn("[xgoose:resume] stale clear failed", e),
       );
     } catch (err: any) {
+      peerOutcome = abortController?.signal.aborted ? "cancelled" : "failed";
+      peerResult = describeTurnError(err);
       panel.removeThinking();
       if (err?.name === "AbortError" || abortController?.signal?.aborted) {
         // Navigation-triggered abort vs user-Stop abort. In both cases we keep
@@ -1116,6 +1147,7 @@ async function bootstrap(): Promise<void> {
         panel.setStatus(getSettings().provider==="xgoose-hosted"&&isHostedAuthStopped(errDisplay)?"Listening stopped — sign in to continue":"");
       }
     } finally {
+      if (abortController?.signal.aborted) peerOutcome = "cancelled";
       await record({type:abortController?.signal.aborted?"run-interrupted":"run-end"});
       assistantBubble?.finalize();
 
@@ -1129,7 +1161,9 @@ async function bootstrap(): Promise<void> {
       // Persist conversation. If we navigated, the eager branch above
       // already did this — but a second write is harmless (idempotent
       // overwrite) and covers the non-nav success / abort / error paths.
-      persistCurrentConvo();
+      await persistCurrentConvo().catch(() => {});
+      await peers.finish(turnErrorDisplay ? "failed" : peerOutcome,
+        turnErrorDisplay ?? peerResult).catch(error => panel.setStatus(`Peer: ${error.message}`));
 
       panel.setSending(false);
       panel.setGenerating(false);
@@ -1220,6 +1254,7 @@ async function bootstrap(): Promise<void> {
       }
     } finally {
       agentLoopActive = false;
+      peers.kick();
     }
   }
 
@@ -1278,6 +1313,7 @@ async function bootstrap(): Promise<void> {
       panel.toggle();
     },
   });
+  peers.start();
 }
 
 function installOneClickSkillLinks(): void {

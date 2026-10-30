@@ -30,6 +30,7 @@ for(const file of ['skillRuntime.js',...registry.map(s=>s.filePath)]){
 }
 writeFileSync(resolve(out,'skills/registry.json'),JSON.stringify(registry,null,2));
 cpSync(resolve(chrome,'static/images'),resolve(out,'images'),{recursive:true});
+for(const file of ['agent.html','agent.css'])cpSync(resolve(chrome,'static',file),resolve(out,file));
 for(const f of ['manifest.json','popup.html','popup.css'])cpSync(resolve(root,'static',f),resolve(out,f));
 const manifest=JSON.parse(readFileSync(resolve(out,'manifest.json'),'utf8'));
 if(typeof manifest.description!=='string'||manifest.description.length>112)throw new Error('Safari manifest description must contain at most 112 characters.');

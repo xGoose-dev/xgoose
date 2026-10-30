@@ -31,6 +31,8 @@ export interface CreateAgentOpts {
   maxContextMessages?: number;
   /** Injectable provider stream for deterministic acceptance tests. */
   streamFn?: StreamFn;
+  /** Host-requested yield after the current tool results have been recorded. */
+  shouldYield?: () => boolean;
 }
 export type AgentBundle = { agent: PageAgentRuntime; tools: Record<string, XgooseBuiltTool> };
 const LENGTH_CONTINUATION = "Your previous reply was cut off by the output limit. Continue exactly where it stopped, without repeating earlier text.";
@@ -96,7 +98,7 @@ export class PageAgentRuntime {
     setResultBudget(model.contextWindow);
     const history = toPiMessages(input.messages, model);
     this.modelMessages = history;
-    let steps = 0, lengthContinuations = 0, continueAfterLength = false;
+    let steps = 0, lengthContinuations = 0, continueAfterLength = false, reachedStepLimit = false;
     const completedMessages: AgentMessage[] = [];
     const summaryUsage: AssistantMessage[] = [];
     let gatewayBudget=opts.requestBudgetBytes??requestByteBudget(model.contextWindow);
@@ -284,7 +286,8 @@ export class PageAgentRuntime {
         return {context:chosen};
       },
       finishTurn: (turn) => {
-        if (++steps >= (opts.maxSteps ?? 50)) return { action: "end" };
+        if (opts.shouldYield?.()) return { action: "end" };
+        if (++steps >= (opts.maxSteps ?? 50)) { reachedStepLimit = turn.toolResults.length > 0; return { action: "end" }; }
         if (turn.message.stopReason === "length" && !turn.toolResults.length && lengthContinuations++ < 2) { continueAfterLength = true; return { action: "continue" }; }
       },
     });
@@ -317,7 +320,7 @@ export class PageAgentRuntime {
     });
     return {
       fullStream: queue,
-      response: completed.then(() => ({ messages: fromPiMessages(completedMessages), modelContext: fromPiMessages(this.modelMessages, true) })),
+      response: completed.then(() => ({ messages: fromPiMessages(completedMessages), modelContext: fromPiMessages(this.modelMessages, true), reachedStepLimit })),
       usage: completed.then(() => {
         const u = [...completedMessages,...summaryUsage].filter((m): m is AssistantMessage => m.role === "assistant").reduce((sum, m) => ({ input: sum.input + m.usage.input + m.usage.cacheRead + m.usage.cacheWrite, output: sum.output + m.usage.output, cacheRead: sum.cacheRead + m.usage.cacheRead, reasoning: sum.reasoning + (m.usage.reasoning ?? 0) }), { input: 0, output: 0, cacheRead: 0, reasoning: 0 });
         return { inputTokens: u.input, outputTokens: u.output, inputTokensDetails: { cacheReadTokens: u.cacheRead }, outputTokensDetails: { reasoningTokens: u.reasoning } };
