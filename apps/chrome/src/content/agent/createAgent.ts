@@ -1,3 +1,4 @@
+import {createSearchTool} from "./searchTool";
 import {isSafari,hostCapabilities} from "@/shared/host";
 import {isAgentPage} from "@/shared/peers";
 import type {XgooseBuiltTool} from "@xgoose/core";
@@ -51,12 +52,14 @@ export async function createAgent(opts: {
   shouldYield?: () => boolean;
   onProviderResponse?: (event: {type:"model-response";requestId:string|null;status:number;firstResponseMs:number;contextTextBytes?:number;contextLimitBytes?:number;contextWindowTokens?:number;contextTargetTokens?:number;contextTargetBytes?:number}) => Promise<unknown>;
 }): Promise<AgentBundle> {
+  const coreSettings = await projectToCoreSettings(opts.settings);
+  const searchAccountId=coreSettings.hostedAccountId ?? (await send("sw:account_get",undefined).catch(()=>null))?.user.id;
   const tools = [
     ...buildCoreTools({ memory: chromeMemoryPort, origin: chromeOriginPort }),
     ...(isAgentPage() ? [] : buildLegacyTools()),
     ...(opts.peerTools ?? []),
+    createSearchTool(searchAccountId),
   ];
-  const coreSettings = await projectToCoreSettings(opts.settings);
   const fetchProvider=opts.settings.provider==="xgoose-hosted"?createChromeProviderFetch({hostedAccountId:coreSettings.hostedAccountId}):getFetchImpl();
   return coreCreateAgent({
     settings: coreSettings,

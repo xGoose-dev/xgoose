@@ -1,3 +1,4 @@
+import {searchWeb,abortSearch} from "./search";
 import {readImages} from './images';
 import {peerCommand, installPeerEvents} from './peers';
 import {listHostedModels} from "./hostedModels";
@@ -75,6 +76,8 @@ chrome.runtime.onInstalled.addListener(async ({reason}) => {
 
 installPeerEvents();
 registerRouter({
+  "sw:search_web": searchWeb,
+  "sw:search_abort": abortSearch,
   "sw:peer": peerCommand,
   "sw:public_read": async (payload,sender)=>{
     if(!isSafari)throw new Error("Public native transport is unavailable");
