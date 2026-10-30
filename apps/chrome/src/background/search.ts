@@ -1,4 +1,5 @@
 import {apiFetch} from "@/shared/account";
+import {HOSTED_AUTH_STOPPED} from "@/shared/hosted";
 import {withHostedSession} from "./hostedSession";
 import type {SearchReply} from "@/shared/search";
 
@@ -20,5 +21,8 @@ export async function searchWeb(input:{query:string;requestId:string;accountId:s
     }),{accountId:input.accountId,signal:controller.signal});
     if(!response.ok)throw new Error(response.error);
     return response.data;
+  } catch(error) {
+    if(error instanceof Error && error.message===HOSTED_AUTH_STOPPED)throw new Error("Public web search account changed or sign-in expired. Sign in again; website research with your own provider can continue.");
+    throw error;
   } finally {active.delete(input.requestId);}
 }

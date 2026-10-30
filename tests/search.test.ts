@@ -37,8 +37,8 @@ test('search refreshes one rejected session with the same idempotency key and ex
 });
 test('account switching, logout and missing login never charge a different account',async()=>{
   const s=setup(async()=>{await s.f.session.replace({user:{id:'other'},accessToken:'C',refreshToken:'C',accessTokenExpiresAt:'2100-01-01'} as any);return{ok:false,status:401};});
-  await assert.rejects(s.searchWeb(input(),sender),/account changed/);
-  await s.f.session.replace(null);await assert.rejects(s.searchWeb(input(),sender),/account changed/);
+  await assert.rejects(s.searchWeb(input(),sender),/website research with your own provider can continue/);
+  await s.f.session.replace(null);await assert.rejects(s.searchWeb(input(),sender),/website research with your own provider can continue/);
 });
 test('paid provider failures are never retried and cancellation is scoped to its originating document',async()=>{
   for(const status of [403,409,429,502]){
