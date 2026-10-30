@@ -2359,7 +2359,10 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   // (toggleBtn open-on-tap is handled inside endDrag — pointerup with no
   // movement counts as a tap and calls open().)
   btnClose.addEventListener("click", close);
-  btnNew.addEventListener("click", () => handlers.fresh?.());
+  btnNew.addEventListener("click", () => {
+    imageGeneration++;pendingImages=[];renderImages();imageError.hidden=true;
+    handlers.fresh?.();
+  });
   btnSettings.addEventListener("click", () => handlers.settings?.());
   btnExpand.addEventListener("click", () => panel.classList.toggle("overlay"));
   btnHistory.addEventListener("click", () => {
