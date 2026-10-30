@@ -209,7 +209,7 @@ Built-in skills live in `apps/chrome/skills/`. When changing one: bump `@version
 
 ## Shared image reads
 
-The host exposes `read_images({urls:["https://cdn.example/image.jpg"]})` on every page, including pages without an active skill. It returns actual model image parts. Preserve URL query parameters. The background downloads without cookies, caches successful images for five minutes, and splits long screenshots into readable segments within three image parts per call.
+The host exposes `read_images({urls:["https://cdn.example/image.jpg"]})` on every page, including pages without an active skill. It returns actual model image parts. Preserve URL query parameters. The host first copies matching loaded webpage images; remaining URLs are downloaded in the background. Long images are split within three image parts per call. `screenshot_page({tabId?,selector?,fullPage?})` attaches an element, viewport, or complete scrollable page screenshot; omit tabId for the current tab.
 
 Any skill may request the same transport by returning this object, including from `js_exec`:
 

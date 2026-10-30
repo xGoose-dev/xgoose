@@ -1,6 +1,7 @@
 import {searchWeb,abortSearch} from "./search";
 import {notificationStatus,emitNotification,installNotificationEvents} from "./notifications";
-import {readImages} from './images';
+import {readImages,prepareImageParts} from './images';
+import {capturePage} from './pageScreenshot';
 import {peerCommand, installPeerEvents} from './peers';
 import {listHostedModels} from "./hostedModels";
 import {providerFetch} from './providerFetch';
@@ -98,7 +99,8 @@ registerRouter({
     if(payload.kind==='page')try{allWebsites=await chrome.permissions.contains({origins:['<all_urls>']});}catch{}
     await nativeCommand("progress",{...payload,hostname:new URL(sender.url!).hostname,allWebsites});
   },
-  'sw:read_images': request=>readImages(request.urls),
+  'sw:capture_page': (args,sender)=>capturePage(args,sender),
+  'sw:read_images': request=>readImages(request.urls,fetch,prepareImageParts,request.maxParts),
   'sw:nga_images': (request,sender)=>readNgaImages(request.urls,sender.url??''),
   "sw:user_scripts_status": async () => {try{await chrome.userScripts.getScripts();return {enabled:true};}catch{return {enabled:false};}},
   "sw:open_user_scripts_setup": async ({guide}) => {await chrome.tabs.create({url:guide?chrome.runtime.getURL("onboarding.html"):extensionDetailsUrl(chrome.runtime.id)});},

@@ -1,6 +1,6 @@
 {
   "name": "xgoose",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "private": true,
   "description": "Headless agent + DOM page controller + chat UI for xgoose (factored out of xgoose-safari so the same code can host Chrome / Firefox / userscript-style extensions).",
   "workspaces": [
@@ -13,7 +13,7 @@
     "test": "tsx --test tests/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build",
     "test:notifications": "node tests/browser/notifications.mjs",
-    "e2e": "npm run build && node tests/browser/acceptance.mjs && node tests/browser/email-login.mjs && node tests/browser/panel-layout.mjs && node tests/browser/setup.mjs && node tests/browser/forum-shortcuts.mjs && node tests/browser/site-detection.mjs && node tests/browser/platform-detection.mjs && node tests/browser/skill-updates.mjs && node tests/browser/analytics.mjs && node tests/browser/user-scripts-guide.mjs && node tests/browser/discourse-range.mjs && node tests/browser/vbulletin-forum.mjs && node tests/browser/nga-content.mjs && node tests/browser/product-guide.mjs && node tests/browser/image-uploads.mjs && node tests/browser/context-compaction.mjs && node tests/browser/builtin-skills.mjs && node tests/browser/localization.mjs && node tests/browser/social-builtins.mjs && node tests/browser/social-shortcuts.mjs && node tests/browser/byok-providers.mjs && node tests/browser/hosted-auth.mjs && node tests/browser/hosted-default.mjs && node tests/browser/search.mjs"
+    "e2e": "npm run build && node tests/browser/acceptance.mjs && node tests/browser/email-login.mjs && node tests/browser/panel-layout.mjs && node tests/browser/setup.mjs && node tests/browser/forum-shortcuts.mjs && node tests/browser/site-detection.mjs && node tests/browser/platform-detection.mjs && node tests/browser/skill-updates.mjs && node tests/browser/analytics.mjs && node tests/browser/user-scripts-guide.mjs && node tests/browser/discourse-range.mjs && node tests/browser/vbulletin-forum.mjs && node tests/browser/nga-content.mjs && node tests/browser/product-guide.mjs && node tests/browser/page-image-behavior.mjs && node tests/browser/image-uploads.mjs && node tests/browser/context-compaction.mjs && node tests/browser/builtin-skills.mjs && node tests/browser/localization.mjs && node tests/browser/social-builtins.mjs && node tests/browser/social-shortcuts.mjs && node tests/browser/byok-providers.mjs && node tests/browser/hosted-auth.mjs && node tests/browser/hosted-default.mjs && node tests/browser/search.mjs"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "1.3.0",

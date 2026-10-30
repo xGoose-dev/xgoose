@@ -42,7 +42,8 @@ export type MessageMap = {
   "sw:host_layout":{request:{layout:import('@xgoose/ui').Layout};response:void};
   "sw:native_credentials":{request:{provider:string};response:{apiKey:string}};
   "sw:host_progress":{request:{kind:"page"|"answer"|"diagnostic";error?:string};response:void};
-  'sw:read_images': {request:{urls:string[]};response:import('@/background/images').ImageReadResult[]};
+  'sw:capture_page': {request:{tabId?:number;selector?:string;fullPage?:boolean};response:import('@/shared/imageParts').PreparedImage[]};
+  'sw:read_images': {request:{urls:string[];maxParts?:number};response:import('@/background/images').ImageReadResult[]};
   'sw:nga_images': {request:{urls:string[]};response:import('@/background/ngaImages').NgaImageResult[]};
   "sw:user_scripts_status": {request:void;response:{enabled:boolean}};
   "sw:open_user_scripts_setup": {request:{guide?:boolean};response:void};
