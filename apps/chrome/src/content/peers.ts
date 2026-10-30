@@ -49,10 +49,10 @@ export class PagePeers {
     })().finally(() => {this.registration = undefined;});
     return this.registration;
   }
-  async begin() {
+  async begin(runId: string = crypto.randomUUID()) {
     if (!this.agent || this.agent.sessionId !== this.host.sessionId()) await this.register();
-    this.waiting = false; this.stopped = false; this.runId = crypto.randomUUID();
-    await this.rpc({op: "begin", runId: this.runId, model: this.host.model()});
+    this.waiting = false; this.stopped = false; this.runId = runId;
+    this.agent = (await this.rpc({op: "begin", runId, model: this.host.model()})).agent;
   }
   async finish(outcome: "completed" | "failed" | "cancelled", text: string) {
     if (!this.agent || !this.runId) return;
@@ -111,7 +111,7 @@ export class PagePeers {
       defineTool({name: "spawn_agent", description: "Ask a peer to work on a task. Supply tabId to use an existing page, url to open a website, or neither to open the built-in agent.html page. New tabs open in the background. Results are sent back automatically when that task finishes. Peers are equals and can contact each other.",
         inputSchema: z.object({task: z.string().min(1), url: z.string().url().optional(), tabId: z.number().int().optional()}),
         execute: (input, opts) => call({op: "spawn", ...input, requestId: `${this.runId}:${opts.toolCallId ?? crypto.randomUUID()}`})}),
-      defineTool({name: "send_message", description: "Send a message to another peer. It processes it after its current run, or continues if waiting. Sending does not wait for a reply and does not switch tabs.",
+      defineTool({name: "send_message", description: "Send a message to another peer. It processes it after its current run, or continues if waiting, and returns its final response automatically. Use wait_agents to wait for that result. Sending does not switch tabs.",
         inputSchema: z.object({agentId: z.string(), message: z.string().min(1)}),
         execute: (input, opts) => call({op: "send", ...input, requestId: `${this.runId}:${opts.toolCallId ?? crypto.randomUUID()}`})}),
       defineTool({name: "wait_agents", description: "Yield this run until peer results or messages arrive, without polling the model. Returns immediately if results are already available. Call after assigning work; when waiting is true, this turn ends and incoming messages resume it.",

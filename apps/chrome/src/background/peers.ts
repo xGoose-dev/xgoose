@@ -99,7 +99,7 @@ export function peerCommand(request: PeerRequest, sender: chrome.runtime.Message
         }
       }
       await peerTransaction(state => queuePeerTask(state, taskId, me.id, target.id, op.task));
-      await notifyPending(); return {agent: target, taskId, status: target.documentKey ? "queued" : "waiting_for_page"};
+      await notifyPending(); return {agent: target, taskId, messageId: taskId, status: target.documentKey ? "queued" : "waiting_for_page"};
     }
     const reply = await peerTransaction(state => {
       const agent = peer(state, me.id);
@@ -109,10 +109,15 @@ export function peerCommand(request: PeerRequest, sender: chrome.runtime.Message
           peer(state, op.agentId);
           if (op.agentId === me.id) throw new Error("Choose another peer");
           putPeerMessage(state, {id: `${me.id}:${op.requestId}`, from: me.id, to: op.agentId, kind: "message", text: op.message, state: "pending"});
-          return {delivered: "queued"};
+          return {delivered: "queued", messageId: `${me.id}:${op.requestId}`};
         }
         case "take": return {message: claimPeerMessage(state, me.id), agent};
-        case "begin": agent.runId = op.runId; agent.model = op.model; agent.status = "running"; agent.waitingOn = undefined; return {};
+        case "begin": {
+          const message = state.messages.find(item => item.id === agent.activeMessageId);
+          agent.traceId = message?.traceId ?? (agent.activeTaskId ? state.tasks[agent.activeTaskId]?.traceId : undefined) ?? op.runId;
+          agent.runId = op.runId; agent.model = op.model; agent.status = "running"; agent.waitingOn = undefined;
+          return {agent};
+        }
         case "wait": return waitForPeers(state, me.id, op.agentIds);
         case "settle": settlePeer(state, me.id, op.runId, op.outcome, op.text); return {};
         case "stop": {

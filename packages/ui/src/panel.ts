@@ -503,6 +503,7 @@ const CSS = `
 .skills-bar .empty{
   color:var(--text-faint);font-style:normal;letter-spacing:.02em;
 }
+.skills-login-hint{margin:0;padding:4px 14px 6px;color:var(--text-faint);font-size:11px;line-height:1.4}
 /* When the skills list only contains the empty hint, collapse the row. */
 .skills-bar:has(.skills-list > .empty:only-child){
   padding:5px 14px;background:transparent;
@@ -1322,6 +1323,7 @@ const HTML = `
     <span class="skills-list"><span class="empty">No skills active on this page</span></span>
   </div>
   <div class="history"></div>
+  <p class="skills-login-hint" hidden>Some searches may require signing in to this website.</p>
   <div class="todos">
     <div class="todos-header">
       <div class="todos-title">
@@ -2807,6 +2809,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     },
 
     setSkills(skills) {
+      ($(".skills-login-hint") as HTMLElement).hidden = !skills.some(skill => skill.enabled !== false);
       skillsList.innerHTML = "";
       if (!skills.length) {
         const span = document.createElement("span");

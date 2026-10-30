@@ -1,6 +1,6 @@
 import {HOSTED_AUTH_STOPPED,isHostedAuthStopped} from '@/shared/hosted';
 import {PagePeers} from './peers';
-import {isAgentPage, type PeerModel} from '@/shared/peers';
+import {isAgentPage, type PeerModel, type PeerMessage} from '@/shared/peers';
 import {initializeLocale,localizeRoot,languageReminder,translate} from "@/shared/locale";
 import {isSafari,safariExecutionReminder} from "@/shared/host";
 import {mountUserScriptsGuide} from "./userScriptsGuide";
@@ -306,7 +306,7 @@ async function bootstrap(): Promise<void> {
     receive: async (message, agent) => {
       if (!currentConvoId) {peerSessionId = agent.sessionId; peerModel = agent.model;}
       const label = message.kind === "task" ? "Task from peer" : message.kind === "result" ? `Peer result (${message.outcome})` : "Message from peer";
-      await runAgentTurn(`${label} ${message.from}${message.taskId ? ` [task ${message.taskId}]` : ""}:\n${message.text}`, {hidden:true});
+      await runAgentTurn(`${label} ${message.from}${message.taskId ? ` [task ${message.taskId}]` : ""}:\n${message.text}`, {hidden:true, peerMessage:message});
     },
   });
   // Per-conversation rolling token / cost / cache metrics. Webagent-style:
@@ -676,7 +676,7 @@ async function bootstrap(): Promise<void> {
   //                          adding a user bubble so the UI stays clean).
   async function runAgentTurn(
     prompt: string,
-    opts: { hidden?: boolean; images?: ImageAttachment[] } = {},
+    opts: { hidden?: boolean; images?: ImageAttachment[]; peerMessage?: PeerMessage } = {},
   ): Promise<void> {
     if (running) return;
     const turnStarted=Date.now(),turnFlow=crypto.randomUUID();let firstResponse=false;
@@ -734,7 +734,7 @@ async function bootstrap(): Promise<void> {
       persistCurrentConvo();
     }
 
-    if (!opts.hidden) panel.addUserMessage(prompt,images);
+    if (!opts.hidden || opts.peerMessage) panel.addUserMessage(prompt,images);
     panel.setSending(true);
     panel.setStatus("");
     panel.setGenerating(true);
@@ -752,7 +752,11 @@ async function bootstrap(): Promise<void> {
     const journalProvider = settings.provider === "xgoose-hosted" ? "hosted" : "byok";
     const record = (event: any) => send("sw:transcript_event", {
       id: crypto.randomUUID(), sessionId: journalSessionId, runId: journalRunId,
-      provider: journalProvider, at: Date.now(), event:{...event,clientVersion:chrome.runtime.getManifest().version},
+      provider: journalProvider, at: Date.now(), event:{...event,clientVersion:chrome.runtime.getManifest().version,
+        correlation: {traceId:peers.agent?.traceId ?? journalRunId, agentId:peers.agent?.id,
+          taskId:peers.agent?.activeTaskId, triggerMessageId:opts.peerMessage?.id,
+          sourceAgentId:opts.peerMessage?.from, sourceSessionId:opts.peerMessage?.fromSessionId,
+          sourceRunId:opts.peerMessage?.fromRunId, messageSentAt:opts.peerMessage?.sentAt}},
     }).catch(() => { panel.setStatus("Local transcript incomplete: storage failed. Export available history before closing."); });
     let stepCount = 0;
     // Error text shown this turn (in-stream `error` part). Persisted into the
@@ -792,9 +796,12 @@ async function bootstrap(): Promise<void> {
     };
 
     try {
-      await peers.begin();
+      await peers.begin(journalRunId);
       // Refresh consent before queuing the first message of a Hosted session.
       if (journalProvider === "hosted") await send("sw:consent_get", undefined);
+      if (opts.peerMessage) await record({type:"peer-receive",kind:opts.peerMessage.kind,
+        taskId:opts.peerMessage.taskId,outcome:opts.peerMessage.outcome,
+        deliveryMs:opts.peerMessage.sentAt === undefined ? undefined : Math.max(0, Date.now()-opts.peerMessage.sentAt)});
       await record({type:"user-message",content:prompt,...(images.length?{attachments:images.map(image=>({type:"image",mimeType:image.mimeType,width:image.width,height:image.height}))}:{})});
       const scriptsEnabled=isAgentPage() ? false : await permissionGuide.check();
       const candidates = isAgentPage() ? [] : await send("sw:active_skills_for_url", { url: getCurrentPageUrl() });
@@ -1151,7 +1158,9 @@ async function bootstrap(): Promise<void> {
       }
     } finally {
       if (abortController?.signal.aborted) peerOutcome = "cancelled";
-      await record({type:abortController?.signal.aborted?"run-interrupted":"run-end"});
+      await record({type:abortController?.signal.aborted?"run-interrupted":"run-end",
+        outcome:turnErrorDisplay ? "failed" : peers.waiting && peerOutcome === "completed" ? "waiting" : peerOutcome,
+        durationMs:Date.now()-turnStarted});
       assistantBubble?.finalize();
 
       abortController = null;

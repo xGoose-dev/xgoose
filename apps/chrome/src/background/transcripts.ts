@@ -31,28 +31,37 @@ export async function recordJournal(value:JournalEvent,sender:chrome.runtime.Mes
   try {const url=new URL(sender.url??sender.tab?.url??"");if(url.protocol==="https:"||url.protocol==="http:")site=url.hostname;}catch{}
   const event={...value,ownerId:account?.user.id,event:redactTranscript({...value.event,site,tabId:sender.tab?.id,documentId:sender.documentId})};
   await journal(event,value.provider==="hosted"&&!!account&&!!cached?.hosted);
+  if(value.event.type==="run-end"||value.event.type==="run-interrupted")void flushTranscripts().catch(()=>{});
 }
 let flushing=false;
 export async function flushTranscripts() {
   if(flushing)return;flushing=true;
   try{
     const account=await getFreshAccount();if(!account)return;
-    const consent=await getConsent();const rows=await pendingEvents(account.user.id);
-    if(!rows.length)return;
-    const first=rows[0];if(!consent[first.provider])return;
-    const candidates=rows.filter(r=>r.sessionId===first.sessionId&&r.provider===first.provider);
-    const group:JournalEvent[]=[];let bytes=1024;
-    for(const row of candidates){
-      const size=new TextEncoder().encode(JSON.stringify(row)).length;
-      // Retain the complete local event; mark an upload omission explicitly.
-      const entry=size>800000?{...row,event:{type:"missing",originalType:row.event.type,reason:"event_exceeds_upload_limit",bytes:size}}:row;
-      const entryBytes=new TextEncoder().encode(JSON.stringify(entry)).length;
-      if(bytes+entryBytes>900000)break;
-      group.push(entry);bytes+=entryBytes;
+    const consent=await getConsent();
+    // Drain several sessions per wake-up so peer transcripts arrive together.
+    // Keep a bound for mobile event-page lifetimes; the alarm retries leftovers.
+    for(let batch=0;batch<6;batch++){
+      const rows=await pendingEvents(account.user.id);
+      if(!rows.length)return;
+      const first=rows[0];if(!consent[first.provider])return;
+      const candidates=rows.filter(r=>r.sessionId===first.sessionId&&r.provider===first.provider);
+      const group:JournalEvent[]=[];let bytes=1024;
+      for(const row of candidates){
+        const size=new TextEncoder().encode(JSON.stringify(row)).length;
+        // Retain the complete local event; mark an upload omission explicitly.
+        const entry=size>800000?{...row,event:{type:"missing",originalType:row.event.type,reason:"event_exceeds_upload_limit",bytes:size,correlation:row.event.correlation}}:row;
+        const entryBytes=new TextEncoder().encode(JSON.stringify(entry)).length;
+        if(bytes+entryBytes>900000)break;
+        group.push(entry);bytes+=entryBytes;
+      }
+      const response=await apiFetch<{acknowledged:string[]}>("/transcripts/events",{method:"POST",bearer:account.accessToken,body:JSON.stringify({sessionId:first.sessionId,provider:first.provider,events:group.map(e=>({id:e.id,sequence:e.sequence,kind:e.event.type,at:e.at,body:{runId:e.runId,...e.event}}))})});
+      if(!response.ok)return;
+      const acknowledged=response.data.acknowledged.filter(id=>group.some(e=>e.id===id));
+      if(!acknowledged.length)return;
+      await acknowledgeEvents(acknowledged);
+      // Network/service errors retain the persistent queue for the next alarm.
     }
-    const response=await apiFetch<{acknowledged:string[]}>("/transcripts/events",{method:"POST",bearer:account.accessToken,body:JSON.stringify({sessionId:first.sessionId,provider:first.provider,events:group.map(e=>({id:e.id,sequence:e.sequence,kind:e.event.type,at:e.at,body:{runId:e.runId,...e.event}}))})});
-    if(response.ok)await acknowledgeEvents(response.data.acknowledged.filter(id=>group.some(e=>e.id===id)));
-    // Network/service errors retain the persistent queue for the next alarm.
   } finally {flushing=false;}
 }
 chrome.alarms.create("xgoose-transcripts",{periodInMinutes:1});
