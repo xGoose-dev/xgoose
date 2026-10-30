@@ -11,7 +11,7 @@ try {
  const sw=context.serviceWorkers()[0]??await context.waitForEvent('serviceworker'),id=sw.url().split('/')[2];
  const fixture=await context.newPage();await fixture.setContent('<body style="margin:0;background:white"><h1 style="font:50px Arial">MAP TEST 731</h1><div style="width:240px;height:180px;background:red"></div>');
  const bytes=await fixture.screenshot({clip:{x:0,y:0,width:500,height:300}});await fixture.close();
- await context.route('https://example.com/**',route=>route.request().url().endsWith('/map.png')?route.fulfill({contentType:'image/png',body:bytes}):route.fulfill({contentType:'text/html',body:'<!doctype html><title>Page pixels regression</title><h1>Weather map</h1><img src="/map.png">'}));
+ await context.route('https://example.com/**',route=>route.request().url().endsWith('/map.png')?route.fulfill({contentType:'image/png',body:bytes}):route.fulfill({contentType:'text/html',body:'<!doctype html><title>Image behavior test</title><h1>Weather map</h1><img src="/map.png">'}));
  await sw.evaluate(()=>{
   globalThis.pixelRequests=[];globalThis.imageDownloads=[];globalThis.pixelTool='read_images';globalThis.backgroundImage=undefined;
   const original=globalThis.fetch;
