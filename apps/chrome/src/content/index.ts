@@ -617,7 +617,10 @@ async function bootstrap(): Promise<void> {
     void setLastConvoIdGlobal(convo.id);
   });
   panel.onDeleteConversation(async (id) => {
-    if (id === currentConvoId) await stopBeforeConversationSwitch();
+    if (id === currentConvoId) {
+      await stopBeforeConversationSwitch();
+      await peers.reset(); peerSessionId = newConversationId(); peerModel = undefined;
+    }
     await deleteConversation(id);
     if (id === currentConvoId) {
       currentConvoId = null;

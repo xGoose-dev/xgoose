@@ -86,9 +86,17 @@ export class PagePeers {
     // A best-effort notification may be missed while a document is suspended.
     // Pulling on resume and occasionally while runnable also survives event-page reloads.
     document.addEventListener("visibilitychange", () => {if (document.visibilityState === "visible") this.kick();});
-    window.addEventListener("pageshow", () => this.kick());
-    const timer = window.setInterval(() => this.kick(), 10000);
-    window.addEventListener("pagehide", () => window.clearInterval(timer), {once: true});
+    let timer = window.setInterval(() => this.kick(), 10000);
+    window.addEventListener("pageshow", event => {
+      if (event.persisted) {
+        // The previous document's task ended on navigation. Restore a fresh
+        // registration, never replay its claimed task or saved tool calls.
+        this.agent = undefined; this.runId = ""; this.waiting = false; this.stopped = false;
+        window.clearInterval(timer); timer = window.setInterval(() => this.kick(), 10000);
+      }
+      this.kick();
+    });
+    window.addEventListener("pagehide", () => window.clearInterval(timer));
   }
   tools() {
     const call = async (operation: PeerOperation) => {

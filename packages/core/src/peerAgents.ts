@@ -36,9 +36,12 @@ export function invalidatePeer(state: PeerState, id: string, reason: string): vo
   const agent = state.agents[id];
   if (!agent || agent.status === "unavailable") return;
   agent.status = "unavailable";
-  for (const task of Object.values(state.tasks)) if (task.agentId === id) finishTask(state, task, "unavailable", reason);
+  const notified = new Set<string>();
+  for (const task of Object.values(state.tasks)) if (task.agentId === id && ["queued", "running", "waiting"].includes(task.status)) {
+    finishTask(state, task, "unavailable", reason); notified.add(task.requesterId);
+  }
   // Wake peers waiting on a conversation that did not originate from spawn_agent.
-  for (const other of Object.values(state.agents)) if (other.waitingOn?.includes(id)) {
+  for (const other of Object.values(state.agents)) if (other.waitingOn?.includes(id) && !notified.has(other.id)) {
     putPeerMessage(state, {id: `unavailable:${id}:${other.id}`, from: id, to: other.id,
       kind: "result", text: reason, outcome: "unavailable", state: "pending"});
   }
@@ -93,5 +96,12 @@ export function settlePeer(state: PeerState, id: string, runId: string, outcome:
     const task = state.tasks[agent.activeTaskId];
     if (outcome === "waiting") task.status = "waiting";
     else { finishTask(state, task, outcome, text); agent.activeTaskId = undefined; }
+  }
+  if (outcome !== "waiting") {
+    for (const other of Object.values(state.agents)) if (other.waitingOn?.includes(id) &&
+      !state.messages.some(message => message.to === other.id && message.from === id && message.kind === "result" && message.state === "pending")) {
+      putPeerMessage(state, {id: `finished:${id}:${runId}:${other.id}`, from: id, to: other.id,
+        kind: "result", text, outcome, state: "pending"});
+    }
   }
 }
