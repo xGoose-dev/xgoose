@@ -1,0 +1,5 @@
+:root {color-scheme: light dark; font-family: system-ui, sans-serif; background: light-dark(#fafaf7, #191b18); color: light-dark(#252b24, #e3e9df);}
+body {margin: 0; padding: 32px 24px;}
+main {max-width: 480px; margin: 8vh auto;}
+h1 {font-size: 28px; font-weight: 600; margin: 20px 0 12px;}
+p {line-height: 1.65; opacity: .75;}

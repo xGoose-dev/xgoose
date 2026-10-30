@@ -31,6 +31,7 @@ if(isSafari && documentNonce){
  });}
 }
 export type MessageMap = {
+  "sw:peer": {request: import("./peers").PeerRequest; response: import("./peers").PeerReply};
  "sw:public_read":{request:{url:string};response:{status:number;body:string;headers:Record<string,string>}};
   "cs:document_nonce":{request:void;response:string};
   "sw:host_prepare":{request:void;response:void};

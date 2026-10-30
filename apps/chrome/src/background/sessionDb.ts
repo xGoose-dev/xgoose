@@ -1,5 +1,6 @@
 import {isSafari} from "@/shared/host";
 import type { StoredConversation } from "@/shared/types";
+import {emptyPeerState, type PeerState} from "../../../../packages/core/src/peerAgents";
 
 // This module runs only in the extension service worker: IDB belongs to the
 // extension origin, never to the visited site. Separate rows prevent lost updates
@@ -28,6 +29,26 @@ async function transaction<T>(stores: string[], mode: IDBTransactionMode, fn: (t
     tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("Session storage interrupted"));
     fn(tx, next => { value = next; });
   });
+}
+
+/** The registry and mailbox commit together, including task completion receipts. */
+export function peerTransaction<T>(update: (state: PeerState) => T): Promise<T> {
+  let failure: unknown;
+  return transaction<T>(["meta"], "readwrite", (tx, done) => {
+    const store = tx.objectStore("meta"), request = store.get("peer-agents-v1");
+    request.onsuccess = () => {
+      try {
+        const state: PeerState = request.result ?? emptyPeerState();
+        const result = update(state);
+        store.put(state, "peer-agents-v1");
+        done(result);
+      } catch (error) {
+        // Abort rather than persisting half a transition; surface the original error.
+        tx.abort();
+        failure = error;
+      }
+    };
+  }).catch(error => { const original = failure; failure = undefined; throw original ?? error; });
 }
 let migration: Promise<void> | undefined;
 function migrate(): Promise<void> {

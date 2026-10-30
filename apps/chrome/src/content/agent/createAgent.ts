@@ -1,4 +1,6 @@
 import {isSafari,hostCapabilities} from "@/shared/host";
+import {isAgentPage} from "@/shared/peers";
+import type {XgooseBuiltTool} from "@xgoose/core";
 import { normalizeHostedError } from "@/shared/hosted";
 import {resolveHostedModel} from "@/shared/hostedModels";
 // Chrome host wrapper around `@xgoose/core`'s `createAgent`. Composes the
@@ -45,11 +47,14 @@ function getFetchImpl(): ReturnType<typeof createChromeProviderFetch> {
 export async function createAgent(opts: {
   settings: Settings;
   reminder?: string | null;
+  peerTools?: XgooseBuiltTool[];
+  shouldYield?: () => boolean;
   onProviderResponse?: (event: {type:"model-response";requestId:string|null;status:number;firstResponseMs:number;contextTextBytes?:number;contextLimitBytes?:number;contextWindowTokens?:number;contextTargetTokens?:number;contextTargetBytes?:number}) => Promise<unknown>;
 }): Promise<AgentBundle> {
   const tools = [
     ...buildCoreTools({ memory: chromeMemoryPort, origin: chromeOriginPort }),
-    ...buildLegacyTools(),
+    ...(isAgentPage() ? [] : buildLegacyTools()),
+    ...(opts.peerTools ?? []),
   ];
   const coreSettings = await projectToCoreSettings(opts.settings);
   const fetchProvider=opts.settings.provider==="xgoose-hosted"?createChromeProviderFetch({hostedAccountId:coreSettings.hostedAccountId}):getFetchImpl();
@@ -68,6 +73,7 @@ export async function createAgent(opts: {
     tools,
     reminder: opts.reminder,
     capabilities:hostCapabilities,
+    shouldYield: opts.shouldYield,
   });
 }
 

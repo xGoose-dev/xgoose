@@ -1,4 +1,5 @@
 import {readImages} from './images';
+import {peerCommand, installPeerEvents} from './peers';
 import {listHostedModels} from "./hostedModels";
 import {providerFetch} from './providerFetch';
 import {isSafari} from "@/shared/host";
@@ -72,7 +73,9 @@ chrome.runtime.onInstalled.addListener(async ({reason}) => {
   if (!isSafari && reason === "install") void chrome.tabs.create({url:chrome.runtime.getURL("onboarding.html")});
 });
 
+installPeerEvents();
 registerRouter({
+  "sw:peer": peerCommand,
   "sw:public_read": async (payload,sender)=>{
     if(!isSafari)throw new Error("Public native transport is unavailable");
     await assertLiveDocument(sender);
@@ -371,11 +374,11 @@ registerRouter({
       await chrome.tabs.create({ url });
     }
   },
-  "sw:get_page_info": async () => {
-    const [tab] = await chrome.tabs.query({
+  "sw:get_page_info": async (_payload, sender) => {
+    const tab = sender.tab ?? (await chrome.tabs.query({
       active: true,
       currentWindow: true,
-    });
+    }))[0];
     if (!tab?.url) return null;
     return { url: tab.url, title: tab.title ?? "" };
   },

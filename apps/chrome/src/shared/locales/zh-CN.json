@@ -1,4 +1,5 @@
 {
+  "Some searches may require signing in to this website.": "部分搜索功能可能需要先登录该网站账号。",
   "Language": "语言",
   "Follow browser language": "跟随浏览器语言",
   "Applies to the interface and the AI’s preferred response language. Explicit requests in a chat take priority. Saved automatically.": "用于界面和 AI 默认回复语言。对话中明确指定的语言优先。选择后自动保存。",
