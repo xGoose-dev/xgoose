@@ -46,7 +46,7 @@ function text(raw=''){
 }
 function body(raw='',key){
  const images=[];
- const marker=src=>{if(!images.includes(src))images.push(src);return `[image ${images.indexOf(src)+1}]`;};
+ const marker=value=>{const src=new URL(value,location.href).href;if(!images.includes(src))images.push(src);return `[image ${images.indexOf(src)+1}]`;};
  let value=String(raw).replace(/\[img(?:=[^\]]*)?\]([\s\S]*?)\[\/img\]/gi,(_,src)=>marker(src.trim()));
  const doc=new DOMParser().parseFromString(value,'text/html');
  for(const img of doc.querySelectorAll('img')){
@@ -64,10 +64,10 @@ function content(raw,key,maxChars){
   readMore:result.text.length>size?`getPostText({key:"${key}",offset:${size}})`:undefined,
   readImages:result.images.length?`readImages({key:"${key}",images:[N]})`:undefined};
 }
-function thread(item,maxChars){
+function thread(item,maxChars,preview=false){
  return {tid:item.tid,title:text(item.subject),author:text(item.author),userId:item.authorid,forumId:item.fid,forum:item.forum_name,
   postedAt:item.dateline,lastPostAt:item.lastpost,replies:item.replies,views:item.views,recommends:item.recommend_add,url:url(item.tid),
-  ...content(item.message_bbcode||item.message_html||item.message||'',`thread:${item.tid}`,maxChars)};
+  ...content(item.message_bbcode||item.message_html||item.message||'',`${preview?'preview:':''}thread:${item.tid}`,maxChars)};
 }
 function post(item,tid,maxChars){
  return {pid:item.pid,tid,author:text(item.author),userId:item.authorid,postedAt:item.dateline,upvotes:item.votes?.upvote,
@@ -86,7 +86,7 @@ const entry=(summary,input,handler,args={})=>fn({summary,input,handler,examples:
 export default defineSkill({
  searchThreads:entry('新版 tRPC 搜索；返回原生 cursor，可限定版块/时间并选择关键词、语义或混合搜索。',z.object({query:z.string(),sortBy:z.enum(['relevance','dateline']).optional(),searchType:z.enum(['hybrid','keywords','semantic']).optional(),cursor:z.number().nullable().optional(),forumIds:z.array(id).optional(),days:id.optional(),maxChars}),async({query,sortBy='relevance',searchType='hybrid',cursor,forumIds,days,maxChars})=>{
   const input={query,type:searchType,days:days??null,fids:forumIds?.join(',')??null,sortBy,direction:'forward'};if(cursor!==undefined&&cursor!==null)input.cursor=cursor;
-  const data=await trpc('search.search',input);return {query,nextCursor:data.cursor??null,results:data.data.map(item=>thread(item,maxChars))};
+  const data=await trpc('search.search',input);return {query,nextCursor:data.cursor??null,results:data.data.map(item=>thread(item,maxChars,true))};
  },{query:'租车',searchType:'keywords'}),
  getThread:entry('读取楼主正文、图片和主题信息；支持新版和旧版页面自动识别 tid。',z.object(reading),getThread),
  getThreadPosts:entry('读取一页回复和内联楼中楼；order 支持从早到晚或从晚到早。',z.object({...reading,...paging,order:z.enum(['time_asc','time_desc']).optional()}),getThreadPosts),
@@ -96,14 +96,14 @@ export default defineSkill({
  },{pid:20501693,page:1}),
  listForums:entry('版块目录，包含父子版块 fid。',z.object({}),async()=>({forums:(await get('/api/forums')).forums})),
  listForumThreads:entry('指定版块的分页主题列表。',z.object({fid:id,...paging}),async({fid,page=1,pageSize=20})=>{
-  const data=await get(`/api/forums/${fid}/threads`,{pg:page,ps:pageSize});return {fid,page,pageSize,total:data.total,threads:data.threads.map(t=>thread(t))};
+  const data=await get(`/api/forums/${fid}/threads`,{pg:page,ps:pageSize});return {fid,page,pageSize,total:data.total,threads:data.threads.map(t=>thread(t,undefined,true))};
  },{fid:124}),
  listFrontThreads:entry('首页热门或最新主题。',z.object({kind:z.enum(['hot','new']).optional(),...paging}),async({kind='hot',page=1,pageSize=20}={})=>{
-  const data=await get('/api/threads',{type:kind,pg:page,ps:pageSize,with_post:1,includes:'forum_name'});return {kind,page,pageSize,total:data.total,threads:data.threads.map(t=>thread(t))};
+  const data=await get('/api/threads',{type:kind,pg:page,ps:pageSize,with_post:1,includes:'forum_name'});return {kind,page,pageSize,total:data.total,threads:data.threads.map(t=>thread(t,undefined,true))};
  },{kind:'new'}),
  getUserProfile:entry('用户 profile、积分、用户组及统计。',z.object({uid:id}),async({uid})=>({...(await get(`/api/users/${uid}/profile`)).data,url:`https://www.1point3acres.com/bbs/home.php?mod=space&uid=${uid}&do=profile`}),{uid:702978}),
  getUserThreads:entry('用户发起的主题列表。',z.object({uid:id,...paging}),async({uid,page=1,pageSize=20})=>{
-  const data=await get(`/api/users/${uid}/threads`,{pg:page,ps:pageSize,includes:'forum_name'});return {uid,page,pageSize,total:data.total,threads:data.threads.map(t=>thread(t))};
+  const data=await get(`/api/users/${uid}/threads`,{pg:page,ps:pageSize,includes:'forum_name'});return {uid,page,pageSize,total:data.total,threads:data.threads.map(t=>thread(t,undefined,true))};
  },{uid:702978}),
  getPostText:entry('从已读取正文继续取文本，key 由 readMore 给出。',z.object({key:z.string(),offset:z.number().int().nonnegative().optional(),maxChars}),({key,offset=0,maxChars=6000})=>{
   const item=cache.get(key);if(!item)throw new Error('请先重新读取原主题或回复以恢复正文');const end=Math.min(item.text.length,offset+maxChars);
