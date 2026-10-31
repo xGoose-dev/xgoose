@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         onepoint3acres
 // @namespace    acres
-// @version      0.1.1
+// @version      0.1.0
 // @description  一亩三分地新版 API：关键词/语义搜索、版块、热帖、新帖、正文、回复、楼中楼、图片、用户 profile 和主题记录。
 // @match        https://www.1point3acres.com/*
 // @match        https://1point3acres.com/*

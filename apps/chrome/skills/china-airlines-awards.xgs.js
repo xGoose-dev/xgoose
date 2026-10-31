@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        china-airlines-awards
 // @namespace   ci
-// @version     0.1.1
+// @version     0.1.0
 // @description China Airlines (CI / Dynasty Flyer) award search helper. Booking URL + session helpers; real search is gated until a live session capture is done.
 // @match       *://membersonair.china-airlines.com/*
 // @match       *://www.china-airlines.com/*

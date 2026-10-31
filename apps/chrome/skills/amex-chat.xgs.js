@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         amex-chat
 // @namespace    amexchat
-// @version      0.4.6
+// @version      0.4.5
 // @description  Amex customer-service chat: concise, firm, polite follow-through, automatic HUCA, user-input chimes, and on-demand retention, fee-waiver and welcome-bonus SOPs.
 // @match        *://global.americanexpress.com/*
 // @match        *://www.americanexpress.com/*

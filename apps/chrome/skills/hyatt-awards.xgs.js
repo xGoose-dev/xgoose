@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         hyatt-awards
 // @namespace    hyatt
-// @version      0.3.2
+// @version      0.3.0
 // @description  World of Hyatt award/cash search + Pay My Way + promo tracker. Same-origin scraper for hyatt.com.
 // @match        *://www.hyatt.com/*
 // @detect       location.hostname === 'www.hyatt.com'
@@ -38,7 +38,7 @@ import { z } from 'zod';
 const DATE_RX = /^\d{4}-\d{2}-\d{2}$/;
 const ModeSchema = z.enum(['points', 'cash']);
 
-const ROOMRATES_BASE = '/shop/service/rooms/roomrates';
+const ROOMRATES_BASE = '/en-US/shop/service/rooms/roomrates';
 const PROFILE_ENDPOINT = '/profile/api/member/profile';
 
 function addDays(yyyymmdd, delta) {
@@ -275,13 +275,6 @@ const FiltersSchema = z
   .optional();
 
 export default defineSkill({
-  pointsCalendarUrl: fn({summary:'Current Hyatt CLI calendar-page route; length of stay is part of the query.',input:z.object({spiritCode:z.string(),startDate:z.string(),endDate:z.string(),adults:z.number().optional(),rooms:z.number().optional(),kids:z.number().optional()}),handler:({spiritCode,startDate,endDate,adults=1,rooms=1,kids=0})=>`https://www.hyatt.com/explore-hotels/rate-calendar?${new URLSearchParams({spiritCode,startDate,endDate,adults:String(adults),rooms:String(rooms),kids:String(kids),rate:'Standard',vrcEnabled:'true'})}`}),
-  readCurrentCalendar: fn({summary:'Read the currently rendered rate calendar; retains the website text and source URL.',input:z.object({}),handler:()=>({url:location.href,text:document.querySelector('main')?.innerText || document.body.innerText})}),
-  searchHotels: fn({summary:'Find Hyatt spirit codes using the website hotel directory.',input:z.object({query:z.string(),offset:z.number().optional(),limit:z.number().optional()}),examples:[{args:{query:'Tokyo'}}],handler:async({query,offset=0,limit=20})=>{
-    const data=await fetchJson('/explore-hotels/service/hotels');
-    const hits=Object.entries(data).filter(([code,hotel])=>JSON.stringify([code,hotel.name,hotel.location]).toLowerCase().includes(query.toLowerCase())).map(([spiritCode,hotel])=>({spiritCode,...hotel}));
-    return {total:hits.length,hotels:hits.slice(offset,offset+limit),nextOffset:offset+Math.min(limit,hits.length-offset)};
-  }}),
   findAvailability: fn({
     summary:
       'Scan award/cash availability across a date window for one property; returns best per-day + overall best. ★ primary entry.',

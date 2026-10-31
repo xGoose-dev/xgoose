@@ -1,12 +1,11 @@
 // ==XGooseSkill==
 // @name        weibo
 // @namespace   weibo
-// @version      0.3.1
+// @version      0.2.5
 // @description 微博同域 JSON reader — search posts directly on weibo.com without navigation, user search suggestions, hot search, timelines, full status text, comments, reposts and profiles. s.weibo.com also supports its native search-page adapter. Reply in Chinese (中文).
 // @match       *://weibo.com/*
 // @match       *://*.weibo.com/*
-// @match       *://m.weibo.cn/*
-// @detect      /(^|\.)weibo\.(com|cn)$/.test(location.hostname)
+// @detect      location.hostname.endsWith('weibo.com')
 // @run-at      document_idle
 // @connect     <self>
 // @primary     getHotSearch
@@ -68,7 +67,7 @@ __name(decodeEntities, "decodeEntities");
 function stripHtml(html) {
   if (!html) return "";
   return decodeEntities(
-    String(html).replace(/<img\b[^>]*\balt=["\']([^"\']*)["\'][^>]*>/gi, "$1").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, " ")
+    String(html).replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n").replace(/<[^>]+>/g, " ")
   ).replace(/[ \t]+/g, " ").replace(/\n[ \t]+/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 __name(stripHtml, "stripHtml");
@@ -113,12 +112,18 @@ async function fetchHtml(url) {
   return await r.text();
 }
 __name(fetchHtml, "fetchHtml");
-function parseRfc2822(s) {
-  if (!s) return 0;
-  const t = Date.parse(String(s));
-  return Number.isFinite(t) ? Math.floor(t / 1e3) : 0;
+/** Weibo's `Tue Oct 27 09:00:00 +0800 2026` (or epoch seconds) as ISO time; null when absent. */
+function isoTime(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const t = typeof value === "number" ? value * 1e3 : Date.parse(String(value));
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
 }
-__name(parseRfc2822, "parseRfc2822");
+__name(isoTime, "isoTime");
+/** Drops absent and empty fields; zero counts and explicit false stay. */
+function compact(record) {
+  return Object.fromEntries(Object.entries(record).filter(([, v]) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && !v.length)));
+}
+__name(compact, "compact");
 function statusUrl(uid, mblogid) {
   return `https://weibo.com/${uid}/${mblogid}`;
 }
@@ -128,102 +133,74 @@ function profileUrl(uid) {
 }
 __name(profileUrl, "profileUrl");
 function toAuthor(u) {
-  if (!u) return { id: "", idstr: "", screenName: "", profileUrl: "" };
-  const id = String(u.idstr ?? u.id ?? "");
-  return {
+  if (!u) return { id: "", screenName: "" };
+  const id = String(u.id ?? u.idstr ?? "");
+  return compact({
     id,
-    idstr: String(u.idstr ?? id),
     screenName: String(u.screen_name ?? u.name ?? ""),
     profileUrl: id ? profileUrl(id) : "",
-    avatarUrl: u.avatar_hd ?? u.avatar_large ?? u.profile_image_url,
-    verified: !!u.verified,
+    verified: u.verified ? true : void 0,
     verifiedReason: u.verified_reason ? String(u.verified_reason) : void 0
-  };
+  });
 }
 __name(toAuthor, "toAuthor");
-function collectPicUrls(raw) {
+/** Picture renditions in reading order; the 1080px `original` is enough for the model and a fraction of mw2000's bytes. */
+function statusPics(raw) {
   const ids = Array.isArray(raw?.pic_ids) ? raw.pic_ids : [];
-  const infos = raw?.pic_infos || {};
-  const picUrls = [];
-  const pics = [];
-  for (const id of ids) {
-    const info = infos?.[id];
-    if (!info) continue;
-    const best = info.mw2000 || info.largest || info.original || info.large || info.bmiddle;
-    if (best?.url) {
-      picUrls.push(best.url);
-      pics.push({ url: best.url, width: Number(best.width ?? 0), height: Number(best.height ?? 0) });
-    }
-  }
-  if (!pics.length) for (const pic of raw?.pics ?? []) {
-    const best = pic.large || pic;
-    if (best.url) { picUrls.push(best.url); pics.push({url:best.url,width:Number(best.geo?.width ?? best.width ?? 0),height:Number(best.geo?.height ?? best.height ?? 0)}); }
-  }
-  return { picUrls, pics };
+  return ids.map((id) => raw?.pic_infos?.[id]).filter(Boolean).map((info) =>
+    [...new Set([info.original, info.large, info.mw2000, info.largest].map((r) => r?.url).filter(Boolean))]
+  ).filter((sources) => sources.length);
 }
-__name(collectPicUrls, "collectPicUrls");
+__name(statusPics, "statusPics");
 function toRetweeted(r) {
   if (!r) return null;
   const uid = String(r.user?.id ?? r.user?.idstr ?? "");
-  const mblogid = String(r.mblogid ?? r.bid ?? "");
-  return {
+  const mblogid = String(r.mblogid ?? "");
+  return compact({
     id: String(r.idstr ?? r.id ?? ""),
     mblogid,
     url: uid && mblogid ? statusUrl(uid, mblogid) : "",
     text: stripHtml(r.text ?? r.text_raw ?? ""),
-    isLongText: !!r.isLongText,
-    picNum: Number(r.pic_num ?? 0),
+    isLongText: r.isLongText ? true : void 0,
+    picNum: Number(r.pic_num ?? 0) || void 0,
     author: r.user ? toAuthor(r.user) : null,
-    deleted: !r.user
     // retweeted_status with no user means original was deleted
-  };
+    deleted: r.user ? void 0 : true
+  });
 }
 __name(toRetweeted, "toRetweeted");
 function toStatusSummary(raw) {
   const uid = String(raw.user?.id ?? raw.user?.idstr ?? "");
-  const mblogid = String(raw.mblogid ?? raw.bid ?? "");
-  const { picUrls } = collectPicUrls(raw);
-  return {
+  const mblogid = String(raw.mblogid ?? "");
+  return compact({
     id: String(raw.idstr ?? raw.id ?? ""),
-    idstr: String(raw.idstr ?? raw.id ?? ""),
     mblogid,
     url: uid && mblogid ? statusUrl(uid, mblogid) : "",
-    createdAt: parseRfc2822(raw.created_at),
-    createdAtText: String(raw.created_at ?? ""),
+    createdAt: isoTime(raw.created_at),
     text: stripHtml(raw.text ?? raw.text_raw ?? ""),
-    textRaw: String(raw.text_raw ?? ""),
-    isLongText: !!raw.isLongText,
-    textLength: Number(raw.textLength ?? 0),
+    isLongText: raw.isLongText ? true : void 0,
     source: stripHtml(raw.source ?? ""),
-    regionName: String(raw.region_name ?? ""),
+    regionName: String(raw.region_name ?? "").replace(/^发布于\s*/, ""),
     repostsCount: Number(raw.reposts_count ?? 0),
     commentsCount: Number(raw.comments_count ?? 0),
     attitudesCount: Number(raw.attitudes_count ?? 0),
-    picNum: Number(raw.pic_num ?? 0),
-    picUrls,
-    video: raw.page_info?.type === 'video' ? {url:raw.page_info.page_url ?? '',streamUrl:raw.page_info.media_info?.stream_url_hd || raw.page_info.media_info?.stream_url || raw.page_info.urls?.mp4_720p_mp4 || '',duration:raw.page_info.media_info?.duration ?? null} : null,
-    readImages: picUrls.length ? `readStatusImages({id:"${raw.idstr ?? raw.id}",images:[N]})` : undefined,
+    picNum: Math.max(Number(raw.pic_num ?? 0), statusPics(raw).length) || void 0,
     author: toAuthor(raw.user),
     retweeted: toRetweeted(raw.retweeted_status)
-  };
+  });
 }
 __name(toStatusSummary, "toStatusSummary");
 function toStatusFull(raw) {
   const base = toStatusSummary(raw);
-  const { pics } = collectPicUrls(raw);
   const topics = (raw.topic_struct ?? []).map((t) => String(t?.topic_title ?? "").trim()).filter(Boolean);
   const full=raw.longText?.longTextContent ?? raw.longText?.content ?? raw.longTextContent;
   const longText=full ? stripHtml(full) : null;
-  return {
+  return compact({
     ...base,
     ...(longText ? {text:longText} : {}),
-    imageText: pics.map((_,i)=>`[image ${i+1}]`).join(" "),
-    textHtml: String(raw.text ?? ""),
-    longText,
     textComplete:!raw.isLongText || !!longText,
-    topics,
-    pics
-  };
+    topics
+  });
 }
 __name(toStatusFull, "toStatusFull");
 function resolveStatusId(p, fn) {
@@ -265,15 +242,14 @@ async function getHotSearch(params = {}) {
     out.push({
       rank: Number(row.realpos ?? out.length + 1),
       word,
-      wordScheme,
+      wordScheme: wordScheme !== word && wordScheme !== `#${word}#` ? wordScheme : void 0,
       url: `https://s.weibo.com/weibo?q=${encodeURIComponent(queryWord)}`,
       heat: Number(row.num ?? row.raw_hot ?? 0),
       isTopic: row.topic_flag === 1,
       category: row.category ? String(row.category) : void 0,
       labelName: row.label_name ? String(row.label_name) : void 0,
       fieldTag: row.field_tag ? String(row.field_tag) : void 0,
-      onboardTime: row.onboard_time ? Number(row.onboard_time) : void 0,
-      iconUrl: row.icon ? String(row.icon) : void 0
+      onboardTime: isoTime(row.onboard_time ? Number(row.onboard_time) : null) ?? void 0
     });
   }
   return out;
@@ -339,6 +315,54 @@ async function getStatus(params) {
   return toStatusFull(raw);
 }
 __name(getStatus, "getStatus");
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024, MAX_IMAGE_DATA_CHARS = 500_000;
+/** Downscaled JPEG in the image shape hosts attach to the model; sinaimg allows weibo.com page reads. */
+async function modelImage(url) {
+  const response = await fetch(url, { credentials: "same-origin" });
+  if (!response.ok) throw new Error(`Image returned HTTP ${response.status}`);
+  if (Number(response.headers.get("content-length")) > MAX_IMAGE_BYTES) throw new Error("Image exceeds 10 MB");
+  const blob = await response.blob();
+  if (!/^image\/(png|jpeg|webp|gif|avif)$/.test(blob.type)) throw new Error(`Unsupported image type ${blob.type || "unknown"}`);
+  if (blob.size > MAX_IMAGE_BYTES) throw new Error("Image exceeds 10 MB");
+  const bitmap = await createImageBitmap(blob);
+  try {
+    let scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+    for (let attempt = 0; attempt < 4; attempt++, scale *= 0.75) {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#fff"; context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const data = canvas.toDataURL("image/jpeg", attempt ? 0.75 : 0.85).split(",")[1];
+      if (data.length <= MAX_IMAGE_DATA_CHARS) return { type: "image", mimeType: "image/jpeg", data, width: canvas.width, height: canvas.height };
+    }
+    throw new Error("Image is too detailed for the model context");
+  } finally { bitmap.close(); }
+}
+__name(modelImage, "modelImage");
+async function readStatusImages(params) {
+  ensureWeiboHost("readStatusImages");
+  const id = resolveStatusId(params, "readStatusImages");
+  const raw = await fetchJson(`https://weibo.com/ajax/statuses/show?${new URLSearchParams({ id, locale: "zh-CN" })}`);
+  const pics = statusPics(raw);
+  const uid = String(raw.user?.idstr ?? raw.user?.id ?? "");
+  const chosen = params.images ? [...new Set(params.images)] : pics.slice(0, 3).map((_, index) => index + 1);
+  return {
+    id: String(raw.idstr ?? raw.id ?? id),
+    url: uid && raw.mblogid ? statusUrl(uid, raw.mblogid) : "",
+    totalImages: pics.length,
+    images: await Promise.all(chosen.map(async (number) => {
+      const sources = pics[number - 1];
+      if (!sources) return { image: number, error: `The status has ${pics.length} pictures.` };
+      let error;
+      for (const source of sources) {
+        try { return { image: number, url: source, ...await modelImage(source) }; } catch (failure) { error = failure; }
+      }
+      return { image: number, url: sources[0], error: String(error?.message ?? error) };
+    }))
+  };
+}
+__name(readStatusImages, "readStatusImages");
 async function getComments(params) {
   ensureWeiboHost("getComments");
   const mblogid = params.mblogid ?? (params.id != null ? String(params.id) : "");
@@ -378,19 +402,20 @@ async function getComments(params) {
   if (params.orderBy === "time") sp.set("flow", orderByText);
   const json = await fetchJson(`https://weibo.com/ajax/statuses/buildComments?${sp}`,true);
   const offset=params.offset??0;
-  const comments = (json.data ?? []).slice(offset,offset+count).map((c) => ({
-    id: String(c.id ?? ""),
-    idstr: String(c.idstr ?? c.id ?? ""),
-    rootid: String(c.rootidstr ?? c.rootid ?? c.idstr ?? c.id ?? ""),
-    text: stripHtml(c.text ?? c.text_raw ?? ""),
-    createdAt: parseRfc2822(c.created_at),
-    createdAtText: String(c.created_at ?? ""),
-    likeCount: Number(c.like_counts ?? 0),
-    totalReplyNumber: Number(c.total_number ?? 0),
-    source: String(c.source ?? ""),
-    isAuthor: !!c.is_mblog_author,
-    author: toAuthor(c.user)
-  }));
+  const comments = (json.data ?? []).slice(offset,offset+count).map((c) => {
+    const id = String(c.idstr ?? c.id ?? ""), rootid = String(c.rootidstr ?? c.rootid ?? id);
+    return compact({
+      id,
+      rootid: rootid !== id ? rootid : void 0,
+      text: stripHtml(c.text ?? c.text_raw ?? ""),
+      createdAt: isoTime(c.created_at),
+      likeCount: Number(c.like_counts ?? 0),
+      totalReplyNumber: Number(c.total_number ?? 0) || void 0,
+      source: String(c.source ?? ""),
+      isAuthor: c.is_mblog_author ? true : void 0,
+      author: toAuthor(c.user)
+    });
+  });
   return {
     comments,
     nextOffset:offset+comments.length<(json.data?.length??0)?offset+comments.length:null,
@@ -446,27 +471,23 @@ async function getUser(params) {
   if (!u) {
     throw new Error(`weibo.getUser: user not found (${uidParam || customParam})`);
   }
-  const id = String(u.idstr ?? u.id ?? "");
-  return {
+  const id = String(u.id ?? u.idstr ?? "");
+  return compact({
     id,
-    idstr: String(u.idstr ?? id),
     screenName: String(u.screen_name ?? ""),
     url: profileUrl(id),
     description: stripHtml(u.description ?? ""),
     verified: !!u.verified,
     verifiedReason: String(u.verified_reason ?? ""),
     followersCount: Number(u.followers_count ?? 0),
-    followersCountStr: String(u.followers_count_str ?? u.followers_count ?? ""),
     friendsCount: Number(u.friends_count ?? 0),
     statusesCount: Number(u.statuses_count ?? 0),
     gender: u.gender === "m" || u.gender === "f" ? u.gender : "",
     location: String(u.location ?? ""),
-    avatarUrl: String(u.avatar_hd ?? u.avatar_large ?? u.profile_image_url ?? ""),
-    coverImage: u.cover_image_phone ? String(u.cover_image_phone) : void 0,
     domain: String(u.domain ?? ""),
     weihao: String(u.weihao ?? ""),
     following: !!u.following
-  };
+  });
 }
 __name(getUser, "getUser");
 async function getUserStatuses(params) {
@@ -506,7 +527,6 @@ function parseSearchStatuses(doc) {
     const uidMatch = userHref.match(/weibo\.com\/(?:u\/)?(\d+)/);
     const uid = uidMatch?.[1] || "";
     const screenName = userLink?.textContent?.trim() || "";
-    const avatar = card.querySelector(".avator img")?.getAttribute("src") || "";
     const contentNode = card.querySelector('p[node-type="feed_list_content_full"]') || card.querySelector('p[node-type="feed_list_content"]');
     let text = contentNode?.textContent ?? "";
     text = text.replace(/\s*收起\s*d?\s*$/, "").replace(/\s+/g, " ").trim();
@@ -535,25 +555,19 @@ function parseSearchStatuses(doc) {
       const src = img.getAttribute("src");
       if (src && !picUrls.includes(src)) picUrls.push(src);
     });
-    out.push({
-      mid,
+    out.push(compact({
+      id: mid,
       mblogid,
       url: uid && mblogid ? `https://weibo.com/${uid}/${mblogid}` : statusHref,
       text,
-      createdAtText,
+      createdAt: createdAtText,
       source,
       repostsCount,
       commentsCount,
       attitudesCount,
       picUrls,
-      author: {
-        id: uid,
-        idstr: uid,
-        screenName,
-        profileUrl: uid ? profileUrl(uid) : "",
-        avatarUrl: avatar
-      }
-    });
+      author: compact({ id: uid, screenName, profileUrl: uid ? profileUrl(uid) : "" })
+    }));
   }
   return out;
 }
@@ -592,7 +606,6 @@ function parseSearchUsers(doc) {
     const href = nameLink?.getAttribute("href") || "";
     const uid = href.match(/weibo\.com\/u\/(\d+)/)?.[1] || href.match(/weibo\.com\/(\d+)/)?.[1] || "";
     const screenName = nameLink?.textContent?.trim() || "";
-    const avatar = card.querySelector(".avator img")?.getAttribute("src") || "";
     const ps = card.querySelectorAll(".info p");
     const description = ps[0]?.textContent?.replace(/\s+/g, " ").trim() || "";
     const followersText = ps[1]?.textContent?.replace(/\s+/g, " ").trim() || "";
@@ -602,7 +615,6 @@ function parseSearchUsers(doc) {
       uid,
       screenName,
       url: uid ? profileUrl(uid) : "",
-      avatarUrl: avatar,
       description,
       followersText,
       verified
@@ -621,7 +633,7 @@ async function searchUsers(params) {
     if(page!==1)throw new Error('weibo.searchUsers: weibo.com provides a first-page user suggestion list, not a paginated user directory.');
     const json=await fetchJson(`${location.origin}/ajax/side/search?${new URLSearchParams({q:params.query})}`);
     if(!Array.isArray(json.data?.users))throw new Error('weibo.searchUsers: native API returned no users array; this is not an empty successful search.');
-    return json.data.users.map(u=>({uid:String(u.idstr??u.id??u.uid??''),screenName:String(u.screen_name??u.name??''),url:profileUrl(u.idstr??u.id??u.uid),avatarUrl:u.profile_image_url??u.avatar_large??'',description:stripHtml(u.description??''),verified:!!u.verified,scope:'user_suggestions'}));
+    return json.data.users.map(u=>({uid:String(u.idstr??u.id??u.uid??''),screenName:String(u.screen_name??u.name??''),url:profileUrl(u.idstr??u.id??u.uid),description:stripHtml(u.description??''),verified:!!u.verified,scope:'user_suggestions'}));
   }
   ensureSearchHost("searchUsers");
   const sp = new URLSearchParams({ q: params.query, page: String(page) });
@@ -642,77 +654,6 @@ function assertSearchPage(doc){
   return true;
 }
 
-// Mobile container shapes follow qinyuanpei/mcp-server-weibo 1.3.4 (MIT),
-// commit a98f61159004442d342e02099db5c57e4cd24755. Long text also follows RicterZ d75ca20.
-// Use the browser's m.weibo.cn session.
-function mobileHost() {
-  if(location.hostname!=="m.weibo.cn")throw new Error("此接口在 m.weibo.cn 标签页调用。");
-}
-const mobilePosts = new Map();
-function rememberPost(raw) { mobilePosts.set(String(raw.idstr ?? raw.id), raw); return toStatusSummary(raw); }
-function cardItems(cards) {
-  return cards.flatMap(card => [card,...cardItems(card.card_group ?? [])]);
-}
-async function mobileContainer(params) {
-  mobileHost();
-  return fetchJson(`${location.origin}/api/container/getIndex?${new URLSearchParams(params)}`,true);
-}
-async function searchMobile(params) {
-  const types={posts:1,users:3,topics:38,latest:61,hot:60,images:63,videos:64};
-  const json=await mobileContainer({containerid:`100103type=${types[params.type]}&q=${params.query}`,page_type:"searchall",page:String(params.page)});
-  const cards=cardItems(json.data?.cards ?? []);
-  let items;
-  if(!["users","topics"].includes(params.type))items=cards.filter(c=>c.card_type===9 && c.mblog).map(c=>rememberPost(c.mblog));
-  else if(params.type==="users")items=cards.filter(c=>c.user).map(c=>toAuthor(c.user));
-  else items=cards.filter(c=>c.title_sub || c.title || c.desc).map(c=>({title:stripHtml(c.title_sub ?? c.title ?? c.desc),description:stripHtml(c.desc1 ?? c.desc2 ?? ''),url:c.scheme ?? ''}));
-  const info=json.data?.cardlistInfo ?? {};
-  return {items:items.slice(params.offset,params.offset+params.limit),page:params.page,nextOffset:params.offset+params.limit<items.length?params.offset+params.limit:null,nextPage:info.page ?? null,cardlistInfo:info};
-}
-async function getMobileRelations(params) {
-  // Upstream calls the followings container "followers"; keep direction explicit here.
-  const type=params.direction==="following"?"followers":"fans";
-  const json=await mobileContainer({containerid:`231051_-_${type}_-_${params.uid}`,...(params.sinceId?{since_id:String(params.sinceId)}:{page:String(params.page)})});
-  const users=cardItems(json.data?.cards ?? []).filter(c=>c.user).map(c=>toAuthor(c.user));
-  return {users:users.slice(params.offset,params.offset+params.limit),direction:params.direction,page:params.page,nextOffset:params.offset+params.limit<users.length?params.offset+params.limit:null,nextPage:json.data?.cardlistInfo?.page ?? null,nextSinceId:json.data?.cardlistInfo?.since_id ?? null,cardlistInfo:json.data?.cardlistInfo ?? {}};
-}
-async function getMobileProfile(params) {
-  const json=await mobileContainer({type:"uid",value:String(params.uid)});
-  const user=json.data?.userInfo;
-  return {user:{...toAuthor(user),description:user?.description ?? "",followingCount:user?.follow_count,followersCount:user?.followers_count,statusesCount:user?.statuses_count},tabs:json.data?.tabsInfo?.tabs ?? []};
-}
-async function getMobileStatuses(params) {
-  const profile=await getMobileProfile(params);
-  const tab=profile.tabs.find(t=>t.tab_type==="weibo");
-  const json=await mobileContainer({type:"uid",value:String(params.uid),containerid:tab.containerid,...(params.sinceId?{since_id:params.sinceId}:{})});
-  const statuses=cardItems(json.data?.cards ?? []).filter(c=>c.card_type===9 && c.mblog).map(c=>rememberPost(c.mblog));
-  return {statuses,nextSinceId:json.data?.cardlistInfo?.since_id ?? null};
-}
-// Long-text endpoint verified against RicterZ/mcp-server-weibo d75ca20 (2026-10-28).
-async function getMobilePost(params) {
-  mobileHost();
-  const id=resolveStatusId(params,'getMobilePost');
-  const raw=mobilePosts.get(id) || [...mobilePosts.values()].find(post=>post.bid===id);
-  if(!raw)throw new Error('先通过 searchMobile 或 getMobileStatuses 读取包含此微博的一页，再传其 id。');
-  const result=toStatusFull(raw);
-  if(raw.isLongText && params.includeLongText!==false){
-    const json=await fetchJson(`${location.origin}/statuses/extend?${new URLSearchParams({id:String(raw.idstr ?? raw.id)})}`,true);
-    const data=json.data;
-    const text=data?.longTextContent_raw || data?.longTextContent;
-    if(text){result.text=data.longTextContent_raw || stripHtml(text);result.longText=result.text;result.textComplete=true;}
-  }
-  return result;
-}
-async function getMobileComments(params) {
-  mobileHost();
-  const json=await fetchJson(`${location.origin}/api/comments/show?${new URLSearchParams({id:String(params.id),page:String(params.page)})}`,true);
-  return {comments:(json.data?.data ?? []).map(c=>({id:String(c.idstr ?? c.id),text:stripHtml(c.text),author:toAuthor(c.user),likeCount:Number(c.like_count ?? 0),replyCount:Number(c.total_number ?? 0)})),page:params.page,max:json.data?.max ?? null};
-}
-async function readStatusImages(params) {
-  const status=location.hostname==='m.weibo.cn'?await getMobilePost({...params,includeLongText:false}):await getStatus({...params,includeLongText:false});
-  const selected=params.images ?? status.picUrls.map((_,i)=>i+1);
-  return {imageContext:{requested:true,delivery:"urls_only_until_host_attaches",images:selected.map(n=>{const url=status.picUrls[n-1];if(!url)throw new Error(`图片 ${n} 不存在；该微博共 ${status.picUrls.length} 张。`);return {image:n,url};})}};
-}
-
 const identifier=z.union([z.string().regex(/^[a-zA-Z0-9]+$/),z.number().int().positive()]);
 const cursor=z.union([z.string().regex(/^[a-zA-Z0-9]+$/),z.number().int().min(0)]);
 const page=z.number().int().min(1).max(10000).default(1);
@@ -722,17 +663,11 @@ const statusArgs={id:identifier.optional(),mblogid:z.string().regex(/^[a-zA-Z0-9
 const userArgs={uid:z.union([z.string().regex(/^\d+$/),z.number().int().positive()])};
 function reader(summary,input,handler){return fn({summary,input,handler:raw=>handler(input.parse(raw??{}))});}
 export default defineSkill({
-  getMobilePost:reader('Expand a previously read mobile post using /statuses/extend; preserves exact images and reports textComplete.',z.object({...statusArgs,includeLongText:z.boolean().default(true)}),getMobilePost),
-  searchMobile:reader('m.weibo.cn container search: posts/latest/hot/images/videos/users/topics, native page and cardlistInfo; offset continues the same page.',z.object({query:z.string().min(1),type:z.enum(['posts','latest','hot','images','videos','users','topics']).default('posts'),page,offset,limit:count(20,50)}),searchMobile),
-  getMobileProfile:reader('m.weibo.cn userInfo and profile tabs (container IDs).',z.object(userArgs),getMobileProfile),
-  getMobileStatuses:reader('m.weibo.cn profile feed using its actual weibo tab container ID and since_id.',z.object({...userArgs,sinceId:cursor.optional()}),getMobileStatuses),
-  getMobileRelations:reader('m.weibo.cn following or fans, with native cardlistInfo and same-page offset.',z.object({...userArgs,direction:z.enum(['following','fans']),sinceId:cursor.optional(),page,offset,limit:count(20,50)}),getMobileRelations),
-  getMobileComments:reader('m.weibo.cn /api/comments/show: numeric post ID and native page.',z.object({id:identifier,page}),getMobileComments),
-  readStatusImages:reader('Resolve selected original image URLs for the extension background; image numbers start at 1.',z.object({...statusArgs,images:z.array(z.number().int().positive()).optional()}),readStatusImages),
   getHotSearch:reader('GET /ajax/statuses/hot_band: hot search words.',z.object({limit:count(20,50)}),getHotSearch),
   getHotTimeline:reader('GET /ajax/feed/hottimeline: discover feed, native group and cursor options.',z.object({groupId:identifier.optional(),count:count(20),sinceId:cursor.optional(),maxId:cursor.optional()}),getHotTimeline),
   getFriendsTimeline:reader('GET /ajax/feed/friendstimeline: signed-in following feed. Native listId/maxId choose a group or continuation.',z.object({count:count(20,50),listId:z.string().optional(),maxId:cursor.optional()}),getFriendsTimeline),
   getStatus:reader('GET /ajax/statuses/show: mblogid (base62) or numeric id. includeLongText (default true) uses the native /statuses/longtext endpoint when needed; false reads only the preview. textComplete reports actual coverage.',z.object({...statusArgs,includeLongText:z.boolean().default(true)}),getStatus),
+  readStatusImages:reader('Attach up to three pictures of one status so you can see them; statuses report picNum. A repost\'s pictures belong to retweeted.id.',z.object({...statusArgs,images:z.array(z.number().int().min(1)).min(1).max(3).optional().describe('1-based picture numbers. Default: the first three.')}),readStatusImages),
   getComments:reader('GET /ajax/statuses/buildComments. Pass numeric id + author uid to avoid an extra status lookup, or mblogid/id alone. Consume nextOffset with the SAME input maxId before following returned maxId; 30-second page snapshot.',z.object({...statusArgs,uid:userArgs.uid.optional(),count:count(),offset,maxId:cursor.optional(),orderBy:z.enum(['hot','time']).default('hot')}),getComments),
   getReposts:reader('GET /ajax/statuses/repostTimeline: page and count; consume nextOffset on this server page before nextPage. 30-second page snapshot.',z.object({...statusArgs,page,count:count(),offset}),getReposts),
   getUser:reader('GET /ajax/profile/info: numeric uid or custom vanity domain.',z.object({uid:userArgs.uid.optional(),custom:z.string().min(1).max(100).optional()}),getUser),
@@ -740,4 +675,4 @@ export default defineSkill({
   getUserHotStatuses:reader('GET /ajax/profile/myhot: popular posts for a user by page. Local offset/limit slice that server page; a partial array is not full history.',z.object({...userArgs,page,offset,limit:count(20,50)}),getUserHotStatuses),
   searchStatuses:reader('Search directly on weibo.com with GET /ajax/statuses/search: q, page, count, atten=0 (all users, not just followed accounts). No navigation. Native order is chronological (time/default); hot is only available when already on s.weibo.com. Returns status summaries; use getStatus for complete long text.',z.object({query:z.string().trim().min(1).max(200),page,count:count(20,50),sortBy:z.enum(['hot','time','default']).default('time')}),searchStatuses),
   searchUsers:reader('weibo.com: GET /ajax/side/search user suggestions, page 1 only (not a complete directory). An existing s.weibo.com tab uses its paginated SSR user search.',z.object({query:z.string().trim().min(1).max(200),page}),searchUsers),
-},{instructions:'weibo.com 使用原有桌面接口；m.weibo.cn 使用 Mobile 系列接口和 searchMobile。移动搜索 type 支持 posts/latest/hot/images/videos/users/topics。nextOffset 先读完同一页，再按 nextPage 或 nextSinceId 续读。getMobileStatuses 使用 profile 返回的实际微博 tab containerid。图片调用 readStatusImages，后台负责传递像素。'});
+},{instructions:"For discussion summaries, default to the original post plus roughly the first 30 and latest 100 replies, deduplicating overlaps; follow user-specified ranges. On weibo.com, use searchStatuses({query,sortBy:\"time\"}) for direct same-origin search. Search keyword variations, then use getStatus/getComments for details. Existing s.weibo.com tabs use the SSR adapter. Consume nextOffset on the same page/cursor before advancing. Statuses report picNum; when the pictures matter, readStatusImages attaches them. Cite original URLs."});

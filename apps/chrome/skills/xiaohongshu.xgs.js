@@ -1,15 +1,16 @@
 // ==XGooseSkill==
 // @name        xiaohongshu
 // @namespace   xhs
-// @version     0.2.1
-// @description 小红书搜索与排序、笔记正文和图片、评论加载、用户主页；使用当前浏览器页面会话。
+// @version     0.1.1
+// @description 小红书 (xiaohongshu.com / RedNote) read-only reader. Pulls home feed / note detail (full body + tags + images + ≤10 root comments + sub-replies) / search results / user profile out of the page's hydrated `__INITIAL_STATE__`. Avoids the signed `/api/sns/web/v1/*` chain entirely (anti-bot `x-s-common` is obfuscated). Reply to the user in Chinese (中文).
 // @match       *://www.xiaohongshu.com/*
 // @match       *://xiaohongshu.com/*
-// @detect      location.hostname.endsWith('xiaohongshu.com')
+// @match       *://www.rednote.com/*
+// @detect      location.hostname.endsWith('xiaohongshu.com') || location.hostname.endsWith('rednote.com')
 // @run-at      document_idle
 // @connect     <self>
 // @connect     edith.xiaohongshu.com
-// @primary     readNote
+// @primary     getCurrentUser
 // @keyword     xiaohongshu
 // @keyword     小红书
 // @keyword     RedNote
@@ -22,9 +23,15 @@
 // @keyword     xsec_token
 // ==/XGooseSkill==
 
-// Page-state access follows xpzouying/xiaohongshu-mcp (Apache-2.0):
-// https://github.com/xpzouying/xiaohongshu-mcp/tree/7797fd375aba02dcd33afe143f6bee13e5870859/xiaohongshu
-// Navigation is returned as a continuation so a full document change cannot lose a skill call.
+/**
+ * 小红书 (xiaohongshu.com / RedNote) read-only reader. Pulls home feed / note detail (full body + tags + images + ≤10 root comments + sub-replies) / search results / user profile out of the page's hydrated `__INITIAL_STATE__`. Avoids the signed `/api/sns/web/v1/*` chain entirely (anti-bot `x-s-common` is obfuscated). Reply to the user in Chinese (中文).
+ *
+ * Migrated from webagent v0.1; runtime preserved verbatim. Per-fn input
+ * schemas are intentionally widened to z.any() — refine with concrete Zod
+ * schemas in a follow-up (see the original SKILL.md for parameter types).
+ * # 小红书 (Xiaohongshu / RedNote) — Schema Reference
+ * > **Read this BEFORE calling any function.** The skill activates on `*.xiaohongshu.com`. It is **read-only and page-state driven**: every entrypoint either reads from `window.__INITIAL_STATE__` of the currently-loaded page, or — for the single login probe — hits `edith.xiaohongshu.com/api/sns/web/v2/user/me`, the one canonical endpoint that 200s without xhs's signed-header chain. **Do not** try to call `/api/sns/web/v1/homefeed`, `/api/sns/web/v1/search/notes`, `/api/sns/web/v1/feed` or anything else from the `signIncludesUrl` list — they 403 with `code: 300011 "Account abnormal"` unless you reproduce both `x-s` (which `window._webmsxyw` produces) **and** `x-s-common` (the device-fingerprint signature, buried inside an obfuscated webpack module and not safe to re-implement). The page itself does the signing; we ride along on the data it already paints.
+ */
 
 import { defineSkill, fn } from '@xgoose/skill';
 import { z } from 'zod';
@@ -35,8 +42,9 @@ const ME_URL = "https://edith.xiaohongshu.com/api/sns/web/v2/user/me";
 function unwrap(v) {
   if (v == null) return v;
   if (typeof v !== "object") return v;
-  if (v.__v_isRef || "_value" in v) return v.value ?? v._value ?? v._rawValue;
-  if ("value" in v && Object.keys(v).length === 1) return v.value;
+  if ("_value" in v && "_rawValue" in v) {
+    return v._value ?? v._rawValue;
+  }
   return v;
 }
 __name(unwrap, "unwrap");
@@ -59,6 +67,17 @@ function parseCount(s) {
   return Math.round(base);
 }
 __name(parseCount, "parseCount");
+/** Xiaohongshu epoch milliseconds as ISO time; null when absent. */
+function isoTime(ms) {
+  const n = Number(ms);
+  return n > 0 ? new Date(n).toISOString() : null;
+}
+__name(isoTime, "isoTime");
+/** Drops absent and empty fields; zero counts and explicit false stay. */
+function compact(record) {
+  return Object.fromEntries(Object.entries(record).filter(([, v]) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && !v.length)));
+}
+__name(compact, "compact");
 function getState() {
   if (typeof window === "undefined") throw new Error("xhs: no window object");
   const s = window.__INITIAL_STATE__;
@@ -68,35 +87,43 @@ function getState() {
 __name(getState, "getState");
 function ensureHost(fn) {
   if (typeof location === "undefined") return;
-  if (!/(^|\.)xiaohongshu\.com$/.test(location.hostname)) {
-    throw new Error(`xhs.${fn}: must be called from a xiaohongshu.com tab (got ${location.hostname})`);
+  if (!/(^|\.)(xiaohongshu|rednote)\.com$/.test(location.hostname)) {
+    throw new Error(`xhs.${fn}: must be called from a xiaohongshu.com or rednote.com tab (got ${location.hostname})`);
   }
 }
 __name(ensureHost, "ensureHost");
+/** Page state lists CDN pictures as http://, which an https page may not load. */
+function https(url) {
+  return String(url ?? "").replace(/^http:\/\//, "https://");
+}
+__name(https, "https");
 function bestImageUrl(infoList) {
   if (!Array.isArray(infoList) || !infoList.length) return "";
   const dft = infoList.find((i) => i?.imageScene === "WB_DFT")?.url;
-  if (dft) return String(dft);
+  if (dft) return https(dft);
   const prv = infoList.find((i) => i?.imageScene === "WB_PRV")?.url;
-  return String(prv ?? infoList[0]?.url ?? "");
+  return https(prv ?? infoList[0]?.url ?? "");
 }
 __name(bestImageUrl, "bestImageUrl");
 function toAuthor(u) {
-  if (!u) return { userId: "", nickname: "", xsecToken: "" };
-  return {
+  if (!u) return { userId: "", nickname: "" };
+  return compact({
     userId: String(u.userId ?? u.user_id ?? u.id ?? ""),
     nickname: String(u.nickname ?? u.nickName ?? u.name ?? ""),
-    avatarUrl: u.avatar ?? u.image ?? u.images ?? void 0,
     xsecToken: String(u.xsecToken ?? u.xsec_token ?? "")
-  };
+  });
 }
 __name(toAuthor, "toAuthor");
+function siteOrigin() {
+  return typeof location !== "undefined" && location.hostname.endsWith("rednote.com") ? "https://www.rednote.com" : "https://www.xiaohongshu.com";
+}
+__name(siteOrigin, "siteOrigin");
 function buildNoteUrl(noteId, xsecToken, source = "pc_feed") {
   if (!noteId) return "";
   const qs = new URLSearchParams();
   if (xsecToken) qs.set("xsec_token", xsecToken);
   if (source) qs.set("xsec_source", source);
-  return `https://www.xiaohongshu.com/explore/${noteId}?${qs.toString()}`;
+  return `${siteOrigin()}/explore/${noteId}?${qs.toString()}`;
 }
 __name(buildNoteUrl, "buildNoteUrl");
 function buildUserUrl(userId, xsecToken, source = "pc_feed") {
@@ -104,48 +131,45 @@ function buildUserUrl(userId, xsecToken, source = "pc_feed") {
   const qs = new URLSearchParams();
   if (xsecToken) qs.set("xsec_token", xsecToken);
   if (source) qs.set("xsec_source", source);
-  return `https://www.xiaohongshu.com/user/profile/${userId}?${qs.toString()}`;
+  return `${siteOrigin()}/user/profile/${userId}?${qs.toString()}`;
 }
 __name(buildUserUrl, "buildUserUrl");
 function toFeedCard(raw) {
   const nc = raw?.noteCard ?? {};
   const interact = nc.interactInfo ?? {};
-  const cover = nc.cover ?? {};
   const url = buildNoteUrl(raw?.id ?? raw?.noteId ?? "", raw?.xsecToken ?? nc.xsecToken ?? "");
-  const coverUrl = String(cover.urlDefault || cover.url || bestImageUrl(cover.infoList) || cover.urlPre || "");
-  return {
+  const modelType = String(raw?.modelType ?? "note");
+  return compact({
     noteId: String(raw?.id ?? raw?.noteId ?? nc.noteId ?? ""),
-    xsecToken: String(raw?.xsecToken ?? nc.xsecToken ?? ""),
-    modelType: String(raw?.modelType ?? "note"),
+    modelType: modelType !== "note" ? modelType : void 0,
     noteType: String(nc.type ?? "normal"),
     displayTitle: String(nc.displayTitle ?? nc.title ?? ""),
     url,
-    coverUrl,
-    coverWidth: Number(cover.width ?? 0),
-    coverHeight: Number(cover.height ?? 0),
     likedCount: parseCount(interact.likedCount),
-    likedCountText: String(interact.likedCount ?? "0"),
     commentCount: interact.commentCount != null ? parseCount(interact.commentCount) : void 0,
     collectedCount: interact.collectedCount != null ? parseCount(interact.collectedCount) : void 0,
-    liked: !!interact.liked,
     author: toAuthor(nc.user)
-  };
+  });
 }
 __name(toFeedCard, "toFeedCard");
+/** Pictures stay on the note: open its url, then readNoteImages. */
 function toSearchHit(raw) {
-  const base = toFeedCard(raw);
-  const nc = raw?.noteCard ?? {};
-  const imageUrls = [];
-  for (const img of nc.imageList ?? []) {
-    const u = bestImageUrl(img?.infoList);
-    if (u) imageUrls.push(u);
-  }
-  if (!imageUrls.length && base.coverUrl) imageUrls.push(base.coverUrl);
-  return { ...base, imageUrls };
+  return compact({ ...toFeedCard(raw), imageCount: (raw?.noteCard?.imageList ?? []).length || void 0 });
 }
 __name(toSearchHit, "toSearchHit");
 async function getCurrentUser() {
   ensureHost("getCurrentUser");
+  const user = window.__INITIAL_STATE__?.user, info = unwrap(user?.userInfo);
+  if (info && (info.user_id || info.userId || info.guest != null)) {
+    return {
+      loggedIn: unwrap(user.loggedIn) === true && info.guest !== true,
+      userId: String(info.user_id ?? info.userId ?? ""),
+      redId: String(info.red_id ?? info.redId ?? ""),
+      nickname: String(info.nickname ?? ""),
+      description: String(info.desc ?? ""),
+      gender: Number(info.gender ?? 0)
+    };
+  }
   const r = await fetch(ME_URL, { credentials: "include", headers: { Accept: "application/json" } });
   if (!r.ok) throw new Error(`xhs.getCurrentUser: GET ${ME_URL} \u2192 HTTP ${r.status}`);
   const j = await r.json();
@@ -155,7 +179,6 @@ async function getCurrentUser() {
     userId: String(d.user_id ?? ""),
     redId: String(d.red_id ?? ""),
     nickname: String(d.nickname ?? ""),
-    avatarUrl: String(d.imageb ?? d.images ?? ""),
     description: String(d.desc ?? ""),
     gender: Number(d.gender ?? 0)
   };
@@ -177,40 +200,41 @@ function getHomeFeed() {
   return { url: location.href, channelId, feeds, status: "ok" };
 }
 __name(getHomeFeed, "getHomeFeed");
-function getCurrentNote(params = {}) {
-  ensureHost("getCurrentNote");
+function currentNote(fn) {
+  ensureHost(fn);
   const s = getState();
   const noteState = s?.note;
   if (!noteState) {
-    throw new Error("xhs.getCurrentNote: page has no note state \u2014 must be called from /explore/{noteId}");
+    throw new Error(`xhs.${fn}: page has no note state \u2014 must be called from /explore/{noteId}`);
   }
   const map = unwrap(noteState.noteDetailMap);
-  const currentId = params.noteId ?? location.pathname.match(/\/(?:explore|discovery\/item)\/([^/?]+)/)?.[1] ?? unwrap(noteState.currentNoteId);
+  const currentId = unwrap(noteState.currentNoteId);
   if (!currentId || !map || !map[currentId]) {
     throw new Error(
-      "xhs.getCurrentNote: no current note. Navigate the tab to https://www.xiaohongshu.com/explore/{noteId}?xsec_token=... first."
+      `xhs.${fn}: no current note. Navigate the tab to https://www.xiaohongshu.com/explore/{noteId}?xsec_token=... first.`
     );
   }
-  const detail = unwrap(map[currentId]);
-  const note = unwrap(detail?.note);
+  const detail = map[currentId];
+  const note = detail?.note;
   if (!note) {
-    throw new Error(`xhs.getCurrentNote: note ${currentId} missing in noteDetailMap (load failed?)`);
+    throw new Error(`xhs.${fn}: note ${currentId} missing in noteDetailMap (load failed?)`);
   }
-  const pageImages = [...document.querySelectorAll(".note-container .swiper-slide img, #noteContainer .swiper-slide img")];
-  const imgs = (note.imageList ?? []).map((img, index) => {
-    const pageImage = pageImages[index];
-    const url = bestImageUrl(img.infoList) || String(img.urlDefault ?? img.url ?? img.urlPre ?? pageImage?.currentSrc ?? pageImage?.src ?? "");
-    return { image: 0, url, width: Number(img.width ?? 0), height: Number(img.height ?? 0) };
-  });
-  imgs.forEach((img, i) => img.image = i + 1);
-  const token = note.xsecToken || new URL(location.href).searchParams.get("xsec_token") || "";
+  return { note, currentId };
+}
+__name(currentNote, "currentNote");
+function noteImageUrl(img) {
+  return bestImageUrl(img?.infoList) || https(img?.urlDefault ?? img?.url ?? "");
+}
+__name(noteImageUrl, "noteImageUrl");
+function getCurrentNote() {
+  const { note, currentId } = currentNote("getCurrentNote");
   let video = null;
   if (note.video) {
     const v = note.video;
     const url = v?.media?.stream?.h264?.[0]?.masterUrl ?? v?.media?.stream?.h265?.[0]?.masterUrl ?? v?.media?.stream?.h266?.[0]?.masterUrl ?? v?.media?.stream?.av1?.[0]?.masterUrl ?? "";
     if (url) {
       video = {
-        url: String(url),
+        url: https(url),
         width: Number(v.capa?.width ?? 0),
         height: Number(v.capa?.height ?? 0),
         durationSec: Number(v.capa?.duration ?? 0)
@@ -218,46 +242,80 @@ function getCurrentNote(params = {}) {
     }
   }
   const interact = note.interactInfo ?? {};
-  return {
+  const createdAt = isoTime(note.time), updatedAt = isoTime(note.lastUpdateTime);
+  return compact({
     noteId: String(note.noteId ?? currentId),
-    xsecToken: String(token),
-    url: buildNoteUrl(String(note.noteId ?? currentId), String(token)),
+    xsecToken: String(note.xsecToken ?? ""),
+    url: buildNoteUrl(String(note.noteId ?? currentId), String(note.xsecToken ?? "")),
     type: String(note.type ?? "normal"),
     title: String(note.title ?? ""),
     desc: String(note.desc ?? ""),
     tags: (note.tagList ?? []).map((t) => String(t.name ?? "")).filter(Boolean),
-    text: [note.desc || "", ...imgs.map(img => `[image ${img.image}]`)].join("\n"),
-    images: imgs,
-    readImages: imgs.length ? `readNoteImages({noteId:"${currentId}",images:[N]})` : undefined,
+    imageCount: (note.imageList ?? []).length || void 0,
     video,
     ipLocation: String(note.ipLocation ?? ""),
-    createdAt: Number(note.time ?? 0),
-    updatedAt: Number(note.lastUpdateTime ?? note.time ?? 0),
+    createdAt,
+    updatedAt: updatedAt !== createdAt ? updatedAt : null,
     likedCount: parseCount(interact.likedCount),
-    likedCountText: String(interact.likedCount ?? "0"),
     commentCount: parseCount(interact.commentCount),
     collectedCount: parseCount(interact.collectedCount),
     sharedCount: parseCount(interact.shareCount ?? interact.sharedCount ?? "0"),
-    liked: !!interact.liked,
-    collected: !!interact.collected,
-    followed: !!interact.followed,
     author: toAuthor(note.user)
-  };
+  });
 }
 __name(getCurrentNote, "getCurrentNote");
-function toComment(c) {
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024, MAX_IMAGE_DATA_CHARS = 500_000;
+/** Downscaled JPEG in the image shape hosts attach to the model; the CDN allows page reads. */
+async function modelImage(url) {
+  const response = await fetch(url, { credentials: "same-origin" });
+  if (!response.ok) throw new Error(`Image returned HTTP ${response.status}`);
+  if (Number(response.headers.get("content-length")) > MAX_IMAGE_BYTES) throw new Error("Image exceeds 10 MB");
+  const blob = await response.blob();
+  if (!/^image\/(png|jpeg|webp|gif|avif|heic)$/.test(blob.type)) throw new Error(`Unsupported image type ${blob.type || "unknown"}`);
+  if (blob.size > MAX_IMAGE_BYTES) throw new Error("Image exceeds 10 MB");
+  const bitmap = await createImageBitmap(blob);
+  try {
+    let scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+    for (let attempt = 0; attempt < 4; attempt++, scale *= 0.75) {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#fff"; context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const data = canvas.toDataURL("image/jpeg", attempt ? 0.75 : 0.85).split(",")[1];
+      if (data.length <= MAX_IMAGE_DATA_CHARS) return { type: "image", mimeType: "image/jpeg", data, width: canvas.width, height: canvas.height };
+    }
+    throw new Error("Image is too detailed for the model context");
+  } finally { bitmap.close(); }
+}
+__name(modelImage, "modelImage");
+async function readNoteImages(params = {}) {
+  const { note, currentId } = currentNote("readNoteImages");
+  const list = note.imageList ?? [];
+  const chosen = params.images ? [...new Set(params.images)] : list.slice(0, 3).map((_, index) => index + 1);
   return {
+    noteId: String(note.noteId ?? currentId),
+    totalImages: list.length,
+    images: await Promise.all(chosen.map(async (number) => {
+      const url = noteImageUrl(list[number - 1]);
+      if (!url) return { image: number, error: `The note has ${list.length} images.` };
+      try { return { image: number, url, ...await modelImage(url) }; }
+      catch (failure) { return { image: number, url, error: String(failure?.message ?? failure) }; }
+    }))
+  };
+}
+__name(readNoteImages, "readNoteImages");
+function toComment(c) {
+  return compact({
     id: String(c.id ?? ""),
     content: String(c.content ?? ""),
     ipLocation: String(c.ipLocation ?? ""),
-    createdAt: Number(c.createTime ?? 0),
+    createdAt: isoTime(c.createTime),
     likeCount: parseCount(c.likeCount),
-    likeCountText: String(c.likeCount ?? "0"),
-    subCommentCount: parseCount(c.subCommentCount ?? c.subCommentsCount ?? "0"),
-    liked: !!c.liked,
-    isAuthor: !!c.atUserAuthor || !!c.isAuthor,
-    author: toAuthor(c.userInfo)
-  };
+    subCommentCount: parseCount(c.subCommentCount ?? c.subCommentsCount ?? "0") || void 0,
+    isAuthor: c.atUserAuthor || c.isAuthor ? true : void 0,
+    author: compact({ ...toAuthor(c.userInfo), xsecToken: void 0 })
+  });
 }
 __name(toComment, "toComment");
 function getNoteComments(params = {}) {
@@ -265,22 +323,21 @@ function getNoteComments(params = {}) {
   const s = getState();
   const noteState = s?.note;
   const map = noteState ? unwrap(noteState.noteDetailMap) : null;
-  const currentId = params.noteId ?? location.pathname.match(/\/(?:explore|discovery\/item)\/([^/?]+)/)?.[1] ?? (noteState ? unwrap(noteState.currentNoteId) : null);
+  const currentId = noteState ? unwrap(noteState.currentNoteId) : null;
   if (!currentId || !map?.[currentId]) {
     throw new Error("xhs.getNoteComments: no current note. Navigate to /explore/{noteId} first.");
   }
-  const cs = unwrap(map[currentId].comments) ?? {};
+  const cs = map[currentId].comments ?? {};
   const listRaw = unwrap(cs.list);
   const hasMore = !!unwrap(cs.hasMore);
   const cursor = String(unwrap(cs.cursor) ?? "");
   const limit = Math.max(1, params.limit ?? 10);
-  const offset = params.offset ?? 0;
-  const list = (Array.isArray(listRaw) ? listRaw : []).slice(offset, offset + limit).map((c) => {
+  const list = (Array.isArray(listRaw) ? listRaw : []).slice(0, limit).map((c) => {
     const base = toComment(c);
     const replies = (c.subComments ?? []).map((rc) => toComment(rc));
-    return { ...base, replies };
+    return compact({ ...base, replies });
   });
-  return { noteId: currentId, comments: list, hasMore, cursor, loaded: listRaw?.length ?? 0, nextOffset: offset + list.length };
+  return { comments: list, hasMore, cursor };
 }
 __name(getNoteComments, "getNoteComments");
 function getCurrentSearch() {
@@ -324,25 +381,23 @@ function getCurrentUserProfile() {
   const fans = pick("fans");
   const inter = pick("interaction");
   const notesObj = unwrap(us.notes);
-  const activeTab = unwrap(us.activeTab) ?? {index: 0, query: "note"};
-  const activeNotes = Array.isArray(notesObj?.[activeTab.index ?? 0]) ? notesObj[activeTab.index ?? 0] : [];
-  const flatNotes = activeNotes.map(toFeedCard);
+  const allColumns = notesObj && typeof notesObj === "object" ? Object.values(notesObj) : [];
+  const flatNotes = [];
+  for (const col of allColumns) {
+    if (Array.isArray(col)) for (const n of col) flatNotes.push(toFeedCard(n));
+  }
+  flatNotes.sort((a, b2) => 0);
   return {
     userId: String(b.userId ?? userIdFromUrl),
     redId: String(b.redId ?? ""),
     nickname: String(b.nickname ?? ""),
     description: String(b.desc ?? ""),
-    avatarUrl: String(b.imageb ?? b.images ?? ""),
     gender: Number(b.gender ?? 0),
     ipLocation: String(b.ipLocation ?? ""),
     followsCount: parseCount(follows?.count),
     fansCount: parseCount(fans?.count),
     interactionCount: parseCount(inter?.count),
-    followsCountText: String(follows?.i18nCount ?? follows?.count ?? "0"),
-    fansCountText: String(fans?.i18nCount ?? fans?.count ?? "0"),
-    interactionCountText: String(inter?.i18nCount ?? inter?.count ?? "0"),
     tags: (upd.tags ?? []).map((t) => ({ name: String(t.name ?? ""), tagType: String(t.tagType ?? "") })),
-    tab: activeTab.query || "note",
     notes: flatNotes.filter((n) => n.noteId),
     url: location.href,
     status: "ok"
@@ -355,15 +410,11 @@ function blankProfile(status) {
     redId: "",
     nickname: "",
     description: "",
-    avatarUrl: "",
     gender: 0,
     ipLocation: "",
     followsCount: 0,
     fansCount: 0,
     interactionCount: 0,
-    followsCountText: "0",
-    fansCountText: "0",
-    interactionCountText: "0",
     tags: [],
     notes: [],
     url: typeof location !== "undefined" ? location.href : "",
@@ -371,9 +422,36 @@ function blankProfile(status) {
   };
 }
 __name(blankProfile, "blankProfile");
+const SORT_BY_MAP = {
+  general: "general",
+  time_descending: "time_descending",
+  popularity_descending: "popularity_descending"
+};
+const NOTE_TYPE_MAP = {
+  all: "0",
+  video: "1",
+  image: "2"
+};
+const PUBLISH_TIME_MAP = {
+  all: "all",
+  one_day: "one_day",
+  one_week: "one_week",
+  half_year: "half_year"
+};
 function searchUrl(params) {
-  return `https://www.xiaohongshu.com/search_result?${new URLSearchParams({keyword: params.keyword, source: "web_explore_feed", type: "51"})}`;
+  if (!params || !params.keyword) throw new Error("xhs.searchUrl: pass { keyword, sortBy?, noteType?, publishTime? }");
+  const qs = new URLSearchParams({
+    keyword: params.keyword,
+    source: "web_explore_feed",
+    type: "51"
+    // 'note' results — the most useful default
+  });
+  if (params.sortBy && params.sortBy !== "general") qs.set("sort_type_choice", SORT_BY_MAP[params.sortBy]);
+  if (params.noteType && params.noteType !== "all") qs.set("filter_note_type", NOTE_TYPE_MAP[params.noteType]);
+  if (params.publishTime && params.publishTime !== "all") qs.set("filter_pub_time", PUBLISH_TIME_MAP[params.publishTime]);
+  return `${siteOrigin()}/search_result?${qs.toString()}`;
 }
+__name(searchUrl, "searchUrl");
 function noteUrl(params) {
   if (!params || !params.noteId) throw new Error("xhs.noteUrl: pass { noteId, xsecToken, source? }");
   return buildNoteUrl(params.noteId, params.xsecToken ?? "", params.source ?? "pc_feed");
@@ -385,177 +463,59 @@ function userUrl(params) {
 }
 __name(userUrl, "userUrl");
 
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function waitFor(read, timeoutMs = 8000) {
-  const deadline = Date.now() + timeoutMs;
-  do {
-    const value = read();
-    if (value) return value;
-    await sleep(200);
-  } while (Date.now() < deadline);
-  return null;
-}
-function visible(el) { return el.getClientRects().length > 0; }
-function navigation(url, fn, args) {
-  return {status: "navigation_required", url, next: {skill: "xiaohongshu", function: fn, args}};
-}
-function pageError() {
-  return document.querySelector('.access-wrapper, .error-wrapper, .not-found-wrapper, .blocked-wrapper')?.innerText?.trim();
-}
-async function readNote(params = {}) {
-  const id = params.noteId ?? (params.url ? new URL(params.url).pathname.split('/').pop() : null);
-  if (id && !location.pathname.includes(`/${id}`)) {
-    return navigation(params.url || noteUrl(params), "readNote", {...params, noteId: id});
-  }
-  const ready = await waitFor(() => {
-    const state = window.__INITIAL_STATE__?.note;
-    const current = id || location.pathname.match(/\/(?:explore|discovery\/item)\/([^/?]+)/)?.[1] || unwrap(state?.currentNoteId);
-    return unwrap(unwrap(state?.noteDetailMap)?.[current]?.note) || pageError();
-  }, params.timeoutMs);
-  if (pageError()) return {status: "unavailable", message: pageError(), url: location.href};
-  if (!ready) return {status: "loading", noteId: id, url: location.href};
-  return {...getCurrentNote({noteId: id || undefined}), comments: getNoteComments({noteId: id || undefined, limit: params.commentLimit ?? 10}).comments};
-}
-async function readNoteImages(params = {}) {
-  const note = getCurrentNote(params);
-  const selected = params.images ?? note.images.map(img => img.image);
-  return {imageContext: {requested: true, delivery: "urls_only_until_host_attaches",
-    images: selected.map(n => { const img = note.images[n - 1]; return {image: n, url: img.url}; })}};
-}
-const filterGroups = {sortBy: "排序依据", noteType: "笔记类型", publishTime: "发布时间", searchScope: "搜索范围", distance: "位置距离"};
-const defaultFilters = {sortBy: "综合", noteType: "不限", publishTime: "不限", searchScope: "不限", distance: "不限"};
-async function searchNotes(params) {
-  const keyword = new URL(location.href).searchParams.get("keyword");
-  if (location.pathname !== "/search_result" || keyword !== params.keyword) {
-    return navigation(searchUrl(params), "searchNotes", params);
-  }
-  const ready = await waitFor(() => (window.__INITIAL_STATE__ && getCurrentSearch().keyword === params.keyword && unwrap(window.__INITIAL_STATE__?.search?.feeds)?.length) || pageError(), params.timeoutMs);
-  if (!ready) return {status: "loading", url: location.href};
-  if (pageError()) return {status: "unavailable", message: pageError(), url: location.href};
-  const applied = {};
-  const deadline = Date.now() + (params.timeoutMs ?? 8000);
-  for (const [key, groupName] of Object.entries(filterGroups)) {
-    const value = params[key] ?? defaultFilters[key];
-    const button = document.querySelector('div.filter');
-    if (button) {
-      button.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true}));
-      button.dispatchEvent(new MouseEvent('mouseover', {bubbles: true}));
-    }
-    const panel = await waitFor(() => document.querySelector('div.filter-panel'), 1500);
-    if (!panel) {
-      if (value === defaultFilters[key]) continue;
-      throw new Error(`搜索筛选面板未出现：${groupName}`);
-    }
-    const group = [...panel.querySelectorAll('div.filters')].find(el => el.querySelector(':scope > span')?.textContent.trim() === groupName);
-    const option = [...(group?.querySelectorAll('div.tags') ?? [])].find(el => el.textContent.trim() === value && visible(el));
-    if (!option) throw new Error(`搜索筛选项未出现：${groupName} / ${value}`);
-    const before = getCurrentSearch().hits.map(hit => hit.noteId).join(',');
-    const selected = option.classList.contains('active') || option.classList.contains('selected') || option.getAttribute('aria-selected') === 'true';
-    if (!selected) {
-      option.click();
-      const changed = await waitFor(() => {
-        const ids = getCurrentSearch().hits.map(hit => hit.noteId).join(',');
-        return ids && ids !== before;
-      }, Math.max(0, deadline - Date.now()));
-      if (!changed) return {...getCurrentSearch(), status: "loading", pendingFilter: {group: groupName, value}};
-    }
-    applied[key] = value;
-  }
-  const offset = params.offset ?? 0, limit = params.limit ?? 20;
-  await loadSearchResults({limit: offset + limit, timeoutMs: Math.max(0, deadline - Date.now())});
-  const result = getCurrentSearch();
-  return {...result, filters: applied, hits: result.hits.slice(offset, offset + limit), loaded: result.hits.length, nextOffset: offset + Math.min(limit, Math.max(0, result.hits.length - offset))};
-}
-async function loadSearchResults(params = {}) {
-  const deadline = Date.now() + (params.timeoutMs ?? 8000), limit = params.limit ?? 40;
-  let result = getCurrentSearch();
-  while (result.hasMore && result.hits.length < limit && Date.now() < deadline) {
-    const before = result.hits.map(hit => hit.noteId).join(',');
-    const container = document.querySelector('.main-content') || document.scrollingElement;
-    container.scrollTop += Math.max(container.clientHeight * .8, 500);
-    container.dispatchEvent(new Event('scroll', {bubbles: true}));
-    const changed = await waitFor(() => {
-      const next = getCurrentSearch();
-      return next.hits.map(hit => hit.noteId).join(',') !== before || !next.hasMore;
-    }, Math.min(1500, Math.max(0, deadline - Date.now())));
-    result = getCurrentSearch();
-    if (!changed) break;
-  }
-  return {...result, hits: result.hits.slice(0, limit), loaded: result.hits.length};
-}
-async function loadComments(params = {}) {
-  const noteId = getCurrentNote(params).noteId;
-  const limit = params.limit ?? 20, deadline = Date.now() + (params.timeoutMs ?? 8000);
-  let result = getNoteComments({noteId, limit});
-  const expanded = new Set();
-  while (Date.now() < deadline) {
-    if (params.expandReplies) {
-      for (const button of document.querySelectorAll('.comments-container .show-more')) {
-        if (visible(button) && !expanded.has(button) && /展开.*回复|展开更多回复/.test(button.textContent)) {
-          const before = JSON.stringify(getNoteComments({noteId, limit}).comments);
-          expanded.add(button); button.click();
-          await waitFor(() => JSON.stringify(getNoteComments({noteId, limit}).comments) !== before, Math.min(1500, Math.max(0, deadline - Date.now())));
-        }
-      }
-    }
-    if (result.comments.length >= limit || !result.hasMore) break;
-    const container = document.querySelector('.note-scroller, .comments-container');
-    if (!container) break;
-    const before = JSON.stringify(result.comments);
-    container.scrollTop += Math.max(container.clientHeight * .8, 500);
-    container.dispatchEvent(new Event('scroll', {bubbles: true}));
-    await waitFor(() => {
-      const next = getNoteComments({noteId, limit});
-      return JSON.stringify(next.comments) !== before || !next.hasMore;
-    }, Math.min(1500, Math.max(0, deadline - Date.now())));
-    result = getNoteComments({noteId, limit});
-  }
-  return getNoteComments({noteId, limit});
-}
-async function getUserProfile(params) {
-  const url = params.url || userUrl(params);
-  const userId = params.userId || new URL(url).pathname.split('/').pop();
-  const tab = params.tab ?? "note";
-  if (location.pathname !== `/user/profile/${userId}`) return navigation(url, "getUserProfile", {...params, userId});
-  const readyProfile = await waitFor(() => {
-    const basic = unwrap(window.__INITIAL_STATE__?.user?.userPageData)?.basicInfo;
-    return (basic && (!basic.userId || basic.userId === userId)) || pageError();
-  }, params.timeoutMs);
-  if (!readyProfile) return {status: "loading", userId, tab};
-  if (pageError()) return {status: "unavailable", message: pageError(), url: location.href};
-  const current = () => unwrap(window.__INITIAL_STATE__?.user?.activeTab) ?? {index: 0, query: "note"};
-  if ((current().query || "note") !== tab) {
-    const labels = {note: "笔记", fav: "收藏", liked: "点赞"};
-    const button = [...document.querySelectorAll('.reds-tab-item.sub-tab-list')].find(el => el.textContent.trim() === labels[tab]);
-    if (!button) return {status: "tab_unavailable", userId, tab};
-    button.click();
-    const ready = await waitFor(() => {
-      const active = current(), notes = unwrap(window.__INITIAL_STATE__?.user?.notes);
-      return active.query === tab && Array.isArray(notes?.[active.index]);
-    }, params.timeoutMs);
-    if (!ready) return {status: "loading", userId, tab};
-  }
-  return getCurrentUserProfile();
-}
-const empty = z.object({});
-const timeout = z.number().int().positive().max(20000).optional();
-const noteInput = z.object({noteId: z.string().optional(), url: z.string().optional(), xsecToken: z.string().optional(), timeoutMs: timeout, commentLimit: z.number().int().positive().optional()});
-const searchInput = z.object({keyword: z.string(), sortBy: z.enum(["综合", "最新", "最多点赞", "最多评论", "最多收藏"]).optional(), noteType: z.enum(["不限", "视频", "图文"]).optional(), publishTime: z.enum(["不限", "一天内", "一周内", "半年内"]).optional(), searchScope: z.enum(["不限", "已看过", "未看过", "已关注"]).optional(), distance: z.enum(["不限", "同城", "附近"]).optional(), limit: z.number().int().positive().optional(), offset: z.number().int().nonnegative().optional(), timeoutMs: timeout});
-const entry = (summary, input, handler, args = {}) => fn({summary, input, handler, examples: [{args}]});
 export default defineSkill({
-  readNote: entry("读取指定或当前笔记，含正文、真实图片地址和首批评论；跨页返回 url 与 next。", noteInput, readNote),
-  getCurrentNote: entry("当前笔记正文、图片与 readImages 提示。", z.object({noteId: z.string().optional()}), getCurrentNote),
-  readNoteImages: entry("把所选图片交给扩展后台读图；images 是从 1 开始的编号。", z.object({noteId: z.string().optional(), images: z.array(z.number().int().positive()).optional()}), readNoteImages, {images: [1]}),
-  searchNotes: entry("关键词搜索并应用页面排序筛选，返回 hits、filters、hasMore。", searchInput, searchNotes, {keyword: "重庆旅游", sortBy: "最多收藏"}),
-  loadSearchResults: entry("滚动加载更多搜索结果，保留每条笔记的完整 token 链接。", z.object({limit: z.number().int().positive().optional(), timeoutMs: timeout}), loadSearchResults, {limit: 40}),
-  getCurrentSearch: entry("读取当前搜索页已加载的笔记。", empty, getCurrentSearch),
-  getCurrentUser: entry("当前登录用户。", empty, getCurrentUser),
-  getUserProfile: entry("用户资料和指定 tab 的笔记列表：note / fav / liked。", z.object({userId: z.string().optional(), url: z.string().optional(), xsecToken: z.string().optional(), tab: z.enum(["note", "fav", "liked"]).optional(), timeoutMs: timeout}), getUserProfile),
-  getCurrentUserProfile: entry("当前主页资料和当前 tab 的列表。", empty, getCurrentUserProfile),
-  getHomeFeed: entry("首页已加载的推荐笔记，保留完整笔记链接。", empty, getHomeFeed),
-  getNoteComments: entry("读取已加载评论；offset 分段、hasMore 表示网页还有未加载评论。", z.object({noteId: z.string().optional(), limit: z.number().int().positive().optional(), offset: z.number().int().nonnegative().optional()}), getNoteComments),
-  loadComments: entry("滚动加载指定数量评论，可展开楼中楼；返回实际 loaded 与 hasMore。", z.object({noteId: z.string().optional(), limit: z.number().int().positive().optional(), expandReplies: z.boolean().optional(), timeoutMs: timeout}), loadComments, {limit: 20, expandReplies: true}),
-  noteUrl: entry("保留 xsecToken 构造笔记链接。", z.object({noteId: z.string(), xsecToken: z.string().optional(), source: z.string().optional()}), noteUrl, {noteId: "笔记ID"}),
-  searchUrl: entry("构造关键词搜索页链接；排序通过 searchNotes 应用页面筛选。", z.object({keyword: z.string()}), searchUrl, {keyword: "重庆旅游"}),
-  userUrl: entry("保留 xsecToken 构造用户主页链接。", z.object({userId: z.string(), xsecToken: z.string().optional(), source: z.string().optional()}), userUrl, {userId: "用户ID"}),
-}, {instructions: "通过 skill_call 调用。返回 navigation_required 时，在浏览器打开返回的 url，然后执行 next；完整页面导航分两次调用。笔记 text 中 [image N] 对应 images 编号，旁边的 readImages 可调用后台读图。搜索排序通过页面筛选生效，评论通过滚动加载。"});
+  getCurrentNote: fn({
+    summary: "full body + tags + imageCount + counts from /explore/{noteId}. readNoteImages shows the pictures.",
+    input: z.any().optional(),
+    handler: async (params) => getCurrentNote(params),
+  }),
+  readNoteImages: fn({
+    summary: "attach up to three pictures of the open note so you can see them; getCurrentNote reports imageCount.",
+    input: z.object({
+      images: z.array(z.number().int().min(1)).min(1).max(3).optional().describe("1-based picture numbers. Default: the first three.")
+    }).strict().optional(),
+    examples: [{ args: { images: [1, 2] } }],
+    handler: async (params) => readNoteImages(params ?? {}),
+  }),
+  getCurrentSearch: fn({
+    summary: "search results from /search_result?keyword=X (≤42 hits).",
+    input: z.any().optional(),
+    handler: async (params) => getCurrentSearch(params),
+  }),
+  getCurrentUser: fn({
+    summary: "★ login probe (anonymous-OK, returns {loggedIn,...}).",
+    input: z.any().optional(),
+    handler: async (params) => getCurrentUser(params),
+  }),
+  getCurrentUserProfile: fn({
+    summary: "profile basics + flattened note list from /user/profile/{id}.",
+    input: z.any().optional(),
+    handler: async (params) => getCurrentUserProfile(params),
+  }),
+  getHomeFeed: fn({
+    summary: "★ main entry — home feed from /explore (≤51 cards).",
+    input: z.any().optional(),
+    handler: async (params) => getHomeFeed(params),
+  }),
+  getNoteComments: fn({
+    summary: "root comments inlined on the note page (≤10 by default).",
+    input: z.any().optional(),
+    handler: async (params) => getNoteComments(params),
+  }),
+  noteUrl: fn({
+    summary: "build /explore/{id}?xsec_token=... URL (cards and hits already carry url).",
+    input: z.any().optional(),
+    handler: async (params) => noteUrl(params),
+  }),
+  searchUrl: fn({
+    summary: "build a navigable /search_result URL (keyword + filters).",
+    input: z.any().optional(),
+    handler: async (params) => searchUrl(params),
+  }),
+  userUrl: fn({
+    summary: "build /user/profile/{id}?xsec_token=... URL.",
+    input: z.any().optional(),
+    handler: async (params) => userUrl(params),
+  }),
+});
+

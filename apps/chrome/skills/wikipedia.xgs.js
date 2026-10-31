@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         wikipedia
 // @namespace    wikipedia
-// @version      0.2.4
+// @version      0.2.2
 // @description  Wikipedia history and governance API reader: revisions, diffs, protection, logs, contributions, blocks, recent changes and your watchlist through the current wiki session.
 // @match        https://*.wikipedia.org/*
 // @connect      <self>
@@ -305,7 +305,7 @@ function checkApi(data){
     if(['maxlag','ratelimited','readonly'].includes(code))client.cooldown(code==='ratelimited'?60000:5000);
     throw fault(code,error.info||error.text||'Wikipedia API error.',{...(code==='assertuserfailed'?{loginUrl:wikiUrl('Special:UserLogin')}:{})});
   }
-  if(!data.query&&!data.compare&&!data.parse)throw fault('invalid_response','Wikipedia response has no expected query/compare payload.');
+  if(!data.query&&!data.compare)throw fault('invalid_response','Wikipedia response has no expected query/compare payload.');
   return data;
 }
 async function api(params,a={},personal=false){
@@ -329,23 +329,6 @@ function revisionResult(p,a){
   return result(content===undefined?[]:[source({id:r.revid,url:wikiUrl(p.title,{oldid:r.revid}),title:p.title,author:r.user,publishedAt:r.timestamp,text:content,scope:'revision_wikitext'},a)],{revision:{...pick(r,['revid','parentid','minor','anon','userhidden','commenthidden','texthidden','suppressed']),...(r.slots?{slots:Object.fromEntries(Object.entries(r.slots).map(([name,slot])=>[name,pick(slot,['contentmodel','contenthidden','texthidden','suppressed'])]))}:{})},contentAvailable:content!==undefined,contentModel:r.slots?.main?.contentmodel??null,coverage:'Main-slot revision wikitext.'});
 }
 const skill={
-  getLanguages:siteFn('Read other language editions with native llcontinue pagination; use the returned URL to open that edition.',z.object({...pageArgs,limit:count(20,500),llcontinue:cursor}),async a=>{
-    const data=await api({action:'query',prop:'langlinks',titles:pageTitle(a.title),redirects:1,llprop:'url|autonym',lllimit:a.limit,...(a.llcontinue?{llcontinue:a.llcontinue}:{})},a);
-    const p=requirePage(data);return {title:p.title,pageId:p.pageid,languages:p.langlinks??[],continuation:data.continue??null};
-  }),
-  getSections:siteFn('List parser section indexes for an exact revision; use the returned revisionId in getSection.',z.object({...pageArgs,revisionId:revision.optional()}),async a=>{
-    const data=await api({action:'parse',...(a.revisionId?{oldid:a.revisionId}:{page:pageTitle(a.title)}),prop:'sections|revid'},a);
-    return {title:data.parse.title,revisionId:data.parse.revid,sections:[{index:"0",line:data.parse.title,level:"1",number:""},...(data.parse.sections??[])]};
-  }),
-  getSection:siteFn('Read rendered text for one parser section, pinned to revisionId when supplied. Section 0 is the lead.',z.object({...pageArgs,revisionId:revision.optional(),section:z.string().default('0'),...readOptions}),async a=>{
-    const data=await api({action:'parse',...(a.revisionId?{oldid:a.revisionId}:{page:pageTitle(a.title)}),section:a.section,prop:'text|revid',disableeditsection:1},a);const p=data.parse;
-    return result([source({id:p.revid,url:wikiUrl(p.title,{oldid:p.revid}),title:p.title,text:textOf(p.text),scope:'rendered_section'},a)],{revisionId:p.revid,section:a.section});
-  }),
-  getLinks:siteFn('List internal links, categories and external references for an exact revision.',z.object({...pageArgs,revisionId:revision.optional()}),async a=>{
-    const data=await api({action:'parse',...(a.revisionId?{oldid:a.revisionId}:{page:pageTitle(a.title)}),prop:'links|externallinks|categories|revid'},a);
-    const p=data.parse;return {title:p.title,revisionId:p.revid,links:p.links,categories:p.categories,externalLinks:p.externallinks};
-  }),
-
   getHistory:siteFn('Read revision IDs, editors, timestamps, edit summaries and tags, newest first by default. Continue with rvcontinue.',z.object({...pageArgs,...range,user:z.string().optional(),rvcontinue:cursor}),async a=>{
     const data=await api({action:'query',prop:'revisions',titles:pageTitle(a.title),rvprop:'ids|timestamp|user|comment|size|flags|tags',...nativeRange(a,'rv'),...(a.user?{rvuser:a.user}:{}),...(a.rvcontinue?{rvcontinue:a.rvcontinue}:{})},a);const p=requirePage(data);
     return {...paged(data,p.revisions??[],(p.revisions??[]).map(r=>changeSource(r,p.title))),page:{pageid:p.pageid,title:p.title}};

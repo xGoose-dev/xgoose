@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        cathay-awards
 // @namespace   cx
-// @version     0.3.1
+// @version     0.2.0
 // @description Cathay Pacific (CX) award search helper. Builds the redibe deep-link, captures the in-page TAB_ID/ENC, and POSTs Asia Miles availability against book.cathaypacific.com directly.
 // @match       *://*.cathaypacific.com/*
 // @match       *://book.cathaypacific.com/*
@@ -128,21 +128,21 @@ __name(safeParse, "safeParse");
 function buildSearchBody(rp, params) {
   const body = new URLSearchParams();
   for (const [k, v] of Object.entries(rp.raw)) {
-    if (!["SERVICE_ID", "DIRECT_LOGIN", "ENC", "ENCT"].includes(k) && ["string","number","boolean"].includes(typeof v)) body.set(k, String(v));
+    if (typeof v === "string") body.set(k, v);
   }
   body.set("TAB_ID", rp.TAB_ID);
-
+  if (rp.ENC) body.set("ENC", rp.ENC);
   body.set("B_DATE_1", `${params.date.replace(/-/g, "")}0000`);
   body.set("B_LOCATION_1", params.origin);
   body.set("E_LOCATION_1", params.destination);
   const cabin = params.cabin ?? "J";
   body.set("CABINCLASS", cabin);
   body.set("SELECTED_CABIN", CABIN_TO_SELECTED[cabin] ?? "BUS");
-
+  body.set("SERVICE_ID", "1");
   body.set("LANGUAGE", rp.LANGUAGE ?? "GB");
   body.set("EMBEDDED_TRANSACTION", "AirAvailabilityServlet");
   body.set("SITE", rp.SITE ?? "CXAWCXAW");
-
+  body.set("ENCT", "2");
   body.set("ENTRYCOUNTRY", rp.ENTRYCOUNTRY ?? "");
   body.set("ENTRYLANGUAGE", rp.ENTRYLANGUAGE ?? "");
   if (typeof params.adults === "number") body.set("NUM_ADT", String(params.adults));
@@ -208,12 +208,29 @@ async function findAwards(params) {
       diagnostic: "HTTP 404 \u2192 stale TAB_ID. Re-open bookingUrl() to get a fresh requestParams snapshot."
     };
   }
-  if (!res.ok) throw new Error(`Cathay availability: HTTP ${res.status}`);
   const text = await res.text();
-  const av = extractAvailability(text);
-  if (!av) return {status:'unrecognized_response',rows:[],contentType:res.headers.get('content-type')};
-  return availabilityResult(av);
-
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = null;
+  }
+  if (!json || typeof json !== "object") {
+    return {
+      status: "no_availability",
+      rows: [],
+      diagnostic: `non-JSON response from CX (HTTP ${res.status}). First 200 chars: ${text.slice(0, 200)}`
+    };
+  }
+  const rows = parseCxAvailabilityResponse(json, params);
+  if (!rows.length) {
+    return {
+      status: "no_availability",
+      rows: [],
+      diagnostic: "CX returned an empty itinerary list for this slice."
+    };
+  }
+  return { status: "ok", rows };
 }
 __name(findAwards, "findAwards");
 function parseCxAvailabilityResponse(json, params) {
@@ -286,33 +303,7 @@ function summarizeFlight(rowOrHit) {
 }
 __name(summarizeFlight, "summarizeFlight");
 
-// Current CX engine embeds availabilities in HTML as well as JSON.
-function extractAvailability(text) {
-  const key=text.indexOf('"availabilities"');
-  if(key<0)return null;
-  const start=text.indexOf('{',key);let depth=0,quoted=false,escaped=false;
-  for(let i=start;i<text.length;i++) {
-    const c=text[i];
-    if(quoted){if(escaped)escaped=false;else if(c==='\\')escaped=true;else if(c==='"')quoted=false;}
-    else if(c==='"')quoted=true;
-    else if(c==='{')depth++;
-    else if(c==='}' && --depth===0)return JSON.parse(text.slice(start,i+1));
-  }
-  return null;
-}
-function availabilityResult(av) {
-  const bounds=av.upsell?.bounds;
-  if(!Array.isArray(bounds))return {status:'unrecognized_response',rows:[],availability:av};
-  // Preserve native associations, bookable flags and per-segment cabin statuses.
-  // Calendar miles are displayed prices, not proof of an available seat.
-  return {status:'ok',rows:bounds.flatMap(bound=>bound.flights || []),associations:av.upsell.associations ?? {},calendar:av.calendar ?? null};
-}
 export default defineSkill({
-  readCurrentAvailability: fn({summary:'Read the current engine’s native flights, bookable/cabin data and fare associations without another search.',input:z.object({}),handler:async()=>{
-    const av=window.pageBom?.modelObject?.availabilities || extractAvailability(document.documentElement.outerHTML);
-    if(!av)throw new Error('Open Cathay award search results first.');
-    return availabilityResult(av);
-  }}),
   bookingUrl: fn({
     summary: "★ CX redibe deep-link with origin/dest/date pre-filled.",
     input: z.any().optional(),
@@ -324,7 +315,7 @@ export default defineSkill({
     handler: async (params) => captureUrl(params),
   }),
   findAwards: fn({
-    summary: "POST availability using current session parameters; parses embedded HTML availability data.",
+    summary: "★ POSTs availability with the captured session — guessed shape, will degrade gracefully.",
     input: z.any().optional(),
     handler: async (params) => findAwards(params),
   }),

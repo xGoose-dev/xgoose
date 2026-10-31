@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         uscreditcardguide
 // @namespace    usccg
-// @version      0.2.1
+// @version      0.2.0
 // @description  美国信用卡指南 (uscreditcardguide.com) blog reader. Anonymous WP REST against /wp-json/wp/v2/*.
 // @match        *://www.uscreditcardguide.com/*
 // @match        *://uscreditcardguide.com/*

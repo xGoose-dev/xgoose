@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         amazon
 // @namespace    amazon
-// @version      0.1.2
+// @version      0.1.0
 // @description  Search and sort Amazon products; read prices, ratings, reviews, reviewer profiles, account information and order history/details in the current shopping session.
 // @match        https://www.amazon.com/*
 // @match        https://amazon.com/*
@@ -360,7 +360,6 @@ const skill={
     return {...result([source({id:a.asin,kind:'product',title,url,text},a)]),asin:a.asin,price:txt(doc,'#apex-pricetopay-accessibility-label')||txt(doc,'#corePriceDisplay_desktop_feature_div .a-price .a-offscreen,#corePrice_feature_div .a-price .a-offscreen')||null,availability:txt(doc,'#availability'),brand:txt(doc,'#bylineInfo'),seller:txt(doc,'#sellerProfileTriggerId'),shipsFrom:txt(doc,'#fulfillerInfoFeature_feature_div .offer-display-feature-text-message'),ratings:ratings(doc),images:[...new Set([...doc.querySelectorAll('#landingImage,#altImages img')].map(x=>x.getAttribute('data-old-hires')||x.getAttribute('src')).filter(Boolean))],reviewsUrl:href(doc,'#cm_cr_top_reviews_to_arp_button')};
   },[{args:{asin:'B0C69HB8PM'}}]),
   getRatings:siteFn('Read product average stars, global rating count and five-to-one-star percentages.',z.object({asin}),async a=>({asin:a.asin,...ratings(await page(`/dp/${a.asin}`,a))}),[{args:{asin:'B0C69HB8PM'}}]),
-  getCurrentReviews:siteFn('Read reviews already rendered in the current browser tab, including author profile links, rating distribution and native review pagination. No extra page request.',z.object({...rows,textOffset:offset,maxChars:z.number().int().positive().optional()}),async a=>({...sliceRows(reviewRows(document,a),a),ratings:ratings(document),source:'rendered_page',...reviewNext(document,location.pathname)}),[{args:{}}]),
   getReviews:siteFn('Read Amazon customer-review portal. Filter by keyword/stars/verified purchase/media, sort helpful or recent, and continue pageNumber/nextPageToken. Returns review bodies, ratings, dates, helpful votes and author profile URLs.',z.object(reviewArgs),async a=>{
     const path=params(`/portal/customer-reviews/${a.asin}`,{sortBy:a.sort,filterByStar:a.star,reviewerType:a.verifiedOnly?'avp_only_reviews':'all_reviews',filterByKeyword:a.keyword,mediaType:a.mediaOnly?'media_reviews_only':'all_contents',pageNumber:a.pageNumber,nextPageToken:a.nextPageToken});
     const portal=await page(`/portal/customer-reviews/${a.asin}`,a);
