@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        ana-awards
 // @namespace   ana
-// @version     0.1.0
+// @version     0.1.1
 // @description ANA award search helper. Booking URL builder + multi-city form helpers (uscardforum #491401). Real award search is gated until a live session capture is done.
 // @match       *://aswbe-i.ana.co.jp/*
 // @match       *://www.ana.co.jp/*

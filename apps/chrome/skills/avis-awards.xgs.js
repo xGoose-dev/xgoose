@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        avis-awards
 // @namespace   avis
-// @version     0.1.0
+// @version     0.1.1
 // @description Avis car-rental price scanner across 621 bundled AWD codes plus user-supplied codes. Same-origin against avis.com /web/reservation/vehicles. Mirrors uscardforum #496996 / greasyfork 576502 (v2.2).
 // @match       *://www.avis.com/*
 // @detect      location.hostname === 'www.avis.com'

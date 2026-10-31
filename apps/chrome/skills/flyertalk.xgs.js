@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         flyertalk
 // @namespace    ft
-// @version      0.2.4
+// @version      0.2.5
 // @description  FlyerTalk site-specific helpers — WordPress article search (anonymous /wp-json), URL parsing for the vBulletin SEO routes, a curated forum-slug-to-id map (airlines, hotels, credit cards), and a parallel searchAll fan-out across articles + forum posts + threads.
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*
@@ -326,7 +326,7 @@ async function forumThreads({ kind = 'new', forumId }) {
 export default defineSkill({
   searchAll: fn({
     summary:
-      'Parallel fan-out across articles + forum posts + forum threads. ★ primary entry — start here for any FlyerTalk research question.',
+      'Parallel fan-out across articles + forum posts + forum threads. Returns each result array plus per-source status and errors; failed sources have null results. ★ primary entry.',
     input: z.object({
       query: z.string(),
       author: z.string().optional().describe('Restrict forum-side search to posts by this user (exact-name).'),
@@ -338,7 +338,7 @@ export default defineSkill({
     ],
     handler: async ({ query, author, perAngle }) => {
       const cap = Math.max(1, perAngle ?? 10);
-      const ns = await getVbulletin();
+      const forum = getVbulletin();
 
       const articlesPromise = author
         ? Promise.resolve([])
@@ -349,7 +349,8 @@ export default defineSkill({
               _fields: SUMMARY_FIELDS,
               search: query,
             });
-            const arr = (await fetchJson(`/wp-json/wp/v2/posts?${sp}`)) ?? [];
+            const arr = await fetchJson(`/wp-json/wp/v2/posts?${sp}`);
+            if (!Array.isArray(arr)) throw new Error('Article search returned an invalid response.');
             return arr.map(toSummary);
           })();
 
@@ -358,7 +359,8 @@ export default defineSkill({
         postsParams.author = author;
         postsParams.exactName = true;
       }
-      const postsPromise = ns.searchPosts(postsParams).then((r) => r.results.slice(0, cap));
+      const postsPromise = forum.then(ns => ns.searchPosts(postsParams))
+        .then((r) => r.results.slice(0, cap));
 
       const threadsParams = { query, page: 1 };
       if (author) {
@@ -366,35 +368,29 @@ export default defineSkill({
         threadsParams.exactName = true;
         threadsParams.starterOnly = true;
       }
-      const threadsPromise = ns.searchThreads(threadsParams).then((r) => r.results.slice(0, cap));
+      const threadsPromise = forum.then(ns => ns.searchThreads(threadsParams))
+        .then((r) => r.results.slice(0, cap));
 
-      const [articles, posts, threads] = await Promise.all([articlesPromise, postsPromise, threadsPromise]);
-      const out = { articles, posts, threads, query };
+      const settled = await Promise.allSettled([articlesPromise, postsPromise, threadsPromise]);
+      const out = { query, sourceStatus: {}, errors: [] };
+      for (const [index, source] of ['articles', 'posts', 'threads'].entries()) {
+        const result = settled[index];
+        if (source === 'articles' && author) {
+          out[source] = [];
+          out.sourceStatus[source] = 'skipped';
+        } else if (result.status === 'fulfilled') {
+          out[source] = result.value;
+          out.sourceStatus[source] = 'ok';
+        } else {
+          out[source] = null;
+          out.sourceStatus[source] = 'error';
+          out.errors.push({source, message: result.reason?.message ?? String(result.reason), status: result.reason?.status});
+        }
+      }
+      const succeeded = Object.values(out.sourceStatus).some(status => status === 'ok');
+      out.status = out.errors.length ? (succeeded ? 'partial' : 'error') : 'ok';
       if (author) out.author = author;
       return out;
-    },
-  }),
-
-  getThreads: fn({
-    summary: 'Threads in the forum open in this tab (or forumId): new = newest started, active = latest replies, random = three active threads read with opening post and recent replies. Site-wide recent threads outside a forum.',
-    input: z.object({
-      kind: z.enum(['new', 'active', 'random']).optional(),
-      forumId: z.number().int().positive().optional(),
-    }),
-    examples: [{ args: { kind: 'new' } }, { args: { kind: 'active', forumId: 701 } }],
-    handler: forumThreads,
-  }),
-
-  summarizeCurrentThread: fn({
-    summary: 'Read the thread open in this tab: original post, first 30 and latest 100 replies.',
-    input: z.object({
-      firstReplies: z.number().int().min(0).max(300).optional(),
-      latestReplies: z.number().int().min(0).max(300).optional(),
-    }),
-    handler: async ({ firstReplies = 30, latestReplies = 100 }) => {
-      const threadId = currentThreadId();
-      if (!threadId) throw new Error('This tab is not a FlyerTalk thread. Open a thread first.');
-      return (await getVbulletin()).summarizeThread({ threadId, firstReplies, latestReplies });
     },
   }),
 

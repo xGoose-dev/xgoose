@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        hilton-awards
 // @namespace   hilton
-// @version     0.1.0
+// @version     0.2.1
 // @description Hilton Honors property rate search. Same-origin scraper for Hilton's `hotel_shopAvailOptions_shopPropAvail` Apollo GraphQL endpoint with operation-name allowlisting. Anonymous-friendly for cash; points pricing requires Hilton Honors login. Run on www.hilton.com.
 // @match       *://www.hilton.com/*
 // @detect      location.hostname === 'www.hilton.com'
@@ -329,7 +329,7 @@ function buildVariables(opts) {
     numAdults: opts.numAdults,
     numChildren: opts.numChildren,
     numRooms: opts.numRooms,
-    displayCurrency: null,
+    displayCurrency: opts.displayCurrency ?? null,
     guestId: null,
     specialRates: {
       aaa: false,
@@ -355,7 +355,7 @@ function buildVariables(opts) {
     modifyingReservation: false,
     currentlySelectedRoomTypeCode: null,
     currentlySelectedRatePlanCode: null,
-    childAges: null,
+    childAges: opts.childAges ?? null,
     adjoiningRoomStay: false,
     includeCUCEligibility: false,
     roomTypeSortInput: [],
@@ -421,7 +421,7 @@ async function getStayRates(params) {
     numAdults,
     numChildren,
     numRooms,
-    guestLocationCountry
+    guestLocationCountry, displayCurrency: params.displayCurrency, childAges: params.childAges
   });
   const body = { operationName: GQL_OP, query: GQL_QUERY, variables };
   let lastErr = null;
@@ -644,10 +644,31 @@ async function findAvailability(params) {
 __name(findAvailability, "findAvailability");
 
 export default defineSkill({
+  readCurrentRates: fn({summary:'Read Hilton’s latest observed shopPropAvail response without a second request.',input:z.object({}),handler:async()=>{
+    const bridge=globalThis.__xgoose;
+    const requests=bridge.getNetworkRequests({filter:'hotel_shopAvailOptions_shopPropAvail',limit:20});
+    const request=requests.filter(r=>r.status===200).at(-1);
+    if(!request)throw new Error('Open a Hilton hotel rooms search first.');
+    const response=bridge.getNetworkRequestDetail(request.id,'response');
+    const json=JSON.parse(response.body);
+    if(json.errors?.length)throw new Error(JSON.stringify(json.errors));
+    return {url:request.url,observedAt:request.ts,data:json.data};
+  }}),
   filterRooms: fn({
-    summary: "post-search filter.",
-    input: z.any().optional(),
-    handler: async (params) => filterRooms(params),
+    summary: "Filter {items, filters}; items is an array of RoomSummary objects from summarizeRoom or findAvailability.",
+    input: z.object({
+      items: z.array(z.record(z.unknown())),
+      filters: z.object({
+        suiteOnly: z.boolean().optional(), excludeSuites: z.boolean().optional(),
+        executiveOnly: z.boolean().optional(), cashOnly: z.boolean().optional(),
+        pointsOnly: z.boolean().optional(), awardEligibleOnly: z.boolean().optional(),
+        weekdaysOnly: z.boolean().optional(), weekendsOnly: z.boolean().optional(),
+        maxCash: z.number().nonnegative().optional(), maxCashUsd: z.number().nonnegative().optional(),
+        maxPoints: z.number().nonnegative().optional(),
+        ratePlanCode: z.union([z.string(), z.array(z.string())]).optional(),
+      }).optional(),
+    }),
+    handler: async ({items, filters}) => filterRooms(items, filters),
   }),
   findAvailability: fn({
     summary: "★ main entry. Date range → per-night calendar.",

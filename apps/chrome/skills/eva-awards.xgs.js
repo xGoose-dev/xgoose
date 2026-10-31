@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        eva-awards
 // @namespace   eva
-// @version     0.1.0
+// @version     0.1.1
 // @description EVA Air (BR) award search helper. Booking landing URL + session detection; real ASPX search is gated until a live capture is done.
 // @match       *://booking.evaair.com/*
 // @match       *://www.evaair.com/*

@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        jal-awards
 // @namespace   jal
-// @version     0.1.0
+// @version     0.1.1
 // @description Japan Airlines (JAL) award search helper. Booking landing URL + session detection; real search is gated until a live capture is done.
 // @match       *://www.jal.co.jp/*
 // @match       *://book-i.jal.co.jp/*

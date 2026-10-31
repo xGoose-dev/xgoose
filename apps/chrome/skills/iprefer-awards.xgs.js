@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        iprefer-awards
 // @namespace   iprefer
-// @version     0.1.0
+// @version     0.1.1
 // @description I Prefer Hotel Rewards property discovery + indicative pricing. Cross-origin scraper for `ptgapis.com/rate-fetch/v2`. NO date-specific availability — iPrefer's public API only returns "from" rates. Run on iprefer.com.
 // @match       *://iprefer.com/*
 // @match       *://www.iprefer.com/*
@@ -26,9 +26,8 @@
 /**
  * I Prefer Hotel Rewards property discovery + indicative pricing. Cross-origin scraper for `ptgapis.com/rate-fetch/v2`. NO date-specific availability — iPrefer's public API only returns "from" rates. Run on iprefer.com.
  *
- * Migrated from webagent v0.1; runtime preserved verbatim. Per-fn input
- * schemas are intentionally widened to z.any() — refine with concrete Zod
- * schemas in a follow-up (see the original SKILL.md for parameter types).
+ * Every public function takes a single options object. Rates and the
+ * catalog return JSON objects keyed by property code and name respectively.
  * # I Prefer Hotel Rewards — Schema Reference
  * > **Read this BEFORE calling any function.** Every entrypoint takes a **single options object**.
  * The skill loads on `iprefer.com` and calls `ptgapis.com/rate-fetch/v2` cross-origin. **iPrefer is structurally different from the other hotel skills**:
@@ -167,12 +166,7 @@ async function getRates(params) {
   if (status !== 200 || !json?.results) {
     throw new Error(`iprefer-awards.getRates: HTTP ${status} \u2014 ${bodyText.slice(0, 200)}`);
   }
-  const out = /* @__PURE__ */ new Map();
-  for (const code of codes) {
-    const rate = json.results[code];
-    out.set(code, summarizeProperty(rate, code));
-  }
-  return out;
+  return Object.fromEntries(codes.map(code => [code, summarizeProperty(json.results[code], code)]));
 }
 __name(getRates, "getRates");
 async function searchDestinations(params) {
@@ -222,9 +216,9 @@ async function getCatalog() {
       const code = String(p?.field_item_code ?? "").trim();
       if (name && code) map.set(name, code.toUpperCase());
     }
-    catalogCache = map;
+    catalogCache = Object.fromEntries(map);
     catalogPromise = null;
-    return map;
+    return catalogCache;
   })();
   return catalogPromise;
 }
@@ -259,34 +253,51 @@ __name(bookingUrl, "bookingUrl");
 
 export default defineSkill({
   bookingUrl: fn({
-    summary: "build iprefer.com property URL with dates.",
-    input: z.any().optional(),
-    handler: async (params) => bookingUrl(params),
+    summary: "Build iprefer.com property URL from propertyCode and optional dates/occupancy.",
+    input: z.object({
+      propertyCode: z.string().min(1),
+      checkInDate: z.string().regex(DATE_RX).optional(),
+      checkOutDate: z.string().regex(DATE_RX).optional(),
+      adults: z.number().int().positive().optional(),
+      children: z.number().int().nonnegative().optional(),
+      rooms: z.number().int().positive().optional(),
+      rateType: z.string().optional(),
+    }),
+    handler: async ({propertyCode, ...opts}) => bookingUrl(propertyCode, opts),
   }),
   filterProperties: fn({
-    summary: "filterProperties(items, filters): PropertySummary[]",
-    input: z.any().optional(),
-    handler: async (params) => filterProperties(params),
+    summary: "Filter {items, filters}; items is Object.values(getRates(...)). Returns PropertySummary[].",
+    input: z.object({
+      items: z.array(z.record(z.unknown())),
+      filters: z.object({
+        cashOnly: z.boolean().optional(),
+        pointsOnly: z.boolean().optional(),
+        pointsPlusOnly: z.boolean().optional(),
+        maxCashUsd: z.number().nonnegative().optional(),
+        maxPoints: z.number().nonnegative().optional(),
+      }).optional(),
+    }),
+    handler: async ({items, filters}) => filterProperties(items, filters),
   }),
   getCatalog: fn({
-    summary: "one-shot name → propertyCode lookup (cached).",
-    input: z.any().optional(),
-    handler: async (params) => getCatalog(params),
+    summary: "Cached JSON object keyed by property name, with propertyCode values.",
+    input: z.object({}),
+    handler: async () => getCatalog(),
   }),
   getRates: fn({
-    summary: "★ main entry. Property codes → 'from' cash + points.",
-    input: z.any().optional(),
+    summary: "★ main entry. Returns a JSON object keyed by propertyCode with indicative 'from' cash + points.",
+    input: z.object({propertyCodes: z.array(z.string().min(1)).min(1), retries: z.number().int().nonnegative().optional()}),
     handler: async (params) => getRates(params),
   }),
   searchDestinations: fn({
     summary: "POI search by query string.",
-    input: z.any().optional(),
+    input: z.object({query: z.string().min(1), language: z.string().optional(), retries: z.number().int().nonnegative().optional()}),
     handler: async (params) => searchDestinations(params),
   }),
   summarizeProperty: fn({
-    summary: "normalize one rate-fetch entry.",
-    input: z.any().optional(),
-    handler: async (params) => summarizeProperty(params),
+    summary: "Normalize {rate, code, name?}; rate is one native rate-fetch entry, code is its property code.",
+    input: z.object({rate: z.record(z.unknown()).nullish(), code: z.string().min(1), name: z.string().nullable().optional()}),
+    handler: async ({rate, code, name}) => summarizeProperty(rate, code, name),
   }),
 });
 

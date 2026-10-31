@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discuz-forum
 // @namespace    discuz
-// @version      0.2.0
+// @version      0.2.1
 // @description  Discuz forums: native search options, boards, thread posts, full floor continuation, numbered images, attachments, member profiles and topic/reply history. Browser-session mobile API and HTML access; UTF-8/GBK.
 // @match        *://stage1st.com/*
 // @match        *://*.stage1st.com/*
