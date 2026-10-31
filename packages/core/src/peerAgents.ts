@@ -100,8 +100,10 @@ export function waitForPeers(state: PeerState, id: string, ids: string[]) {
   return {waiting: true};
 }
 export function settlePeer(state: PeerState, id: string, runId: string, outcome: "completed" | "waiting" | "failed" | "cancelled", text: string): void {
-  const agent = peer(state, id);
-  if (agent.runId !== runId) return; // A duplicate/late completion must not settle a newer run.
+  const agent = state.agents[id];
+  // Navigation/closure can invalidate a page while its finally block is
+  // settling. This acknowledgement is a no-op, never a new run or revival.
+  if (!agent || agent.status === "unavailable" || agent.runId !== runId) return;
   const message = state.messages.find(item => item.id === agent.activeMessageId);
   if (message) message.state = "handled";
   agent.activeMessageId = undefined;

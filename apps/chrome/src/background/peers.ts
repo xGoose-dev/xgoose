@@ -4,6 +4,7 @@ import {claimPeerMessage, invalidatePeer, peer, putPeerMessage, queuePeerTask, s
 
 // Serializes browser-side effects; IDB transactions separately serialize durable transitions.
 let pending: Promise<unknown> = Promise.resolve();
+const navigatingTabs = new Set<number>();
 function serial<T>(fn: () => Promise<T>): Promise<T> {
   const result = pending.then(fn, fn); pending = result.catch(() => {}); return result;
 }
@@ -57,10 +58,18 @@ export function peerCommand(request: PeerRequest, sender: chrome.runtime.Message
       await notifyPending(); return {agent};
     }
     const me = await peerTransaction(state => {
+      const current = state.agents[request.agentId!];
+      // Late cleanup from a closed/navigated page must not fail the chat's
+      // finally block. Other operations still require a live page identity.
+      if ((!current || current.status === "unavailable") && (op.op === "settle" || op.op === "stop")) {
+        if (current && (current.tabId !== tab.id || current.documentKey !== request.nonce)) throw new Error("Peer identity does not match this document");
+        return null;
+      }
       const agent = peer(state, request.agentId!);
       if (agent.tabId !== tab.id || agent.documentKey !== request.nonce) throw new Error("Peer identity does not match this document");
       return agent;
     });
+    if (!me) return {ignored: true, reason: "peer_unavailable"};
     if (op.op === "tabs") {
       const [tabs, agents] = await Promise.all([chrome.tabs.query({}), peerTransaction(state => Object.values(state.agents))]);
       return {tabs: tabs.filter(item => !item.incognito).map(item => ({tabId: item.id, title: item.title ?? "", url: item.url ?? "",
@@ -134,15 +143,21 @@ export function peerCommand(request: PeerRequest, sender: chrome.runtime.Message
 }
 export function installPeerEvents(): void {
   chrome.tabs.onRemoved.addListener(tabId => {
+    navigatingTabs.delete(tabId);
     void serial(async () => {
       await peerTransaction(state => {for (const agent of Object.values(state.agents)) if (agent.tabId === tabId) invalidatePeer(state, agent.id, "The peer tab was closed");});
       await notifyPending();
     }).catch(console.warn);
   });
   chrome.tabs.onUpdated.addListener((tabId, change) => {
-    if (change.status !== "loading") return;
+    if (change.status === "loading") {navigatingTabs.add(tabId); return;}
+    if (change.status !== "complete" || !navigatingTabs.delete(tabId)) return;
     void serial(async () => {
-      await peerTransaction(state => {for (const agent of Object.values(state.agents)) if (agent.tabId === tabId && agent.documentKey) invalidatePeer(state, agent.id, "The peer page navigated or reloaded");});
+      // A loading event can outlive registration, or occur without replacing
+      // a SPA document. Validate the live nonce rather than invalidating the
+      // newly registered/current page solely because of a tab status change.
+      const identity = await sendPeer(tabId, {kind: "cs:peer_identity"}).catch(() => null);
+      await peerTransaction(state => {for (const agent of Object.values(state.agents)) if (agent.tabId === tabId && agent.documentKey && agent.documentKey !== identity?.nonce) invalidatePeer(state, agent.id, "The peer page navigated or reloaded");});
       await notifyPending();
     }).catch(console.warn);
   });

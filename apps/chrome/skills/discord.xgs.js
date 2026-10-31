@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discord
 // @namespace    discord
-// @version      0.1.2
+// @version      0.1.3
 // @description  Search Discord messages using the signed-in web client; read channels, threads, message context, attachments and profiles.
 // @match        https://discord.com/*
 // @match        https://canary.discord.com/*
@@ -15,33 +15,85 @@ import { defineSkill, fn } from '@xgoose/skill';
 import { z } from 'zod';
 
 // Native client owns authentication and request scheduling. No token is read or returned.
-let loader;
-function modules() {
-  if (!loader) {
-    const chunks = globalThis.webpackChunkdiscord_app;
-    if (!chunks) throw Error('Open the signed-in Discord web app first.');
-    const id = 'xgoose_discord_' + Date.now();
-    chunks.push([[id], {}, r => { loader = r; }]);
-    chunks.pop();
-  }
-  return Object.values(loader.c).flatMap(m => {
-    const e = m.exports;
-    return e && (typeof e === 'object' || typeof e === 'function') ? [e, ...Object.values(e)] : [];
-  }).filter(Boolean);
+// Discord changes minified export names and namespace nesting between builds.
+// Do not require every write method this reader never uses, or confuse a missed
+// export fingerprint with a failed HTTP request. Cache successes only: late
+// chunks must remain discoverable after an unsuccessful early call.
+let loader, nativeClient;
+let clientDiagnostics = { code: 'NOT_CHECKED', cachedModules: 0, scannedExports: 0 };
+const objectLike = value => value !== null && (typeof value === 'object' || typeof value === 'function');
+function property(value, key) { try { return value?.[key]; } catch { return undefined; } }
+function runtime() {
+  if (loader?.c) return loader;
+  const chunks = globalThis.webpackChunkdiscord_app;
+  if (!Array.isArray(chunks)) return null;
+  const entry = [['xgoose_discord_' + Date.now() + '_' + Math.random().toString(36).slice(2)], {}, r => { loader = r; }];
+  chunks.push(entry);
+  // Only remove our own entry; never discard an app chunk added by a wrapper.
+  if (chunks.at(-1) === entry) chunks.pop();
+  return loader?.c ? loader : null;
 }
-function http() {
-  const client = modules().find(m => ['get','post','put','patch','del'].every(k => typeof m[k] === 'function'));
-  if (!client) throw Error('Discord native HTTP module is not loaded.');
-  return client;
+function findHttp() {
+  if (nativeClient) return nativeClient;
+  const req = runtime();
+  if (!req) {
+    clientDiagnostics = { code: Array.isArray(globalThis.webpackChunkdiscord_app) ? 'RUNTIME_NOT_READY' : 'DISCORD_APP_REQUIRED', cachedModules: 0, scannedExports: 0 };
+    return null;
+  }
+  const cache = Object.values(req.c), queue = [], seen = new Set();
+  for (const m of cache) { const value = property(m, 'exports'); if (objectLike(value)) queue.push({ value, depth: 0 }); }
+  let fallback = null, scanned = 0;
+  for (let index = 0; index < queue.length && scanned < 50000; index++) {
+    const { value, depth } = queue[index];
+    if (seen.has(value)) continue;
+    seen.add(value); scanned++;
+    const has = key => typeof property(value, key) === 'function';
+    // get alone also matches stores, lodash and Maps. Require post as a
+    // transport fingerprint, prefer fuller HTTP clients, and keep `this`.
+    if (has('get') && has('post')) {
+      if (['put', 'patch', 'del', 'delete', 'getAPIBaseURL'].some(has)) {
+        nativeClient = value; break;
+      }
+      fallback ??= value;
+    }
+    if (depth >= 3) continue;
+    let keys;
+    try { keys = Object.getOwnPropertyNames(value); } catch { continue; }
+    // Each namespace is bounded. Avoid walking function prototypes, globals
+    // and arbitrary app state; only follow own exported object namespaces.
+    for (const key of keys.slice(0, 200)) {
+      if (queue.length >= 50000) break;
+      if (['prototype', 'constructor', '__proto__', 'caller', 'callee', 'arguments'].includes(key) || /token|secret|password|cookie|authorization/i.test(key)) continue;
+      const child = property(value, key);
+      if (objectLike(child) && !seen.has(child)) queue.push({ value: child, depth: depth + 1 });
+    }
+  }
+  nativeClient ??= fallback;
+  clientDiagnostics = { code: nativeClient ? 'READY' : 'HTTP_EXPORT_NOT_FOUND', cachedModules: cache.length, scannedExports: scanned };
+  return nativeClient;
+}
+async function http() {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const client = findHttp();
+    if (client) return client;
+    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw Error(`Discord native HTTP client could not be resolved (${clientDiagnostics.code}; ${clientDiagnostics.cachedModules} cached modules). Refresh Discord and check diagnoseClient. No API request was sent.`);
 }
 async function get(path, query = {}) {
-  const response = await http().get({url:path, query});
+  const client = await http();
+  const response = await client.get({url:path, query});
+  if (!response || typeof response !== 'object' || !('body' in response)) throw Error('Discord native HTTP client returned an unsupported response shape.');
   if (response.status === 202) return {indexing:true, retry_after:response.body?.retry_after};
+  if (response.status >= 400) throw Error(`Discord API returned HTTP ${response.status}${response.status === 429 ? '; respect the native client rate limit before retrying' : ''}.`);
   return response.body;
 }
 const id = z.string().regex(/^\d+$/);
 const empty = z.object({});
 const limit = z.number().int().min(1).max(100).default(25);
+// Host schemas are documentation-only; apply defaults and cursor validation
+// here too, rather than relying on a particular host or test adapter.
+const tool = spec => fn({...spec, handler: args => spec.handler(spec.input.parse(args ?? {}))});
 function current() {
   const [,guildId,channelId] = location.pathname.match(/^\/channels\/([^/]+)(?:\/([^/]+))?/) || [];
   return {guildId:guildId === '@me' ? undefined : guildId, channelId};
@@ -71,11 +123,12 @@ const searchInput = z.object({
   sortOrder:z.enum(['desc','asc']).default('desc'), limit:z.number().int().min(1).max(25).default(25), offset:z.number().int().min(0).max(9975).default(0),
 });
 export default defineSkill({
-  getContext:fn({summary:'Get selected server/channel IDs and current page URL.',input:empty,handler:()=>({...current(),url:location.href})}),
-  listGuilds:fn({summary:'List joined servers through the native API; before/after paginate.',input:z.object({limit, before:id.optional(),after:id.optional()}),handler:async a=>({guilds:(await get('/users/@me/guilds',a)).map(g=>({id:g.id,name:g.name,icon:g.icon,owner:g.owner}))})}),
-  listChannels:fn({summary:'List server channels, categories and parent IDs.',input:z.object({guildId:id.optional()}),handler:async a=>({channels:(await get(`/guilds/${guild(a.guildId)}/channels`)).map(c=>({id:c.id,name:c.name,type:c.type,parentId:c.parent_id,position:c.position,topic:c.topic}))})}),
-  listDMs:fn({summary:'List existing DM and group conversations.',input:empty,handler:async()=>({channels:(await get('/users/@me/channels')).map(c=>({id:c.id,name:c.name,type:c.type,recipients:(c.recipients||[]).map(user),lastMessageId:c.last_message_id}))})}),
-  searchMessages:fn({summary:'Native server message search with filters and result offset. Returns search hits; use readMessages around a hit for context. Dates use UTC YYYY-MM-DD or snowflake IDs.',input:searchInput,handler:async a=>{
+  getContext:tool({summary:'Get selected server/channel IDs and current page URL.',input:empty,handler:()=>({...current(),url:location.href})}),
+  diagnoseClient:tool({summary:'Inspect native HTTP client availability without making API requests or reading credentials. Returns ready, code and module/export counts.',input:empty,examples:[{args:{}}],handler:()=>{const ready=!!findHttp();return {ready,...clientDiagnostics};}}),
+  listGuilds:tool({summary:'List joined servers through the native API; before/after paginate.',input:z.object({limit, before:id.optional(),after:id.optional()}),handler:async a=>({guilds:(await get('/users/@me/guilds',a)).map(g=>({id:g.id,name:g.name,icon:g.icon,owner:g.owner}))})}),
+  listChannels:tool({summary:'List server channels, categories and parent IDs.',input:z.object({guildId:id.optional()}),handler:async a=>({channels:(await get(`/guilds/${guild(a.guildId)}/channels`)).map(c=>({id:c.id,name:c.name,type:c.type,parentId:c.parent_id,position:c.position,topic:c.topic}))})}),
+  listDMs:tool({summary:'List existing DM and group conversations.',input:empty,handler:async()=>({channels:(await get('/users/@me/channels')).map(c=>({id:c.id,name:c.name,type:c.type,recipients:(c.recipients||[]).map(user),lastMessageId:c.last_message_id}))})}),
+  searchMessages:tool({summary:'Native server message search with filters and result offset. Returns search hits; use readMessages around a hit for context. Dates use UTC YYYY-MM-DD or snowflake IDs.',input:searchInput,handler:async a=>{
     const guildId=guild(a.guildId), q={offset:a.offset,limit:a.limit,sort_by:a.sortBy,sort_order:a.sortOrder};
     if(a.content!==undefined) q.content=a.content;
     for(const [key,value] of [['channel_id',a.channelIds],['author_id',a.authorIds],['mentions',a.mentions],['has',a.has]]) if(value?.length) q[key]=value;
@@ -94,7 +147,7 @@ export default defineSkill({
       offsetLimitReached:next<raw.total_results && next>9975,deepHistoricalIndexing:raw.doing_deep_historical_index,
       threads:raw.threads?.map(t=>({id:t.id,name:t.name,parentId:t.parent_id,guildId}))});
   }}),
-  readMessages:fn({summary:'Read channel or thread history. before, after and around are exclusive message-ID cursors.',input:z.object({channelId:id.optional(),guildId:id.optional(),limit,before:id.optional(),after:id.optional(),around:id.optional()}).refine(a=>[a.before,a.after,a.around].filter(Boolean).length<=1,'Choose one cursor.'),handler:async a=>{
+  readMessages:tool({summary:'Read channel or thread history. before, after and around are exclusive message-ID cursors.',input:z.object({channelId:id.optional(),guildId:id.optional(),limit,before:id.optional(),after:id.optional(),around:id.optional()}).refine(a=>[a.before,a.after,a.around].filter(Boolean).length<=1,'Choose one cursor.'),handler:async a=>{
     const channelId=channel(a.channelId), query={limit:a.limit};
     for(const k of ['before','after','around']) if(a[k]) query[k]=a[k];
     const rows=await get(`/channels/${channelId}/messages`,query);
@@ -102,8 +155,8 @@ export default defineSkill({
     const guildId=a.guildId || (channelId === current().channelId ? current().guildId : (await get(`/channels/${channelId}`)).guild_id);
     return page(rows,guildId,{oldestId:ids[0] || null,newestId:ids.at(-1) || null,returned:rows.length});
   }}),
-  listThreads:fn({summary:'List active threads in a server. Read their messages using the thread ID as channelId.',input:z.object({guildId:id.optional()}),handler:async a=>{const raw=await get(`/guilds/${guild(a.guildId)}/threads/active`); return {threads:raw.threads.map(t=>({id:t.id,name:t.name,parentId:t.parent_id,messageCount:t.message_count,metadata:t.thread_metadata}))};}}),
-  getUser:fn({summary:'Read a user profile and optional server-specific nickname, roles and membership dates.',input:z.object({userId:id,guildId:id.optional()}),handler:async a=>{
+  listThreads:tool({summary:'List active threads in a server. Read their messages using the thread ID as channelId.',input:z.object({guildId:id.optional()}),handler:async a=>{const raw=await get(`/guilds/${guild(a.guildId)}/threads/active`); return {threads:raw.threads.map(t=>({id:t.id,name:t.name,parentId:t.parent_id,messageCount:t.message_count,metadata:t.thread_metadata}))};}}),
+  getUser:tool({summary:'Read a user profile and optional server-specific nickname, roles and membership dates.',input:z.object({userId:id,guildId:id.optional()}),handler:async a=>{
     const raw=await get(`/users/${a.userId}/profile`,a.guildId?{guild_id:a.guildId}:{});
     return {user:{...user(raw.user),bio:raw.user.bio || raw.user_profile?.bio,pronouns:raw.user_profile?.pronouns},member:raw.guild_member && {nick:raw.guild_member.nick,roles:raw.guild_member.roles,joinedAt:raw.guild_member.joined_at},mutualGuilds:raw.mutual_guilds};
   }}),

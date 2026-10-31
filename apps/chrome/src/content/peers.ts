@@ -50,29 +50,33 @@ export class PagePeers {
     return this.registration;
   }
   async begin(runId: string = crypto.randomUUID()) {
-    if (!this.agent || this.agent.sessionId !== this.host.sessionId()) await this.register();
+    // A cached identity may have been invalidated by a navigation event or a
+    // previous conversation. Registration is idempotent for this document.
+    await this.register();
     this.waiting = false; this.stopped = false; this.runId = runId;
     this.agent = (await this.rpc({op: "begin", runId, model: this.host.model()})).agent;
   }
   async finish(outcome: "completed" | "failed" | "cancelled", text: string) {
     if (!this.agent || !this.runId) return;
     const waiting = this.waiting && outcome === "completed";
-    await this.rpc({op: "settle", runId: this.runId, outcome: waiting ? "waiting" : outcome, text});
-    if (waiting) this.host.status("Waiting for peer agents…");
-    this.runId = "";
+    try {
+      const result = await this.rpc({op: "settle", runId: this.runId, outcome: waiting ? "waiting" : outcome, text});
+      if (result.ignored) {this.agent = undefined; this.waiting = false;}
+      else if (waiting) this.host.status("Waiting for peer agents…");
+    } finally {this.runId = "";}
   }
   async stop() {
     this.stopped = true; this.waiting = false;
     if (this.agent) await this.rpc({op: "stop"});
   }
-  async reset() {await this.stop(); this.agent = undefined; this.stopped = false;}
+  async reset() {try {await this.stop();} finally {this.agent = undefined; this.stopped = false;}}
   kick() {void this.pump().catch(error => this.host.status(`Peer: ${error.message ?? error}`));}
   private async pump() {
     if (this.pumping || this.host.busy() || this.stopped) return;
     this.pumping = true;
     this.host.lock();
     try {
-      if (!this.agent) await this.register();
+      await this.register();
       while (!this.stopped) {
         const result = await this.rpc({op: "take"});
         if (!result.message) break;
