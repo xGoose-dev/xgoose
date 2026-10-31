@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        ihg-awards
 // @namespace   ihg
-// @version     0.1.0
+// @version     0.1.1
 // @description IHG One Rewards property rate search. Cross-origin scraper for `apis.ihg.com/availability/v3/hotels/offers`. Anonymous returns BOTH cash AND points pricing in a single call. Run on www.ihg.com.
 // @match       *://www.ihg.com/*
 // @detect      location.hostname === 'www.ihg.com'
@@ -274,8 +274,8 @@ async function getStayRates(params) {
         status: offers.length === 0 ? "sold_out" : "ok",
         propertyCurrency: hotel?.propertyCurrency ?? null,
         brandCode: hotel?.brandCode ?? null,
-        rooms,
-        ratePlans,
+        rooms: Object.fromEntries(rooms),
+        ratePlans: Object.fromEntries(ratePlans),
         offers,
         raw: hotel
       };
@@ -296,8 +296,8 @@ async function getStayRates(params) {
     status,
     propertyCurrency: null,
     brandCode: null,
-    rooms: /* @__PURE__ */ new Map(),
-    ratePlans: /* @__PURE__ */ new Map(),
+    rooms: {},
+    ratePlans: {},
     offers: [],
     raw: lastErr?.json ?? null,
     error: lastErr ? `HTTP ${lastErr.status}: ${lastErr.bodyText.slice(0, 200)}` : "unknown error"
@@ -340,7 +340,7 @@ function summarizeStay(stay) {
   }
   const out = [];
   for (const [roomCode, offers] of offersByRoom) {
-    const room = rooms.get(roomCode);
+    const room = rooms[roomCode];
     let bestCash = null;
     let bestPoints = null;
     const pointsCashOptions = [];
@@ -374,7 +374,7 @@ function summarizeStay(stay) {
       } else {
         const cash = nightlyCash(o, currency);
         if (cash != null && (!bestCash || cash < bestCash.amount)) {
-          const planName = stay.ratePlans.get(code)?.name ?? code;
+          const planName = stay.ratePlans[code]?.name ?? code;
           bestCash = {
             amount: cash,
             currency,
@@ -630,9 +630,17 @@ __name(findAvailability, "findAvailability");
 
 export default defineSkill({
   filterStaySummaries: fn({
-    summary: "post-filter.",
-    input: z.any().optional(),
-    handler: async (params) => filterStaySummaries(params),
+    summary: "Filter {rooms, filters}; rooms is the room summary array from summarizeStay.",
+    input: z.object({
+      rooms: z.array(z.record(z.unknown())),
+      filters: z.object({
+        cashOnly: z.boolean().optional(), pointsOnly: z.boolean().optional(),
+        refundableOnly: z.boolean().optional(), excludeBonusPoints: z.boolean().optional(),
+        maxCash: z.number().nonnegative().optional(), maxPoints: z.number().nonnegative().optional(),
+        ratePlanCategoryAllow: z.union([z.string(), z.array(z.string())]).optional(),
+      }).optional(),
+    }),
+    handler: async ({rooms, filters}) => filterStaySummaries(rooms, filters),
   }),
   findAvailability: fn({
     summary: "★ main entry. Date range → per-night calendar with cash + points.",

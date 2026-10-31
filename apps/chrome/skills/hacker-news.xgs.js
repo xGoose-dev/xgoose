@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         hacker-news
 // @namespace    hn
-// @version      0.1.4
+// @version      0.1.5
 // @description  Hacker News search, all six feeds, stories, comments, threads, polls, users, submissions and updates. Bounded, cached, rate-limited reads with original-source cards.
 // @match        https://news.ycombinator.com/*
 // @match        https://hn.algolia.com/*
@@ -57,15 +57,8 @@ function textOf(html) {
   if (!html) return '';
   const doc = new DOMParser().parseFromString(`<html><body>${String(html)}</body></html>`, 'text/html');
   doc.querySelectorAll('script,style,iframe,noscript,template').forEach(n => n.remove());
-  // Pictures and quotes stay visible as markers; icons, emoji and avatars are dropped.
-  doc.querySelectorAll('img').forEach(img => {
-    const tiny = ['width', 'height'].some(side => Number(img.getAttribute(side)) > 0 && Number(img.getAttribute(side)) < 48);
-    if (tiny || /emoji|avatar|icon/i.test(`${img.className} ${img.getAttribute('alt') || ''}`)) img.remove();
-  });
-  doc.querySelectorAll('img').forEach((img, index) => img.replaceWith(` [image ${index + 1}] `));
-  Array.from(doc.querySelectorAll('blockquote')).reverse().forEach(quote => quote.replaceWith(`\n[quote: ${quote.textContent.replace(/\s+/g, ' ').trim()}]\n`));
-  doc.querySelectorAll('p,br,li,div,h1,h2,h3,pre').forEach(n => n.append('\n'));
-  return (doc.body.textContent || '').replace(/[^\S\n]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  doc.querySelectorAll('p,br,li,div,blockquote,h1,h2,h3,pre').forEach(n => n.append('\n'));
+  return (doc.body.textContent || '').replace(/[^\S\n]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function documentOf(html) {
@@ -207,7 +200,7 @@ function createClient(site, policy, allowed) {
   function request(input, options = {}) {
     const url = new URL(input, location.href);
     if (url.protocol !== 'https:' || url.username || url.password || !allowed(url)) throw fault('invalid_endpoint', 'Request is outside the declared read-only site endpoints.');
-    const cacheKey = `${options.cacheScope ?? 'public'}:${options.type ?? 'json'}:${url.href}`;
+    const cacheKey = `${options.cacheScope ?? 'public'}:${options.type ?? 'json'}:${options.method ?? 'GET'}:${options.body ?? ''}:${url.href}`;
     const ttl = options.ttl ?? 30000;
     const cached = state.cache.get(cacheKey);
     if (ttl && cached?.until > Date.now()) return Promise.resolve(structuredClone(cached.value));
@@ -226,7 +219,7 @@ function createClient(site, policy, allowed) {
           ['hacker-news.firebaseio.com','hn.algolia.com','www.sov2ex.com','sov2ex.com'].includes(url.hostname) &&
           typeof globalThis.__xgoose?.publicReaderFetch === 'function';
         const response = usePublicRelay ? await globalThis.__xgoose.publicReaderFetch(url.href, { signal: controller.signal }) : await fetch(url.href, {
-          method: 'GET', credentials: url.origin === location.origin ? 'include' : 'omit',
+          method: options.method ?? 'GET', body: options.body, credentials: url.origin === location.origin ? 'include' : 'omit',
           headers: options.headers, signal: controller.signal, redirect: 'error', cache: options.cache,
         });
         const retry = response.headers.get('retry-after');
@@ -257,6 +250,7 @@ function createClient(site, policy, allowed) {
   }
   return {
     request,
+    cooldown(ms) { load(); state.blockedUntil = Math.max(state.blockedUntil, Date.now() + ms); save(); },
     status() { load(); return { ...policy, queued: state.queued, usedLastHour: state.times.length,
       usedLastMinute: state.times.filter(t => t > Date.now() - 60000).length,
       retryAfterMs: Math.max(0, state.blockedUntil - Date.now()),
@@ -295,7 +289,7 @@ function hnSource(item, options = {}) {
     url: `https://news.ycombinator.com/item?id=${id}`, externalUrl: item.url ?? item.story_url,
     text: textOf(item.text ?? item.comment_text ?? item.story_text ?? ''), publishedAt: item.time ?? item.created_at,
     parentId: item.parent ?? item.parent_id, score: item.score ?? item.points,
-    commentCount: item.descendants ?? item.num_comments, ...options,
+    commentCount: item.descendants ?? item.num_comments, scope: options.scope, complete: options.complete,
   }, options);
 }
 const itemInput = z.object({ id: identifier, ...readOptions });
@@ -314,28 +308,29 @@ function numericId(id) {
 }
 const skill = {
   search: siteFn('Search stories/comments using Algolia. Supports tags, author, time/points filters, relevance or date order. Read detail before summarizing.', z.object({
-    query: z.string().min(1).max(500), type: z.enum(['story','comment','all','ask_hn','show_hn','poll','job']).default('story'),
+    query: z.string().max(500).default(''), storyId: z.number().int().positive().optional(), minComments: z.number().int().nonnegative().optional(), type: z.enum(['story','comment','all','ask_hn','show_hn','poll','job']).default('story'),
     order: z.enum(['relevance','date']).default('relevance'), author: z.string().max(80).optional(),
     after: z.number().int().nonnegative().optional(), before: z.number().int().nonnegative().optional(),
     minPoints: z.number().int().nonnegative().optional(), page: offset, limit: count(10, 20),
   }), async a => {
-    const filters = [a.after != null && `created_at_i>${a.after}`, a.before != null && `created_at_i<${a.before}`, a.minPoints != null && `points>=${a.minPoints}`].filter(Boolean);
-    const tags = [a.type !== 'all' && a.type, a.author && `author_${a.author}`].filter(Boolean);
+    const filters = [a.after != null && `created_at_i>${a.after}`, a.before != null && `created_at_i<${a.before}`, a.minPoints != null && `points>=${a.minPoints}`, a.minComments != null && `num_comments>=${a.minComments}`].filter(Boolean);
+    const tags = [a.type !== 'all' && a.type, a.author && `author_${a.author}`, a.storyId && `story_${a.storyId}`].filter(Boolean);
     const data = await algolia(a.order === 'date' ? 'search_by_date' : 'search', {
       query: a.query, tags: tags.join(','), numericFilters: filters.join(','), page: String(a.page), hitsPerPage: String(a.limit),
     }, a);
-    return result(data.hits.map(h => hnSource(h, { scope: 'snippet', complete: false })), {
+    return result(data.hits.map(h => hnSource(h, { maxChars: 500, scope: 'snippet', complete: false })), {
       total: data.nbHits, page: data.page, nextPage: data.page + 1 < data.nbPages ? data.page + 1 : null,
       provider: 'Algolia HN Search',
     });
   }, [{ args: { query: 'local LLM', order: 'date', limit: 5 } }]),
+  getUserComments: siteFn('Search a user’s comments, optionally within one story, newest first; supports empty text queries.',z.object({username:z.string().min(1),query:z.string().default(''),storyId:z.number().int().positive().optional(),page:offset,limit:count(10,20)}),a=>skill.search.handler({...a,author:a.username,type:'comment',order:'date'})),
   getStories: siteFn('Read top/new/best/ask/show/job feeds. Pagination applies to the official ID list; each selected item consumes a request.', listInput.extend({
     feed: z.enum(['top','new','best','ask','show','job']).default('top'),
   }), async a => {
     const ids = await firebase(`${a.feed}stories`, a);
     const selected = ids.slice(a.offset, a.offset + a.limit);
     const data = await items(selected, a);
-    return result(data.filter(v => !v.deleted && !v.dead).map(v => hnSource(v, {})), {
+    return result(data.filter(v => !v.deleted && !v.dead).map(v => hnSource(v, { maxChars: 600 })), {
       total: ids.length, nextOffset: a.offset + selected.length < ids.length ? a.offset + selected.length : null,
     });
   }),
@@ -345,9 +340,16 @@ const skill = {
     if (item.deleted || item.dead) return result([], { status: item.deleted ? 'deleted' : 'dead', id: item.id });
     return result([hnSource(item, a)], { type: item.type, parentId: item.parent ?? null, childIds: item.kids ?? [], pollOptionIds: item.parts ?? [] });
   }),
+  getPoll: siteFn('Read a poll and one page of its options with live Firebase vote scores.',listInput.extend({id:identifier}),async a=>{
+    const poll=await firebase(`item/${numericId(a.id)}`,a);
+    if(!poll||poll.deleted||poll.dead)return result([],{status:'not_found'});
+    if(poll.type!=='poll')throw fault('not_a_poll','This item is not a poll.');
+    const ids=poll.parts??[],selected=ids.slice(a.offset,a.offset+a.limit),options=await items(selected,a);
+    return result([hnSource(poll),...options.filter(x=>!x.dead&&!x.deleted).map(x=>hnSource(x))],{pollId:poll.id,totalOptions:ids.length,nextOffset:a.offset+selected.length<ids.length?a.offset+selected.length:null});
+  }),
   getItems: siteFn('Batch-read up to five explicit IDs; deleted items are reported, not treated as empty readable sources.', z.object({ ids: z.array(identifier).min(1).max(5) }), async a => {
     const found = await items(a.ids.map(numericId), a);
-    return result(found.filter(i => !i.deleted && !i.dead).map(i => hnSource(i, {})), {
+    return result(found.filter(i => !i.deleted && !i.dead).map(i => hnSource(i, { maxChars: 2000 })), {
       unavailableIds: a.ids.filter(id => !found.some(i => String(i.id) === String(id) && !i.deleted && !i.dead)),
     });
   }),
@@ -356,7 +358,7 @@ const skill = {
     if (!item || item.deleted) return result([], { status: 'not_found' });
     const ids = item.kids ?? []; const selected = ids.slice(a.offset, a.offset + a.limit);
     const found = await items(selected, a);
-    return result(found.filter(i => !i.deleted && !i.dead).map(i => hnSource(i, {})), {
+    return result(found.filter(i => !i.deleted && !i.dead).map(i => hnSource(i, { maxChars: 1000 })), {
       children: found.map(i => ({ id: i.id, parentId: i.parent, childIds: i.kids ?? [] })),
       totalDirectChildren: ids.length, nextOffset: a.offset + selected.length < ids.length ? a.offset + selected.length : null,
     });
@@ -373,7 +375,7 @@ const skill = {
       if(!left||!right)return left?-1:right?1:0;
       return (Date.parse(left)-Date.parse(right))*(a.order==='new'?-1:1);
     });
-    return result([hnSource(data, {}), ...flat.slice(a.offset, a.offset + a.limit).filter(i => i.text).map(i => hnSource(i, {}))], {
+    return result([hnSource(data, { maxChars: 3000 }), ...flat.slice(a.offset, a.offset + a.limit).filter(i => i.text && !i.deleted && !i.dead).map(i => hnSource(i, { maxChars: 700 }))], {
       order:a.order,
       provider: 'Algolia snapshot; can lag the live thread', totalLoadedComments: flat.length,
       nextOffset: a.offset + a.limit < flat.length ? a.offset + a.limit : null, complete: stack.length === 0 && a.offset === 0 && flat.length <= a.limit,
@@ -390,7 +392,7 @@ const skill = {
     const user = await firebase(`user/${encodeURIComponent(a.username)}`, a);
     if (!user) return result([], { status: 'not_found' });
     const ids = user.submitted ?? [];
-    return result((await items(ids.slice(a.offset, a.offset + a.limit), a)).filter(i => !i.deleted && !i.dead).map(i => hnSource(i, {})),
+    return result((await items(ids.slice(a.offset, a.offset + a.limit), a)).filter(i => !i.deleted && !i.dead).map(i => hnSource(i, { maxChars: 600 })),
       { nextOffset: a.offset + a.limit < ids.length ? a.offset + a.limit : null });
   }),
   getUpdates: siteFn('Read the official changed item/profile IDs; no automatic polling.', empty, async a => firebase('updates', a)),
@@ -401,4 +403,4 @@ const skill = {
   }),
   getRateLimit: siteFn('Inspect local quotas, shared cooldown and queue size.', empty, () => client.status()),
 };
-export default defineSkill(skill, { instructions: READING_INSTRUCTIONS +" HN external article URLs and discussion URLs are separate. Algolia can lag live Firebase data." });
+export default defineSkill(skill, { instructions: READING_INSTRUCTIONS + ' HN article bodies are external URLs, not present in story metadata; do not invent their contents. HN discussion URLs and external article URLs are separate. Algolia can lag live Firebase data.' });

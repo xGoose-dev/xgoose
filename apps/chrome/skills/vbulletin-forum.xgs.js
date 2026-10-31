@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         vbulletin-forum
 // @namespace    vbulletin
-// @version      0.2.1
+// @version      0.2.2
 // @description  Generic helpers for vBulletin 3.x/4.x forums (search posts/threads, read threads, see post pictures, recent threads, forum listings).
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*

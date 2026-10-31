@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        capital-one-offers
 // @namespace   c1o
-// @version     0.1.0
+// @version     0.1.1
 // @description Capital One Shopping (web) + Capital One Offers (miles) feed scraper. Same-origin against capitaloneshopping.com / capitaloneoffers.com. Lifted from uscardforum #493086 / Capital-One-Offers-Ultimate-API-Scraper v45.1.
 // @match       *://capitaloneshopping.com/*
 // @match       *://*.capitaloneshopping.com/*
@@ -49,11 +49,13 @@ function stableHash(s) {
 __name(stableHash, "stableHash");
 function detectReward(text) {
   const t = String(text);
-  const pct = t.match(/(\d{1,3}(?:[,\d]*))\s*%/);
+  const pct = t.match(/\b(\d[\d,]*(?:\.\d+)?)\s*%/);
   if (pct) return { kind: "percent", amount: Number(pct[1].replace(/,/g, "")) };
   const xMiles = t.match(/(\d{1,3}(?:\.\d+)?)x\s*miles?/i);
   if (xMiles) return { kind: "miles", amount: Number(xMiles[1]) };
-  const cash = t.match(/\$(\d{1,3}(?:[,\d]*)(?:\.\d+)?)/);
+  const cash = t.match(/\b(?:get|earn|receive|save)\s+(?:up to\s+)?\$(\d[\d,]*(?:\.\d+)?)/i)
+    || t.match(/\$(\d[\d,]*(?:\.\d+)?)\s+(?:back|cash\s*back|statement credit|off)\b/i)
+    || t.match(/^\s*\$(\d[\d,]*(?:\.\d+)?)\s*$/);
   if (cash) return { kind: "cash", amount: Number(cash[1].replace(/,/g, "")) };
   if (/miles?/i.test(t)) return { kind: "miles", amount: null };
   return { kind: "unknown", amount: null };

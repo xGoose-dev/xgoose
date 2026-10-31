@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         amex-offers
 // @namespace    amex
-// @version      0.2.1
+// @version      0.2.2
 // @description  American Express Offers automation — list / add / track via DOM clicks on global.americanexpress.com.
 // @match        *://global.americanexpress.com/*
 // @match        *://www.americanexpress.com/*
@@ -111,11 +111,13 @@ function textOf(el, sel) {
 }
 
 function detectRewardKind(text) {
-  const m = text.match(/(\d{1,3}(?:[,\d]*))\s*%/);
+  const m = text.match(/\b(\d[\d,]*(?:\.\d+)?)\s*%/);
   if (m) return { kind: 'percent', amount: Number(m[1].replace(/,/g, '')) };
-  const cash = text.match(/\$(\d{1,3}(?:[,\d]*)(?:\.\d+)?)/);
+  const cash = text.match(/\b(?:get|earn|receive|save)\s+(?:up to\s+)?\$(\d[\d,]*(?:\.\d+)?)/i)
+    || text.match(/\$(\d[\d,]*(?:\.\d+)?)\s+(?:back|cash\s*back|statement credit|off)\b/i)
+    || text.match(/^\s*\$(\d[\d,]*(?:\.\d+)?)\s*$/);
   if (cash) return { kind: 'cash', amount: Number(cash[1].replace(/,/g, '')) };
-  const mr = text.match(/(\d{1,3}(?:[,\d]*))\s*(?:MR|Membership Rewards|points)/i);
+  const mr = text.match(/\b(\d[\d,]*)\s*(?:MR\b|Membership Rewards(?:®)?(?:\s+points)?|(?:bonus\s+)?points\b)/i);
   if (mr) return { kind: 'mr_points', amount: Number(mr[1].replace(/,/g, '')) };
   return { kind: 'unknown', amount: null };
 }

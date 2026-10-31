@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         marriott-awards
 // @namespace    marriott
-// @version      0.2.0
+// @version      0.3.1
 // @description  Marriott Bonvoy property calendar search. Same-origin scraper for phoenixShopADFSearchProductsByProperty GraphQL endpoint with persisted-query allowlisting.
 // @match        *://www.marriott.com/*
 // @detect       location.hostname === 'www.marriott.com'
@@ -174,7 +174,7 @@ async function callGqlOnce(body) {
   const r = await fetch(GQL_URL, {
     method: 'POST',
     credentials: 'include',
-    headers: GQL_HEADERS,
+    headers: {...GQL_HEADERS, "graphql-operation-signature": operationSignature(GQL_OP)},
     body: JSON.stringify(body),
   });
   const bodyText = await r.text();
@@ -280,9 +280,10 @@ async function getCalendarInternal(params) {
   let lastErr = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     const { status, bodyText, json } = await callGqlOnce(body);
-    if (status === 200 && json?.data) {
-      const conn = json.data.search?.calendarSearchByProperty;
-      const rawEdges = conn?.edges ?? [];
+    const conn = json?.data?.search?.calendarSearchByProperty;
+    const errors = Array.isArray(json?.errors) ? json.errors : [];
+    if (status === 200 && Array.isArray(conn?.edges)) {
+      const rawEdges = conn.edges;
       const edges = rawEdges.map((e) => {
         const node = e.node ?? {};
         const rm = node.rateModes ?? {};
@@ -305,10 +306,11 @@ async function getCalendarInternal(params) {
         endDate: params.endDate,
         total: typeof conn?.total === 'number' ? conn.total : edges.length,
         edges,
-        status: 'ok',
+        status: errors.length ? 'partial' : 'ok',
+        errors,
       };
     }
-    lastErr = { status, bodyText };
+    lastErr = { status, bodyText, errors };
     if (status !== 403) break;
     if (attempt < retries) {
       const delay = [2000, 5000, 15000][Math.min(attempt, 2)];
@@ -322,7 +324,11 @@ async function getCalendarInternal(params) {
     endDate: params.endDate,
     total: 0,
     edges: [],
-    status: lastErr?.status === 403 ? classify403(lastErr.bodyText) : 'stale_signature',
+    status: lastErr?.status === 403 ? classify403(lastErr.bodyText)
+      : lastErr?.errors?.length ? 'graphql_error'
+      : lastErr?.status === 200 ? 'invalid_response' : 'http_error',
+    errors: lastErr?.errors ?? [],
+    httpStatus: lastErr?.status,
   };
 }
 
@@ -335,10 +341,30 @@ const NightFiltersSchema = z.object({
   weekendsOnly: z.boolean().optional(),
 }).optional();
 
+// Signature discovery follows the current Marriott search frontend; no pinned fallback.
+function operationSignature(operationName) {
+  const page = JSON.parse(document.getElementById('__NEXT_DATA__')?.textContent || '{}');
+  const signatures = page.props?.pageProps?.operationSignatures || [];
+  const signature = signatures.find(item => item.operationName === operationName)?.signature;
+  if (!signature) throw new Error(`Open Marriott search results to load ${operationName}'s current signature.`);
+  return signature;
+}
+async function searchOperation({operationName, variables}) {
+  const response = await fetch(`/mi/query/${operationName}`, {method:'POST', credentials:'include',
+    headers:{...GQL_HEADERS, 'graphql-operation-name':operationName, 'graphql-operation-signature':operationSignature(operationName)},
+    body:JSON.stringify({operationName,variables})});
+  if (!response.ok) throw new Error(`Marriott ${operationName}: HTTP ${response.status}`);
+  const json=await response.json();
+  if(json.errors?.length)throw new Error(JSON.stringify(json.errors));
+  return json.data;
+}
 export default defineSkill({
+  searchDestination: fn({summary:'Resolve a city or destination with Marriott’s current persisted query.',input:z.object({query:z.string()}),examples:[{args:{query:'Tokyo'}}],handler:({query})=>searchOperation({operationName:'phoenixShopSuggestedPlacesQuery',variables:{query}})}),
+  getDestination: fn({summary:'Resolve a suggested Place ID to latitude/longitude.',input:z.object({placeId:z.string()}),handler:({placeId})=>searchOperation({operationName:'phoenixShopSuggestedPlacesDetailsQuery',variables:{placeId}})}),
+  searchHotels: fn({summary:'Dated geo search. Pass the current frontend search/limit/offset/sort/filter variables; returns native data.',input:z.object({variables:z.record(z.unknown())}),handler:({variables})=>searchOperation({operationName:'phoenixShopDatedSearchByGeoQuery',variables})}),
   findAvailability: fn({
     summary:
-      'Date range → per-night cash calendar for a Marriott property. ★ primary entry. Returns Calendar { propertyCode, mode, startDate, endDate, nights[], available[] (filtered), cashBest, pointsBest, scanned, errors[] }. NightSummary = { date, status: "available"|"sold_out", cash, cashTotal, currency, points, sourceOfRate, rateMode }.',
+      'Date range → per-night cash calendar for a Marriott property. ★ primary entry. Returns Calendar { propertyCode, mode, startDate, endDate, nights[], available[] (filtered), cashBest, pointsBest, scanned, errors[] }. NightSummary = { date, status: "available"|"sold_out"|"unknown", cash, cashTotal, currency, points, sourceOfRate, rateMode }. Failed or partial windows preserve errors; missing rates in those windows are unknown.',
     input: z.object({
       propertyCode: z.string().min(5).max(8).describe('5-letter MARSHA code, e.g. "TYOLC". Auto-uppercased.'),
       startDate: z.string().regex(DATE_RX).describe('YYYY-MM-DD inclusive.'),
@@ -366,7 +392,7 @@ export default defineSkill({
       const propertyCode = params.propertyCode.toUpperCase();
       const mode = params.mode === 'points' ? 'points' : 'cash';
       const errors = [];
-      const allEdges = [];
+      const nights = [];
       let cursor = params.startDate;
       let calls = 0;
       while (cursor <= params.endDate) {
@@ -383,14 +409,14 @@ export default defineSkill({
         });
         calls++;
         if (resp.status !== 'ok') {
-          errors.push({ window: `${cursor}..${windowEnd}`, error: resp.status });
-        } else {
-          allEdges.push(...resp.edges);
+          errors.push({ window: `${cursor}..${windowEnd}`, error: resp.status, details: resp.errors, httpStatus: resp.httpStatus });
         }
+        nights.push(...expandEdges(resp.edges, cursor, windowEnd).map(night =>
+          resp.status !== 'ok' && night.status === 'sold_out'
+            ? {...night, status: 'unknown', error: resp.status} : night));
         cursor = addDays(windowEnd, 1);
       }
 
-      const nights = expandEdges(allEdges, params.startDate, params.endDate);
       const filtered = filterNightsInternal(nights.filter((n) => n.status === 'available'), params.filters);
 
       let cashBest = null;
@@ -421,7 +447,7 @@ export default defineSkill({
 
   getCalendar: fn({
     summary:
-      'Single raw GraphQL call (≤32 nights). Returns CalendarResponse { propertyCode, startDate, endDate, total, edges[], status: "ok"|"akamai_blocked"|"stale_signature" }.',
+      'Single raw GraphQL call (≤32 nights). Returns CalendarResponse { propertyCode, startDate, endDate, total, edges[], status, errors[] }. Status is ok, partial, graphql_error, invalid_response, http_error, akamai_blocked or stale_signature. Partial responses retain available edges and GraphQL errors.',
     input: z.object({
       propertyCode: z.string().min(5).max(8),
       startDate: z.string().regex(DATE_RX),
