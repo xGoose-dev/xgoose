@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         zsxq
 // @namespace    zsxq
-// @version      0.1.3
+// @version      0.1.4
 // @description  知识星球前端 API：当前登录用户、星球、主题、搜索、正文、图片和评论，复用网页登录态。
 // @match        https://wx.zsxq.com/*
 // @connect      api.zsxq.com
@@ -24,7 +24,9 @@ async function requestBuilder() {
   for(const link of document.querySelectorAll('link[rel="modulepreload"]')) {
     const url=link.href;
     const module=await import(url);
-    const HttpService=Object.values(module).find(value=>typeof value==='function' && typeof value.prototype?.getUrl==='function' && typeof value.prototype?.get401ErrorInfo==='function' && typeof value.prototype?.get==='function');
+    // getUrl identifies the website's signed-URL service export. Call its get
+    // method directly; unrelated methods are not a prerequisite for a request.
+    const HttpService=Object.values(module).find(value=>value?.prototype?.getUrl);
     if(HttpService) {
       // The website's service generates the signed URL and HttpHeaders. Its
       // transport adapter returns that request instead of starting Angular I/O.
@@ -32,7 +34,7 @@ async function requestBuilder() {
       return frontendClient;
     }
   }
-  throw new Error('ZSXQ frontend HTTP service is not present in the loaded modules.');
+  throw new Error('Could not locate the ZSXQ signed-URL service export.');
 }
 async function api(path,params={}) {
   const query=new URLSearchParams();

@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         aa-awards
 // @namespace    aaAwards
-// @version      0.2.0
+// @version      0.3.1
 // @description  American Airlines award/cash calendar scanner. Same-origin POST to www.aa.com/booking/api/search/calendar.
 // @match        *://www.aa.com/*
 // @match        *://aa.com/*
@@ -17,23 +17,9 @@
 // @keyword      business class
 // ==/XGooseSkill==
 
-/**
- * AA award scanner. Same-origin POST to:
- *   POST https://www.aa.com/booking/api/search/calendar
- *
- * Akamai will silently 403 if you push too many requests; the skill defaults
- * to concurrency:1 and delayMs:300 (matches the OP's published throttle).
- * When AA returns 403 we surface `status: 'akamai_blocked'` and stop the
- * loop — no retry will help short of a fresh browser/profile.
- *
- * IMPORTANT field reference:
- *   day.solution.perPassengerAwardPoints      = points/passenger (null = no award)
- *   day.solution.perPassengerSaleTotal.amount = cash/passenger (total, not avg)
- *   responseInfo === 'soldOutHotel'           = no availability for these dates
- *
- * Cabin values: 'COACH', 'PREMIUM_COACH', 'BUSINESS,FIRST'. Default 'BUSINESS,FIRST'.
- * maxStops: '0' (nonstop), '1' (default), '2'.
- */
+// AA monthly calendar API; search UI reference:
+// https://github.com/markswendsen-code/mcp-american/blob/main/src/browser.ts
+// Calendar points and cash are returned per passenger by AA.
 
 import { defineSkill, fn } from '@xgoose/skill';
 import { z } from 'zod';
@@ -61,16 +47,10 @@ function todayIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function tomorrowIso() {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 function pickDepDate(month, today = todayIso()) {
   const currentMonth = today.slice(0, 7);
   if (month < currentMonth) return null;
-  if (month === currentMonth) return tomorrowIso();
+  if (month === currentMonth) return today;
   return `${month}-01`;
 }
 
@@ -106,7 +86,7 @@ function isSameCity(a, b) {
 function buildBody(p) {
   return JSON.stringify({
     metadata: { selectedProducts: [], tripType: 'OneWay', udo: {} },
-    passengers: [{ type: 'adult', count: 1 }],
+    passengers: [{ type: 'adult', count: p.adults ?? 1 }],
     requestHeader: { clientId: 'AAcom' },
     slices: [
       {
@@ -145,6 +125,7 @@ async function rawFetch(p) {
       depDate: p.depDate,
       cabin: p.cabin ?? 'BUSINESS,FIRST',
       maxStops: p.maxStops ?? '1',
+      adults: p.adults ?? 1,
     }),
   });
 
@@ -174,9 +155,9 @@ function summarize(p) {
         const sol = day.solution;
         if (!sol) continue;
         const points = sol.perPassengerAwardPoints;
-        if (typeof points !== 'number' || points <= 0 || points >= cap) continue;
-        const cash = sol.perPassengerSaleTotal?.amount ?? 0;
-        const currency = sol.perPassengerSaleTotal?.currency ?? 'USD';
+        if (typeof points !== 'number' || points <= 0 || points > cap) continue;
+        const cash = sol.perPassengerSaleTotal?.amount ?? null;
+        const currency = sol.perPassengerSaleTotal?.currency ?? null;
         out.push({
           date: day.date,
           dayOfWeek: dayOfWeek(day.date),
@@ -185,12 +166,15 @@ function summarize(p) {
           cabin: p.raw.cabin,
           points,
           cash,
+          adults: p.raw.adults ?? 1,
+          priceBasis: 'per_passenger',
           currency,
           bookingUrl: makeBookingUrl({
             origin: p.raw.origin,
             destination: p.raw.destination,
             depart: day.date,
             cabin: p.raw.cabin,
+            adults: p.raw.adults ?? 1,
           }),
         });
       }
@@ -200,20 +184,20 @@ function summarize(p) {
   return out;
 }
 
-function makeBookingUrl({ origin, destination, depart, cabin }) {
+function makeBookingUrl({ origin, destination, depart, cabin, adults = 1 }) {
   const sp = new URLSearchParams({
     type: 'OneWay',
     searchType: 'Award',
     from: origin,
     to: destination,
-    pax: '1',
+    pax: String(adults),
     cabin: cabin ?? 'BUSINESS,FIRST',
     locale: 'en_US',
     nearbyAirports: 'false',
     depart,
     carriers: 'ALL',
     pos: 'US',
-    adult: '1',
+    adult: String(adults),
   });
   return `https://www.aa.com/booking/search?${sp.toString()}`;
 }
@@ -227,10 +211,10 @@ export default defineSkill({
       fromMonth: z.string().regex(MONTH_RX).describe('YYYY-MM'),
       toMonth: z.string().regex(MONTH_RX).describe('YYYY-MM'),
       cabin: CabinSchema.optional().describe('Default "BUSINESS,FIRST"'),
+      adults: z.number().int().min(1).max(9).optional(),
       maxStops: MaxStopsSchema.optional().describe('Default "1"'),
       delayMs: z.number().int().min(0).max(10000).optional().describe('Throttle between probes. Default 300.'),
-      concurrency: z.number().int().min(1).max(8).optional(),
-      maxAwardPoints: z.number().positive().optional().describe('Filter out hits ≥ this many points.'),
+      maxAwardPoints: z.number().positive().optional().describe('Maximum points per passenger, inclusive.'),
     }),
     examples: [
       {
@@ -281,7 +265,7 @@ export default defineSkill({
           failed++;
           continue;
         }
-        const r = await rawFetch({ ...t, cabin, maxStops });
+        const r = await rawFetch({ ...t, cabin, maxStops, adults: p.adults ?? 1 });
         if (r.status === 'akamai_blocked') {
           blocked = true;
           failed++;
@@ -299,7 +283,7 @@ export default defineSkill({
           notes.push(`HTTP ${r.httpStatus ?? '?'} on ${t.origin}→${t.destination} ${t.depDate}`);
           continue;
         }
-        const month = { raw: r.body ?? {}, origin: t.origin, destination: t.destination, depDate: t.depDate, cabin };
+        const month = { raw: r.body ?? {}, origin: t.origin, destination: t.destination, depDate: t.depDate, cabin, adults: p.adults ?? 1 };
         const monthHits = summarize({ raw: month, maxAwardPoints: cap });
         hits.push(...monthHits);
         if (delayMs) await sleep(delayMs);
@@ -310,6 +294,7 @@ export default defineSkill({
       if (blocked) status = 'akamai_blocked';
       else if (rateLimited > 0 && hits.length === 0) status = 'rate_limited';
       else if (failed > 0 && hits.length > 0) status = 'partial';
+      else if (failed > 0) status = 'http_error';
       else if (hits.length === 0) status = 'no_availability';
       else status = 'ok';
       return { status, hits, scanned: tasks.length, failed, notes };
@@ -323,6 +308,7 @@ export default defineSkill({
       destination: z.string().min(3),
       depDate: z.string().regex(DATE_RX),
       cabin: CabinSchema.optional(),
+      adults: z.number().int().min(1).max(9).optional(),
       maxStops: MaxStopsSchema.optional(),
     }),
     handler: async (p) => {
@@ -331,7 +317,18 @@ export default defineSkill({
       if (result.status !== 'ok') {
         throw new Error(`searchCalendar: ${result.status} (HTTP ${result.httpStatus ?? '?'})`);
       }
-      return { raw: result.body ?? {}, origin: p.origin, destination: p.destination, depDate: p.depDate, cabin };
+      return { raw: result.body ?? {}, origin: p.origin, destination: p.destination, depDate: p.depDate, cabin, adults: p.adults ?? 1 };
+    },
+  }),
+
+  getCalendar: fn({
+    summary: "Monthly calendar normalized to per-passenger points, cash, currency and booking links.",
+    input: z.object({origin: z.string(), destination: z.string(), depDate: z.string().regex(DATE_RX), adults: z.number().int().min(1).max(9).optional(), cabin: CabinSchema.optional(), maxStops: MaxStopsSchema.optional(), maxAwardPoints: z.number().positive().optional()}),
+    examples: [{args: {origin: "DFW", destination: "LHR", depDate: "2026-12-01", adults: 2}}],
+    handler: async p => {
+      const result = await rawFetch(p);
+      if (result.status !== "ok") return result;
+      return {status: "ok", origin: p.origin, destination: p.destination, adults: p.adults ?? 1, hits: summarize({raw: {raw: result.body, ...p}, maxAwardPoints: p.maxAwardPoints}), source: ENDPOINT};
     },
   }),
 
@@ -351,6 +348,7 @@ export default defineSkill({
       destination: z.string(),
       depart: z.string().regex(DATE_RX),
       cabin: CabinSchema.optional(),
+      adults: z.number().int().min(1).max(9).optional(),
     }),
     handler: async (p) => makeBookingUrl(p),
   }),

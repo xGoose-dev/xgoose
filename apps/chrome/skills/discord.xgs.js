@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discord
 // @namespace    discord
-// @version      0.1.3
+// @version      0.1.5
 // @description  Search Discord messages using the signed-in web client; read channels, threads, message context, attachments and profiles.
 // @match        https://discord.com/*
 // @match        https://canary.discord.com/*
@@ -14,85 +14,58 @@
 import { defineSkill, fn } from '@xgoose/skill';
 import { z } from 'zod';
 
-// Native client owns authentication and request scheduling. No token is read or returned.
-// Discord changes minified export names and namespace nesting between builds.
-// Do not require every write method this reader never uses, or confuse a missed
-// export fingerprint with a failed HTTP request. Cache successes only: late
-// chunks must remain discoverable after an unsuccessful early call.
-let loader, nativeClient;
-let clientDiagnostics = { code: 'NOT_CHECKED', cachedModules: 0, scannedExports: 0 };
-const objectLike = value => value !== null && (typeof value === 'object' || typeof value === 'function');
-function property(value, key) { try { return value?.[key]; } catch { return undefined; } }
-function runtime() {
-  if (loader?.c) return loader;
-  const chunks = globalThis.webpackChunkdiscord_app;
-  if (!Array.isArray(chunks)) return null;
-  const entry = [['xgoose_discord_' + Date.now() + '_' + Math.random().toString(36).slice(2)], {}, r => { loader = r; }];
-  chunks.push(entry);
-  // Only remove our own entry; never discard an app chunk added by a wrapper.
-  if (chunks.at(-1) === entry) chunks.pop();
-  return loader?.c ? loader : null;
-}
-function findHttp() {
-  if (nativeClient) return nativeClient;
-  const req = runtime();
-  if (!req) {
-    clientDiagnostics = { code: Array.isArray(globalThis.webpackChunkdiscord_app) ? 'RUNTIME_NOT_READY' : 'DISCORD_APP_REQUIRED', cachedModules: 0, scannedExports: 0 };
-    return null;
-  }
-  const cache = Object.values(req.c), queue = [], seen = new Set();
-  for (const m of cache) { const value = property(m, 'exports'); if (objectLike(value)) queue.push({ value, depth: 0 }); }
-  let fallback = null, scanned = 0;
-  for (let index = 0; index < queue.length && scanned < 50000; index++) {
-    const { value, depth } = queue[index];
-    if (seen.has(value)) continue;
-    seen.add(value); scanned++;
-    const has = key => typeof property(value, key) === 'function';
-    // get alone also matches stores, lodash and Maps. Require post as a
-    // transport fingerprint, prefer fuller HTTP clients, and keep `this`.
-    if (has('get') && has('post')) {
-      if (['put', 'patch', 'del', 'delete', 'getAPIBaseURL'].some(has)) {
-        nativeClient = value; break;
-      }
-      fallback ??= value;
-    }
-    if (depth >= 3) continue;
-    let keys;
-    try { keys = Object.getOwnPropertyNames(value); } catch { continue; }
-    // Each namespace is bounded. Avoid walking function prototypes, globals
-    // and arbitrary app state; only follow own exported object namespaces.
-    for (const key of keys.slice(0, 200)) {
-      if (queue.length >= 50000) break;
-      if (['prototype', 'constructor', '__proto__', 'caller', 'callee', 'arguments'].includes(key) || /token|secret|password|cookie|authorization/i.test(key)) continue;
-      const child = property(value, key);
-      if (objectLike(child) && !seen.has(child)) queue.push({ value: child, depth: depth + 1 });
+// Reuse the page's observed Discord request headers in memory. No webpack
+// exports, method inventories or readiness probes are needed. Authentication
+// succeeds or fails on the actual requested GET; headers are never returned.
+function sessionRequest() {
+  const bridge = globalThis.__xgoose;
+  const requests = bridge?.getNetworkRequests?.({filter:'/api/',limit:200}) ?? [];
+  for (const request of [...requests].reverse()) {
+    const url = new URL(request.url, location.href);
+    if (url.origin !== location.origin || !/^\/api\/v\d+\//.test(url.pathname)) continue;
+    const raw = bridge.getNetworkRequestDetail?.(request.id,'headers')?.req ?? {};
+    const headers = Object.fromEntries(Object.entries(raw).filter(([key]) => /^(authorization|x-super-properties|x-discord-locale|x-discord-timezone)$/i.test(key)));
+    if (Object.keys(headers).some(key => key.toLowerCase() === 'authorization')) {
+      return {base:url.pathname.match(/^\/api\/v\d+/)[0],headers};
     }
   }
-  nativeClient ??= fallback;
-  clientDiagnostics = { code: nativeClient ? 'READY' : 'HTTP_EXPORT_NOT_FOUND', cachedModules: cache.length, scannedExports: scanned };
-  return nativeClient;
+  return {base:'/api/v9',headers:{}};
 }
-async function http() {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const client = findHttp();
-    if (client) return client;
-    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 100));
+let requestTail = Promise.resolve(), lastRequestAt = 0, blockedUntil = 0;
+function get(path, query = {}) {
+  const run = () => getRequest(path, query);
+  const pending = requestTail.then(run, run);
+  requestTail = pending;
+  return pending;
+}
+async function getRequest(path, query) {
+  if (blockedUntil > Date.now()) {
+    throw Object.assign(new Error('Discord API rate limit cooldown'), {status:429,retryAfterMs:blockedUntil-Date.now()});
   }
-  throw Error(`Discord native HTTP client could not be resolved (${clientDiagnostics.code}; ${clientDiagnostics.cachedModules} cached modules). Refresh Discord and check diagnoseClient. No API request was sent.`);
-}
-async function get(path, query = {}) {
-  const client = await http();
-  const response = await client.get({url:path, query});
-  if (!response || typeof response !== 'object' || !('body' in response)) throw Error('Discord native HTTP client returned an unsupported response shape.');
-  if (response.status === 202) return {indexing:true, retry_after:response.body?.retry_after};
-  if (response.status >= 400) throw Error(`Discord API returned HTTP ${response.status}${response.status === 429 ? '; respect the native client rate limit before retrying' : ''}.`);
-  return response.body;
+  const delay = lastRequestAt + 1000 - Date.now();
+  if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+  lastRequestAt = Date.now();
+  const {base,headers} = sessionRequest();
+  const url = new URL(base + path, location.origin);
+  for (const [key,value] of Object.entries(query)) {
+    if (value === undefined) continue;
+    for (const item of Array.isArray(value) ? value : [value]) url.searchParams.append(key,String(item));
+  }
+  const response = await fetch(url.href,{method:'GET',credentials:'include',headers,redirect:'error'});
+  const body = await response.json();
+  if (response.status === 429) {
+    const header = response.headers.get('retry-after');
+    const retryMs = Number(body.retry_after ?? header ?? 1) * 1000;
+    blockedUntil = Date.now() + retryMs;
+  }
+  if (!response.ok) throw Object.assign(new Error(`Discord HTTP ${response.status}: ${body.message ?? JSON.stringify(body)}`),{status:response.status,body});
+  if (response.status === 202) return {indexing:true,retry_after:body.retry_after};
+  return body;
 }
 const id = z.string().regex(/^\d+$/);
 const empty = z.object({});
 const limit = z.number().int().min(1).max(100).default(25);
-// Host schemas are documentation-only; apply defaults and cursor validation
-// here too, rather than relying on a particular host or test adapter.
+// Apply request defaults in the handler, as in the current main implementation.
 const tool = spec => fn({...spec, handler: args => spec.handler(spec.input.parse(args ?? {}))});
 function current() {
   const [,guildId,channelId] = location.pathname.match(/^\/channels\/([^/]+)(?:\/([^/]+))?/) || [];
@@ -124,7 +97,6 @@ const searchInput = z.object({
 });
 export default defineSkill({
   getContext:tool({summary:'Get selected server/channel IDs and current page URL.',input:empty,handler:()=>({...current(),url:location.href})}),
-  diagnoseClient:tool({summary:'Inspect native HTTP client availability without making API requests or reading credentials. Returns ready, code and module/export counts.',input:empty,examples:[{args:{}}],handler:()=>{const ready=!!findHttp();return {ready,...clientDiagnostics};}}),
   listGuilds:tool({summary:'List joined servers through the native API; before/after paginate.',input:z.object({limit, before:id.optional(),after:id.optional()}),handler:async a=>({guilds:(await get('/users/@me/guilds',a)).map(g=>({id:g.id,name:g.name,icon:g.icon,owner:g.owner}))})}),
   listChannels:tool({summary:'List server channels, categories and parent IDs.',input:z.object({guildId:id.optional()}),handler:async a=>({channels:(await get(`/guilds/${guild(a.guildId)}/channels`)).map(c=>({id:c.id,name:c.name,type:c.type,parentId:c.parent_id,position:c.position,topic:c.topic}))})}),
   listDMs:tool({summary:'List existing DM and group conversations.',input:empty,handler:async()=>({channels:(await get('/users/@me/channels')).map(c=>({id:c.id,name:c.name,type:c.type,recipients:(c.recipients||[]).map(user),lastMessageId:c.last_message_id}))})}),
@@ -160,4 +132,4 @@ export default defineSkill({
     const raw=await get(`/users/${a.userId}/profile`,a.guildId?{guild_id:a.guildId}:{});
     return {user:{...user(raw.user),bio:raw.user.bio || raw.user_profile?.bio,pronouns:raw.user_profile?.pronouns},member:raw.guild_member && {nick:raw.guild_member.nick,roles:raw.guild_member.roles,joinedAt:raw.guild_member.joined_at},mutualGuilds:raw.mutual_guilds};
   }}),
-},{instructions:'Use getContext or listGuilds/listChannels to resolve IDs. searchMessages uses Discord server-side search; content is the search text, while authors/channels/dates are separate filters. Pass nextOffset to continue. sources contain message bodies once; groups reference their IDs; matchIds identifies matches. Search does not supply surrounding context; read it separately. nextOffset advances by the requested limit, including short pages. offsetLimitReached means narrow the dates to continue beyond the native 10,000-result window. totalResults is the server estimate and may change while messages are created or deleted. Search omits reactions; readMessages returns them when supplied by the server. Read around a hit with readMessages({channelId,around:messageId}) to understand the conversation. Threads are channels. Cite message URLs. Attachments preserve CDN URLs; use the host readImages image channel to inspect them. An indexing status is pending search indexing; retry after the returned delay. Authentication and rate-limit scheduling belong to the existing Discord web client.'});
+},{instructions:'Use getContext or listGuilds/listChannels to resolve IDs. searchMessages uses Discord server-side search; content is the search text, while authors/channels/dates are separate filters. Pass nextOffset to continue. sources contain message bodies once; groups reference their IDs; matchIds identifies matches. Search does not supply surrounding context; read it separately. nextOffset advances by the requested limit, including short pages. offsetLimitReached means narrow the dates to continue beyond the native 10,000-result window. totalResults is the server estimate and may change while messages are created or deleted. Search omits reactions; readMessages returns them when supplied by the server. Read around a hit with readMessages({channelId,around:messageId}) to understand the conversation. Threads are channels. Cite message URLs. Attachments preserve CDN URLs; use the host readImages image channel to inspect them. An indexing status is pending search indexing; retry after the returned delay. Read requests reuse observed same-origin Discord API headers in memory. Actual HTTP errors, including authentication and rate limits, are returned without an extra probe or automatic retry.'});

@@ -16,7 +16,7 @@ class FixtureParser {
 }
 function fixture({url='https://substack.com/home',preloads={},status=200}={}) {
  const requests:any[]=[],relays:any[]=[],store=new Map();
- const respond=(url:string)=>url.includes('/publication/search')?JSON.stringify({results:[pub]}):url.includes('/archive')?JSON.stringify([post]):url.includes('/feed')?'<rss><channel/></rss>':JSON.stringify(post);
+ const respond=(url:string)=>url.includes('/publication/search')?JSON.stringify({results:[pub]}):url.includes('/archive')?JSON.stringify([post]):new URL(url,'https://substack.com').pathname==='/feed'?'<rss><channel/></rss>':JSON.stringify(post);
  const context:any={z,URL,URLSearchParams,Headers,Response,Request,AbortController,AbortSignal,TextEncoder,TextDecoder,structuredClone,setTimeout,clearTimeout,DOMParser:FixtureParser,
   location:new URL(url),document:{title:'Substack',cookie:'',querySelector:()=>null},navigator:{},_preloads:preloads,
   localStorage:{getItem:(k:string)=>store.get(k)||null,setItem:(k:string,v:string)=>store.set(k,v)},
@@ -44,6 +44,16 @@ test('home pages cannot accidentally call publication-only endpoints on substack
   await assert.rejects(Promise.resolve().then(()=>skill[name](args)),/publication_required/);
  await assert.rejects(skill.readApi({path:'posts',params:{publication_id:13145}}),/unsupported_endpoint/);
  assert.equal(requests.length+relays.length,0);
+});
+test('reader APIs use the existing central session while publication readers keep their relay',async()=>{
+ const {skill,requests,relays}=fixture({url:'https://www.a16z.news/p/patch-or-die',preloads:{pub}});
+ await skill.getProfile({});
+ await skill.getInbox({limit:5,after:'2026-10-31T12:00:00Z'});
+ await skill.getReaderFeed({tab:'following',cursor:'next-fixture',limit:5});
+ assert.deepEqual(requests.map(r=>new URL(r.url).pathname),['/api/v1/user/profile/self','/api/v1/reader/posts','/api/v1/reader/feed']);
+ assert.ok(requests.every(r=>new URL(r.url).origin==='https://substack.com'&&r.options.credentials==='include'));
+ assert.equal(new URL(requests[2].url).searchParams.get('cursor'),'next-fixture');
+ assert.equal(relays.length,0);
 });
 test('profile primary publications resolve custom domains, and ordinary publication pages retain their session',async()=>{
  const profile=fixture({url:'https://substack.com/@a16z',preloads:{profile:{primaryPublication:pub}}});

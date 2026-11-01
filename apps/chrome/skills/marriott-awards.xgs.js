@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         marriott-awards
 // @namespace    marriott
-// @version      0.3.1
+// @version      0.3.2
 // @description  Marriott Bonvoy property calendar search. Same-origin scraper for phoenixShopADFSearchProductsByProperty GraphQL endpoint with persisted-query allowlisting.
 // @match        *://www.marriott.com/*
 // @detect       location.hostname === 'www.marriott.com'
@@ -174,7 +174,7 @@ async function callGqlOnce(body) {
   const r = await fetch(GQL_URL, {
     method: 'POST',
     credentials: 'include',
-    headers: {...GQL_HEADERS, "graphql-operation-signature": operationSignature(GQL_OP)},
+    headers: operationHeaders(GQL_OP),
     body: JSON.stringify(body),
   });
   const bodyText = await r.text();
@@ -346,12 +346,18 @@ function operationSignature(operationName) {
   const page = JSON.parse(document.getElementById('__NEXT_DATA__')?.textContent || '{}');
   const signatures = page.props?.pageProps?.operationSignatures || [];
   const signature = signatures.find(item => item.operationName === operationName)?.signature;
-  if (!signature) throw new Error(`Open Marriott search results to load ${operationName}'s current signature.`);
   return signature;
+}
+function operationHeaders(operationName) {
+  const headers={...GQL_HEADERS,'graphql-operation-name':operationName};
+  delete headers['graphql-operation-signature'];
+  const signature=operationSignature(operationName);
+  if(signature)headers['graphql-operation-signature']=signature;
+  return headers;
 }
 async function searchOperation({operationName, variables}) {
   const response = await fetch(`/mi/query/${operationName}`, {method:'POST', credentials:'include',
-    headers:{...GQL_HEADERS, 'graphql-operation-name':operationName, 'graphql-operation-signature':operationSignature(operationName)},
+    headers:operationHeaders(operationName),
     body:JSON.stringify({operationName,variables})});
   if (!response.ok) throw new Error(`Marriott ${operationName}: HTTP ${response.status}`);
   const json=await response.json();

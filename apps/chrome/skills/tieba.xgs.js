@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         tieba
 // @namespace    tieba
-// @version      0.3.2
+// @version      0.3.3
 // @description  百度贴吧只读助手：全站/吧内搜索、主题与回复、图片和公开用户 profile。兼容新版页面及旧版 HTML，沿用浏览器登录，内置限速和验证冷却，返回 dehydrated 来源。
 // @match        https://tieba.baidu.com/*
 // @connect      <self>
