@@ -18,6 +18,10 @@ try {
   {host:'newsletter.substack.com',marker:'',skills:['substack']},
   {host:'newsletter.example.test',marker:'<script>window._preloads={pub:{subdomain:"newsletter",name:"Publication"}}</script>',skills:['substack']},
   {host:'forum.example.test',marker:'<meta name="generator" content="Discourse 3.5">',skills:['discourse']},
+  {host:'movie.douban.com',marker:'',skills:['douban']},
+  {host:'weread.qq.com',marker:'',skills:['weread']},
+  {host:'www.bilibili.com',marker:'',skills:['bilibili']},
+  {host:'www.google.com',marker:'',skills:['googleFlights','googleHotels']},
   {host:'plain.example.test',marker:'<a href="https://newsletter.substack.com">Newsletter</a>',skills:[]},
   {host:'evilsubstack.com',marker:'',skills:[]},
  ];
@@ -32,6 +36,10 @@ try {
   assert.deepEqual(await page.locator('#xgoose-root .skill-chip').allTextContents(),item.skills,item.host);
   assert.equal(await page.locator('#xgoose-root .toggle').isVisible(),item.skills.length>0,item.host);
   assert.equal(await page.evaluate(()=>typeof window.xgoose?.skills?.substack==='object'),item.skills.includes('substack'),item.host);
+  for (const namespace of item.skills) {
+   const methods=await page.evaluate(ns=>Object.keys(window.xgoose.skills[ns].__describe__()),namespace);
+   assert.ok(methods.length>0,`${item.host}: ${namespace} has callable built-in functions`);
+  }
   // The SW pushes URL candidates after registry edits. That path must also
   // retain detected-only chips and launcher visibility.
   await settings.evaluate(async url=>{
