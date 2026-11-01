@@ -1,5 +1,6 @@
 import {HOSTED_AUTH_STOPPED,isHostedAuthStopped} from '@/shared/hosted';
 import {PagePeers} from './peers';
+import {receivePeerResult} from '../../../../packages/core/src/peerAgents';
 import {isAgentPage, type PeerModel, type PeerMessage} from '@/shared/peers';
 import {initializeLocale,localizeRoot,languageReminder,translate} from "@/shared/locale";
 import {isSafari,safariExecutionReminder} from "@/shared/host";
@@ -273,6 +274,7 @@ async function bootstrap(): Promise<void> {
     modelContextCovers = conversationMessages.length;
   };
   let conversationMessages: any[] = [];
+  let toolCards = new Map<string, ReturnType<Panel["addToolCard"]>>();
   let currentConvoId: string | null = null;
   let currentConvoTitle = "";
   let abortController: AbortController | null = null;
@@ -284,6 +286,8 @@ async function bootstrap(): Promise<void> {
   async function stopBeforeConversationSwitch() {
     queuedMessages.length = 0;
     panel.setQueuedMessages([]);
+    panel.setSending(false);
+    panel.setLoadingStatus(null);
     if (running) { abortController?.abort(new Error("user_abort")); await runSettled; }
   }
   // Claude-Code-style prompt queue. Anything the user types while a turn is
@@ -506,6 +510,7 @@ async function bootstrap(): Promise<void> {
     currentConvoId = null;
     currentConvoTitle = "";
     conversationMessages = [];
+    toolCards.clear();
     setModelContext(null);
     clearStoredResults();
     conversationUsage = { ...EMPTY_USAGE };
@@ -527,6 +532,7 @@ async function bootstrap(): Promise<void> {
   panel.onStop(() => {
     abortController?.abort(new Error("user_abort"));
     void peers.stop();
+    if (!running) {panel.setSending(false); panel.setLoadingStatus(null); panel.setStatus("Stopped");}
     // Stop = halt everything: also clear pending queue so it doesn't
     // auto-process after this turn unwinds. If the user wanted the queue
     // to keep going they would have just let the current turn finish.
@@ -610,7 +616,7 @@ async function bootstrap(): Promise<void> {
     conversationUsage = convo.usage
       ? { ...EMPTY_USAGE, ...convo.usage }
       : { ...EMPTY_USAGE };
-    replayConversation(panel, conversationMessages);
+    toolCards = replayConversation(panel, conversationMessages);
     replayTodosFromMessages(conversationMessages);
     panel.setStatus(`Loaded: ${convo.title}`);
     panel.setUsage(conversationUsage);
@@ -626,6 +632,7 @@ async function bootstrap(): Promise<void> {
       currentConvoId = null;
       currentConvoTitle = "";
       conversationMessages = [];
+      toolCards.clear();
       setModelContext(null);
       clearStoredResults();
       conversationUsage = { ...EMPTY_USAGE };
@@ -707,7 +714,17 @@ async function bootstrap(): Promise<void> {
     const images=opts.images??[];
     const content=images.length?[{type:"text",text:prompt},...images.map(image=>({type:"image",data:image.data,mimeType:image.mimeType}))]:prompt;
     const visibleUserMessage = { role: "user", content };
-    conversationMessages.push(visibleUserMessage);
+    if (opts.peerMessage && opts.peerMessage.kind !== "task") {
+      const context = modelContext ? [...modelContext, ...conversationMessages.slice(modelContextCovers)] : conversationMessages;
+      const delivery = receivePeerResult(conversationMessages, context, opts.peerMessage);
+      conversationMessages = delivery.history;
+      setModelContext(delivery.context);
+      const card = toolCards.get(delivery.toolCallId) ?? panel.addToolCard("wait_agents", delivery.input);
+      toolCards.set(delivery.toolCallId, card);
+      card.setResult(delivery.output);
+    } else {
+      conversationMessages.push(visibleUserMessage);
+    }
     // For brand-new conversations we MUST flush the "last conversation"
     // pointer + the initial save to storage BEFORE any tool can navigate
     // the tab — otherwise the new page's bootstrap can't restore the
@@ -734,7 +751,7 @@ async function bootstrap(): Promise<void> {
       persistCurrentConvo();
     }
 
-    if (!opts.hidden || opts.peerMessage) panel.addUserMessage(prompt,images);
+    if ((!opts.peerMessage || opts.peerMessage.kind === "task") && (!opts.hidden || opts.peerMessage)) panel.addUserMessage(prompt,images);
     panel.setSending(true);
     panel.setStatus("");
     panel.setGenerating(true);
@@ -766,9 +783,6 @@ async function bootstrap(): Promise<void> {
     let peerResult = "";
     let assistantBubble: ReturnType<Panel["addAssistantBubble"]> | null = null;
     let reasoningBlock: ReturnType<Panel["addReasoningBlock"]> | null = null;
-    // UI ref map — separate from the lifted `inFlight.*` because cards never
-    // need to survive a navigation snapshot.
-    const toolCards = new Map<string, ReturnType<Panel["addToolCard"]>>();
 
     // Initialise the bootstrap-scope in-flight slot for this turn. From this
     // point on, all "what did this turn produce so far" data lives in
@@ -799,10 +813,10 @@ async function bootstrap(): Promise<void> {
       await peers.begin(journalRunId);
       // Refresh consent before queuing the first message of a Hosted session.
       if (journalProvider === "hosted") await send("sw:consent_get", undefined);
-      if (opts.peerMessage) await record({type:"peer-receive",kind:opts.peerMessage.kind,
+      if (opts.peerMessage) await record({type:"peer-receive",kind:opts.peerMessage.kind,content:opts.peerMessage.text,
         taskId:opts.peerMessage.taskId,outcome:opts.peerMessage.outcome,
         deliveryMs:opts.peerMessage.sentAt === undefined ? undefined : Math.max(0, Date.now()-opts.peerMessage.sentAt)});
-      await record({type:"user-message",content:prompt,...(images.length?{attachments:images.map(image=>({type:"image",mimeType:image.mimeType,width:image.width,height:image.height}))}:{})});
+      if (!opts.peerMessage) await record({type:"user-message",content:prompt,...(images.length?{attachments:images.map(image=>({type:"image",mimeType:image.mimeType,width:image.width,height:image.height}))}:{})});
       const scriptsEnabled=isAgentPage() ? false : await permissionGuide.check();
       const candidates = isAgentPage() ? [] : await send("sw:active_skills_for_url", { url: getCurrentPageUrl() });
       const skillsForReminder = (isAgentPage() ? [] : await detectActiveSkills(candidates)).map(s => ({...s, enabled:true}));
@@ -1177,9 +1191,8 @@ async function bootstrap(): Promise<void> {
       await peers.finish(turnErrorDisplay ? "failed" : peerOutcome,
         turnErrorDisplay ?? peerResult).catch(error => panel.setStatus(`Peer: ${error.message}`));
 
-      panel.setSending(false);
-      panel.setGenerating(false);
-      panel.setLoadingStatus(null);
+      panel.setSending(peers.waiting);
+      panel.setLoadingStatus(peers.waiting ? peers.waitingLabel : null);
       resolveRunSettled?.();
       resolveRunSettled = undefined;
     }
@@ -1647,7 +1660,7 @@ function replayTodosFromMessages(messages: any[]): void {
   clearTodos();
 }
 
-function replayConversation(panel: Panel, messages: any[]): void {
+function replayConversation(panel: Panel, messages: any[]): Map<string, ReturnType<Panel["addToolCard"]>> {
   panel.clear();
   // Tool results live in a separate `{role:'tool', content:[{type:'tool-result',
   // toolCallId, output}]}` message in the AI SDK v5 history shape, so we must
@@ -1735,7 +1748,7 @@ function replayConversation(panel: Panel, messages: any[]): void {
             "tool error";
           card.setResult(undefined, String(errMsg));
         } else {
-          card.setResult(p?.output ?? p?.result);
+          card.setResult(denormalizeToolOutput(p?.output ?? p?.result));
         }
       }
     } else if (msg.role === "xgoose-error") {
@@ -1746,6 +1759,7 @@ function replayConversation(panel: Panel, messages: any[]): void {
       );
     }
   }
+  return cardsByCallId;
 }
 
 function skillVersionInfo(skill: RegistrySkill) {

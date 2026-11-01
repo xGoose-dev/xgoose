@@ -21,6 +21,11 @@ chrome.runtime.onMessage.addListener((message, _sender, reply) => {
 export class PagePeers {
   agent?: PeerAgent;
   waiting = false;
+  private waitingFor: PeerAgent[] = [];
+  get waitingLabel(): string {
+    const names = this.waitingFor.map(agent => new URL(agent.url).hostname || agent.title);
+    return names.length ? `Waiting for ${names.join(", ")}… You can keep chatting.` : "Waiting for peer agents… You can keep chatting.";
+  }
   private pumping = false;
   private registration?: Promise<void>;
   private runId = "";
@@ -62,7 +67,7 @@ export class PagePeers {
     try {
       const result = await this.rpc({op: "settle", runId: this.runId, outcome: waiting ? "waiting" : outcome, text});
       if (result.ignored) {this.agent = undefined; this.waiting = false;}
-      else if (waiting) this.host.status("Waiting for peer agents…");
+      else {this.waiting = waiting; if (waiting) this.host.status(this.waitingLabel);}
     } finally {this.runId = "";}
   }
   async stop() {
@@ -120,7 +125,7 @@ export class PagePeers {
         execute: (input, opts) => call({op: "send", ...input, requestId: `${this.runId}:${opts.toolCallId ?? crypto.randomUUID()}`})}),
       defineTool({name: "wait_agents", description: "Yield this run until peer results or messages arrive, without polling the model. Returns immediately if results are already available. Call after assigning work; when waiting is true, this turn ends and incoming messages resume it.",
         inputSchema: z.object({agentIds: z.array(z.string()).min(1)}), execute: async input => {
-          const result = await call({op: "wait", ...input}); this.waiting = result.waiting === true; return result;
+          const result = await call({op: "wait", ...input}); this.waiting = result.waiting === true; this.waitingFor = result.agents ?? []; return result;
         }}),
     ];
   }

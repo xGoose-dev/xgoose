@@ -23,7 +23,7 @@ async function senderTab(request: PeerRequest, sender: chrome.runtime.MessageSen
   const tabId = sender.tab?.id ?? (extensionPage ? request.tabId : undefined);
   if (tabId === undefined || !request.nonce) throw new Error("A live peer tab is required");
   const tab = await chrome.tabs.get(tabId);
-  if (!allowedUrl(tab.url ?? "") || tab.incognito) throw new Error("This tab cannot host a peer agent");
+  if (!allowedUrl(tab.url ?? "")) throw new Error("This tab cannot host a peer agent");
   return tab;
 }
 async function notifyPending(): Promise<void> {
@@ -72,7 +72,7 @@ export function peerCommand(request: PeerRequest, sender: chrome.runtime.Message
     if (!me) return {ignored: true, reason: "peer_unavailable"};
     if (op.op === "tabs") {
       const [tabs, agents] = await Promise.all([chrome.tabs.query({}), peerTransaction(state => Object.values(state.agents))]);
-      return {tabs: tabs.filter(item => !item.incognito).map(item => ({tabId: item.id, title: item.title ?? "", url: item.url ?? "",
+      return {tabs: tabs.map(item => ({tabId: item.id, title: item.title ?? "", url: item.url ?? "",
         active: item.active, status: item.status, agentId: agents.find(agent => agent.tabId === item.id && agent.status !== "unavailable")?.id,
         canHostAgent: allowedUrl(item.url ?? "")}))};
     }
@@ -85,7 +85,7 @@ export function peerCommand(request: PeerRequest, sender: chrome.runtime.Message
       let target: PeerAgent;
       if (op.tabId !== undefined) {
         const targetTab = await chrome.tabs.get(op.tabId);
-        if (targetTab.incognito || !allowedUrl(targetTab.url ?? "")) throw new Error("This tab cannot host a peer agent");
+        if (!allowedUrl(targetTab.url ?? "")) throw new Error("This tab cannot host a peer agent");
         const identity = await sendPeer(op.tabId, {kind: "cs:peer_identity"}).catch(() => null);
         if (!identity?.nonce) throw new Error("xgoose is not ready in that tab. Grant website access or open the page once, then retry.");
         target = await peerTransaction(state => {
