@@ -146,7 +146,7 @@ export function receivePeerResult(history: ChatMessage[], context: ChatMessage[]
     });
   };
   const pending = pendingWait(history);
-  const toolCallId = pending?.toolCallId ?? `peer-receive:${message.id}`;
+  const toolCallId = pending?.toolCallId ?? `peer_${crypto.randomUUID().replace(/-/g, "")}`;
   const input = {agentIds: [message.from]};
   const output = {waiting: false, messages: [message]};
   const call: ChatMessage = {role: "assistant", content: [{type: "tool-call", toolCallId, toolName: "wait_agents", input}]};

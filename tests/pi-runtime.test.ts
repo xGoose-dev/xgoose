@@ -145,6 +145,7 @@ test("a yielded peer wait resumes from its tool response without creating a user
   // Another completion after a user has continued chatting has its own tool
   // delivery; it cannot replace the earlier evidence or become a user message.
   const later=receivePeerResult([...delivery.history,{role:"user",content:"More detail"},{role:"assistant",content:"Answer"}], [{role:"user",content:"Compacted context"}], {...result,id:"result:task-2",text:"Second peer evidence"});
+  assert.match(later.toolCallId,/^[a-zA-Z0-9_-]{1,40}$/);
   assert.equal(later.history.at(-1)?.role,"tool");assert.equal(later.context.at(-2)?.role,"assistant");
   assert.equal(later.history.filter(m=>m.role==="user").length,2);
   setResultBudget(1000);
