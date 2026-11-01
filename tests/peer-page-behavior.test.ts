@@ -17,21 +17,37 @@ const [background,content]=await Promise.all([compile('../apps/chrome/src/backgr
 const model={provider:'xgoose-hosted',model:'deepseek-flash',thinking:false};
 const agent=(id='page',nonce='document-a'):PeerAgent=>({id,sessionId:'conversation',tabId:1,documentKey:nonce,url:'https://example.test/',title:'Page',status:'running',model,runId:'run-1'});
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
-function broker() {
+function broker(incognito=false) {
   const peerState=emptyPeerState();peerState.agents.page=agent();
   let liveNonce:string|null='document-a',updated:(id:number,change:any)=>void,removed:(id:number)=>void;
   const sender={id:'extension',frameId:0,tab:{id:1},url:'https://example.test/'};
   const chrome={runtime:{id:'extension',getURL:(p:string)=>'chrome-extension://extension/'+p},tabs:{
-    get:async(id:number)=>({id,url:'https://example.test/',title:'Page'}),
-    sendMessage:async()=>liveNonce?{nonce:liveNonce}:null,
+    get:async(id:number)=>({id,url:'https://example.test/',title:'Page',incognito}),
+    query:async()=>[{id:1,url:'https://example.test/',title:'Page',incognito}],
+    sendMessage:async(id:number)=>id===2?{nonce:'document-b'}:liveNonce?{nonce:liveNonce}:null,
     onRemoved:{addListener:(f:any)=>removed=f},onUpdated:{addListener:(f:any)=>updated=f},
   }};
   const context:any={chrome,peerState,crypto,console};vm.runInNewContext(background.outputFiles[0].text,context);
   context.module.installPeerEvents();
   return {peerState,setNonce:(v:string|null)=>liveNonce=v,
     updated:async(status:string)=>{updated!(1,{status});await tick();},closed:async()=>{removed!(1);await tick();},
-    call:(operation:any,nonce='document-a',agentId='page')=>context.module.peerCommand({nonce,agentId,operation},sender)};
+    call:(operation:any,nonce='document-a',agentId='page')=>context.module.peerCommand({nonce,agentId,operation},{...sender,tab:{id:peerState.agents[agentId]?.tabId??1}})};
 }
+
+test('a private page can register, run a chat, appear in tabs, and receive a peer task',async()=>{
+  const f=broker(true);
+  const registered=await f.call({op:'register',sessionId:'conversation',model});
+  assert.equal(registered.agent.id,'page');
+  await f.call({op:'begin',runId:'private-chat',model});
+  assert.equal(f.peerState.agents.page.status,'running');
+  await f.call({op:'settle',runId:'private-chat',outcome:'completed',text:'Chat response'});
+  assert.equal(f.peerState.agents.page.status,'idle');
+  assert.equal((await f.call({op:'tabs'})).tabs[0].tabId,1);
+  f.peerState.agents.other={...agent('other','document-b'),tabId:2,status:'idle'};
+  const assigned=await f.call({op:'spawn',tabId:2,requestId:'private-task',task:'Read this page'});
+  assert.equal(assigned.agent.id,'other');
+  assert.equal((await f.call({op:'take'},'document-b','other')).message.text,'Read this page');
+});
 
 test('a same-document loading/complete cycle preserves its running peer',async()=>{
   const f=broker();await f.updated('loading');assert.equal(f.peerState.agents.page.status,'running');

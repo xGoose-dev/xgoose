@@ -169,7 +169,7 @@ const CSS = `
 .toggle:hover::before{opacity:.85}
 .toggle.dragging{
   cursor:grabbing;transform:scale(1.12);
-  transition:transform .12s ease,box-shadow .12s ease,border-radius .12s ease;
+  transition:box-shadow .12s ease,border-radius .12s ease;
   box-shadow:
     0 0 0 1px rgba(255,255,255,.12) inset,
     0 0 32px rgba(168,85,247,.55),
@@ -1802,17 +1802,23 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   const hEdgeHandle = resizeHandles.find((h) => h.dataset.axis === "h")!;
   const vEdgeHandle = resizeHandles.find((h) => h.dataset.axis === "v")!;
 
+  function buttonViewport() {
+    const vp = opts.visualViewport ? window.visualViewport : null;
+    return vp
+      ? {left: vp.offsetLeft, top: vp.offsetTop, width: vp.width, height: vp.height, scale: vp.scale}
+      : {left: 0, top: 0, width: window.innerWidth, height: window.innerHeight, scale: 1};
+  }
+
   function clampToViewport(
     x: number,
     y: number,
     w: number,
     h: number,
   ): { x: number; y: number } {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const vp = buttonViewport(), margin = 8 / vp.scale;
     return {
-      x: Math.max(4, Math.min(vw - w - 4, x)),
-      y: Math.max(4, Math.min(vh - h - 4, y)),
+      x: Math.max(vp.left + margin, Math.min(vp.left + vp.width - w - margin, x)),
+      y: Math.max(vp.top + margin, Math.min(vp.top + vp.height - h - margin, y)),
     };
   }
 
@@ -1908,12 +1914,11 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   }
 
   function nearestCorner(x: number, y: number, w: number, h: number): Corner {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const vp = buttonViewport();
     const cx = x + w / 2;
     const cy = y + h / 2;
-    const left = cx < vw / 2;
-    const top = cy < vh / 2;
+    const left = cx < vp.left + vp.width / 2;
+    const top = cy < vp.top + vp.height / 2;
     return left ? (top ? "tl" : "bl") : top ? "tr" : "br";
   }
 
@@ -1923,6 +1928,21 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   let keyboardPinned = false;
   const IOS_KEYBOARD_CHROME_RESERVE_PX = 92;
 
+  function moveButton(x: number, y: number): void {
+    if (opts.visualViewport && window.visualViewport) {
+      // Keep dragging in the same client-coordinate transform as docking.
+      // Adding left/top to this transform would apply the position twice.
+      for (const [key, value] of Object.entries({left: '0px', top: '0px', right: 'auto', bottom: 'auto',
+        transform: `translate(${x}px, ${y}px) scale(${1 / buttonViewport().scale})`, 'transform-origin': 'top left'})) {
+        toggleBtn.style.setProperty(key, value, 'important');
+      }
+    } else {
+      toggleBtn.style.right = toggleBtn.style.bottom = '';
+      toggleBtn.style.left = `${x}px`;
+      toggleBtn.style.top = `${y}px`;
+    }
+  }
+
   function applySafariViewport(): boolean {
     const vp=window.visualViewport;
     if(!opts.visualViewport || !vp)return false;
@@ -1931,7 +1951,9 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     const left=layout.buttonCorner.endsWith('l'),top=layout.buttonCorner.startsWith('t');
     const buttonX=left?layout.buttonOffset.h:availableWidth-layout.buttonOffset.h-48;
     const buttonY=top?layout.buttonOffset.v:availableHeight-layout.buttonOffset.v-48;
-    for(const [key,value] of Object.entries({left:'0px',top:'0px',right:'auto',bottom:'auto',transform:`translate(${vp.offsetLeft+Math.max(margin,buttonX)/scale}px, ${vp.offsetTop+Math.max(margin,buttonY)/scale}px) scale(${1/scale})`,'transform-origin':'top left'}))toggleBtn.style.setProperty(key,value,'important');
+    const button = clampToViewport(drag?.moved ? drag.x : vp.offsetLeft + buttonX / scale,
+      drag?.moved ? drag.y : vp.offsetTop + buttonY / scale, 48 / scale, 48 / scale);
+    moveButton(button.x, button.y);
     const compact=isMobile();
     const defaultSize=layout.panelSize.w===DEFAULT_LAYOUT.panelSize.w&&layout.panelSize.h===DEFAULT_LAYOUT.panelSize.h;
     const width=Math.max(1,Math.min(availableWidth-margin*2,compact&&defaultSize?availableWidth:layout.panelSize.w));
@@ -2075,6 +2097,8 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     startY: number;
     btnX: number;
     btnY: number;
+    x: number;
+    y: number;
     moved: boolean;
     pointerId: number;
   };
@@ -2090,6 +2114,8 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       startY: e.clientY,
       btnX: rect.left,
       btnY: rect.top,
+      x: rect.left,
+      y: rect.top,
       moved: false,
       pointerId: e.pointerId,
     };
@@ -2109,6 +2135,8 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     const dy = e.clientY - drag.startY;
     if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
     drag.moved = true;
+    if (pendingOpen !== null) { clearTimeout(pendingOpen); pendingOpen = null; }
+    lastTapAt = 0;
     e.preventDefault();
     toggleBtn.classList.add("dragging");
     const rect = toggleBtn.getBoundingClientRect();
@@ -2118,14 +2146,8 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       rect.width,
       rect.height,
     );
-    // Switch to absolute left/top while dragging so we can move freely.
-    toggleBtn.style.left =
-      toggleBtn.style.right =
-      toggleBtn.style.top =
-      toggleBtn.style.bottom =
-        "";
-    toggleBtn.style.left = `${clamped.x}px`;
-    toggleBtn.style.top = `${clamped.y}px`;
+    drag.x = clamped.x; drag.y = clamped.y;
+    moveButton(clamped.x, clamped.y);
   });
 
   // Double-tap detection for "snap back to default position" escape hatch.
@@ -2155,16 +2177,15 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
         rect.width,
         rect.height,
       );
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
+      const vp = buttonViewport();
       const horiz =
-        corner === "br" || corner === "tr" ? vw - rect.right : rect.left;
+        corner.endsWith('r') ? vp.left + vp.width - rect.right : rect.left - vp.left;
       const vert =
-        corner === "br" || corner === "bl" ? vh - rect.bottom : rect.top;
+        corner.startsWith('b') ? vp.top + vp.height - rect.bottom : rect.top - vp.top;
       layout = {
         ...layout,
         buttonCorner: corner,
-        buttonOffset: { h: Math.max(8, horiz), v: Math.max(8, vert) },
+        buttonOffset: { h: Math.max(8, horiz * vp.scale), v: Math.max(8, vert * vp.scale) },
         // Panel follows the button to the same corner on drag.
         panelCorner: corner,
       };
@@ -2173,6 +2194,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       lastTapAt = 0;
       return;
     }
+    if (e.type === 'pointercancel') return;
     const now = Date.now();
     if (now - lastTapAt < DBL_TAP_MS) {
       // Second tap of a double-tap: cancel the pending open and reset layout.
