@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discourse-forum
 // @namespace    discourse
-// @version      0.2.14
+// @version      0.2.16
 // @description  Search Discourse forums, read topics and replies, and research community insights.
 // @match        *://meta.discourse.org/*
 // @match        *://*.discourse.org/*
@@ -187,6 +187,12 @@ function htmlToText(html, topicId) {
   return squash(div.innerText || div.textContent);
 }
 
+function imageReadHint(post, topicId = post.topic_id) {
+  return contentImages(parsePost(post.cooked || '')).length
+    ? {readImages: `readPostImages({topicId:${topicId},postNumber:${post.post_number},images:[N]})`}
+    : {};
+}
+
 function compactTopicResult(raw, maxChars) {
   if (!raw || typeof raw !== 'object') return raw;
   if (raw.httpStatus) return raw;
@@ -205,6 +211,7 @@ function compactTopicResult(raw, maxChars) {
           reply_to_post_number: p.reply_to_post_number ?? null,
           reply_to_username: p.reply_to_user?.username ?? null,
           text: maxChars === undefined ? text : text.slice(0, maxChars),
+          ...imageReadHint(p, p.topic_id ?? raw.id),
           text_truncated: maxChars !== undefined && text.length > maxChars,
           url: `${location.origin}/t/${p.topic_id ?? raw.id}/${p.post_number}`,
         };
@@ -252,6 +259,7 @@ const TopicResultSchema = z.object({
         reply_count: z.number().optional(),
         reply_to_post_number: z.number().nullable().optional(),
         reply_to_username: z.string().nullable().optional(),
+        readImages: z.string().optional(),
         text_truncated: z.boolean(),
         url: z.string(),
         text: z
@@ -296,7 +304,7 @@ async function summaryTopic(topicId, firstReplies=30, latestReplies=100) {
   }
   const result = selected.map(postId=>posts.get(postId)).filter(Boolean).map(post=>{
     const text=postText(post,id);
-    return {post_number:post.post_number,username:post.username,created_at:post.created_at,like_count:postLikes(post),reactions:postReactions(post),reply_to_post_number:post.reply_to_post_number ?? null,reply_to_username:post.reply_to_user?.username ?? null,text,text_truncated:false,url:`${topicLink(id)}/${post.post_number}`};
+    return {post_number:post.post_number,username:post.username,created_at:post.created_at,like_count:postLikes(post),reactions:postReactions(post),reply_to_post_number:post.reply_to_post_number ?? null,reply_to_username:post.reply_to_user?.username ?? null,text,...imageReadHint(post,id),text_truncated:false,url:`${topicLink(id)}/${post.post_number}`};
   });
   return {title:topic.title,url:topicLink(id),posts_count:topic.posts_count,highest_post_number:topic.highest_post_number,
     selection:selected.length===stream.length?'all visible posts':`first post, first ${firstReplies} replies and latest ${latestReplies} replies`,selected_count:selected.length,read_count:result.length,
@@ -346,6 +354,7 @@ const TopicReadResult = z.object({
   posts:z.array(z.object({
     id:z.number(),post_number:z.number(),username:z.string(),url:z.string(),
     text:z.string().describe('Plain-text body. Quotes appear inline as [quote @user #floor: quoted text]; another topic is t/<id>#floor. Pictures appear as [image N].'),
+    readImages:z.string().optional(),
     reply_to_post_number:z.number().nullable(),reply_to_username:z.string().nullable(),
     like_count:z.number().nullable(),reactions:ReactionsSchema,text_truncated:z.boolean(),text_offset:z.number(),total_text_chars:z.number(),next_text_offset:z.number().nullable(),
   }).passthrough()),
@@ -389,7 +398,7 @@ function rangePost(post, maxChars, textOffset=0) {
   const end = maxChars === undefined ? text.length : Math.min(text.length, textOffset+maxChars);
   return {id:post.id,post_number:post.post_number,username:post.username,created_at:post.created_at,
     like_count:postLikes(post),reactions:postReactions(post),reply_count:post.reply_count,reply_to_post_number:post.reply_to_post_number ?? null,reply_to_username:post.reply_to_user?.username ?? null,url:`${location.origin}/t/${post.topic_id}/${post.post_number}`,
-    text:text.slice(textOffset,end),text_offset:textOffset,total_text_chars:text.length,
+    text:text.slice(textOffset,end),...imageReadHint(post),text_offset:textOffset,total_text_chars:text.length,
     text_truncated:textOffset>0 || end<text.length,next_text_offset:end<text.length?end:null};
 }
 async function readTopicRange(rawArgs) {
@@ -554,7 +563,7 @@ export default defineSkill({
   }),
 
   readPostImages: fn({
-    summary: 'Attach up to three pictures from one post so you can see them. Post text marks them as [image N].',
+    summary: 'Read selected [image N] pictures from a post through the extension background.',
     input: z.object({
       topicId: z.number().int().positive(),
       postNumber: z.number().int().positive(),

@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        alaska-awards
 // @namespace   alaska
-// @version     0.3.0
+// @version     0.4.1
 // @description Alaska Airlines award/cash flight search. Programmatic equivalent of the AS Enhancer + AS Batch Award Search userscripts (uscardforum topic 492786). Run on www.alaskaair.com.
 // @match       *://www.alaskaair.com/*
 // @detect      location.hostname === 'www.alaskaair.com'
@@ -21,16 +21,9 @@
 // @keyword     搜票
 // ==/XGooseSkill==
 
-/**
- * Alaska Airlines award/cash flight search. Programmatic equivalent of the AS Enhancer + AS Batch Award Search userscripts (uscardforum topic 492786). Run on www.alaskaair.com.
- *
- * Migrated from webagent v0.1; runtime preserved verbatim. Per-fn input
- * schemas are intentionally widened to z.any() — refine with concrete Zod
- * schemas in a follow-up (see the original SKILL.md for parameter types).
- * # Alaska Airlines Awards — Schema Reference
- * > **Read this BEFORE calling any function.** Every entrypoint takes a **single options object** with the keys below. There are no aliases, no positional args, no Date-object coercion. Calling with the wrong shape throws a clear error pointing here.
- * The skill loads as a content script on `www.alaskaair.com` and makes same-origin requests. Don't run while signed into AS — use an incognito tab.
- */
+// SvelteKit results + calendar access, following AS Enhancer's native API discovery:
+// https://gist.github.com/AhaiMk01/f80d8e70fd112be6a83a948ce5d45122
+// https://www.uscardforum.com/t/topic/492786
 
 import { defineSkill, fn } from '@xgoose/skill';
 import { z } from 'zod';
@@ -111,6 +104,7 @@ function emptyDrops() {
     minSeats: 0,
     bookingCodes: 0,
     noMixedCabin: 0,
+    maxCash: 0,
     maxMiles: 0
   };
 }
@@ -222,7 +216,8 @@ const FLIGHT_FILTER_KEYS = [
   "minSeats",
   "bookingCodes",
   "noMixedCabin",
-  "maxMiles"
+  "maxMiles",
+  "maxCash"
 ];
 function validateParams(fnName, p, required, allowed) {
   if (!p || typeof p !== "object") {
@@ -282,7 +277,7 @@ function normalizeFare(key, sol) {
     cabin,
     bucket: bucketFromCabin(cabin),
     miles: numPos(sol.atmosPoints) ?? numPos(sol.allPaxPoints),
-    cash: numPos(sol.grandTotal) ?? numPos(sol.allPaxTotal),
+    cash: (typeof sol.grandTotal === "number" ? sol.grandTotal : sol.allPaxTotal) ?? null,
     bookingCodes: Array.isArray(sol.bookingCodes) ? sol.bookingCodes.slice() : [],
     seatsRemaining: typeof sol.seatsRemaining === "number" ? sol.seatsRemaining : void 0,
     refundable,
@@ -378,6 +373,8 @@ function summarizeFlight(input, dateHint) {
     arrivesNextDay,
     carriers,
     flightNumbers,
+    segmentDetails: segs.map(s => ({from: s.departureStation, to: s.arrivalStation, depart: s.departureTime, arrive: s.arrivalTime, marketingCarrier: s.publishingCarrier, operatingCarrier: s.operatingCarrier, aircraft: s.aircraft, stopoverMinutes: s.stopoverDuration})),
+    allFares: normalizeRowFares(row),
     cheapestByCabin
   };
 }
@@ -423,11 +420,13 @@ function evaluate(summary, filters, mode) {
   const wantBookingCodes = filters.bookingCodes?.length ? new Set(filters.bookingCodes.map((c) => c.toUpperCase())) : null;
   const minSeats = filters.minSeats;
   const matched = [];
-  for (const bucket of ["main", "business", "first"]) {
-    const f = summary.cheapestByCabin[bucket];
-    if (!f) continue;
+  const matchedFares = [];
+  for (const f of summary.allFares ?? Object.values(summary.cheapestByCabin).filter(Boolean)) {
+    const bucket = f.bucket;
+    if (!bucket) continue;
     if (filters.noMixedCabin && f.mixedCabin) continue;
-    if (typeof minSeats === "number" && typeof f.seatsRemaining === "number" && f.seatsRemaining < minSeats) continue;
+    if (filters.maxCash != null && (f.cash == null || f.cash > filters.maxCash)) continue;
+    if (typeof minSeats === "number" && (typeof f.seatsRemaining !== "number" || f.seatsRemaining < minSeats)) continue;
     if (wantBookingCodes && !f.bookingCodes.some((c) => wantBookingCodes.has(c.toUpperCase()))) continue;
     if (haveCaps) {
       const cap = caps[bucket];
@@ -435,12 +434,14 @@ function evaluate(summary, filters, mode) {
       if (typeof cap === "number" && (typeof price !== "number" || price > cap)) continue;
     }
     matched.push(bucket);
+    matchedFares.push(f);
   }
+  if (filters.maxCash != null && matched.length === 0) return {ok:false, matchedCabins: [], rejectedBy: "maxCash"};
   if (haveCaps && matched.length === 0) return { ok: false, matchedCabins: [], rejectedBy: "maxMiles" };
   if (wantBookingCodes && matched.length === 0) return { ok: false, matchedCabins: [], rejectedBy: "bookingCodes" };
   if (filters.noMixedCabin && matched.length === 0) return { ok: false, matchedCabins: [], rejectedBy: "noMixedCabin" };
   if (typeof minSeats === "number" && matched.length === 0) return { ok: false, matchedCabins: [], rejectedBy: "minSeats" };
-  return { ok: true, matchedCabins: matched };
+  return { ok: true, matchedCabins: [...new Set(matched)], matchedFares };
 }
 __name(evaluate, "evaluate");
 function filterFlights(items, filters = {}) {
@@ -455,7 +456,7 @@ function filterFlights(items, filters = {}) {
     } catch {
       continue;
     }
-    if (evaluate(summary, filters, mode).ok) out.push(summary);
+    if (evaluate(summary, filters, mode).ok) out.push({...summary, matchedFares: evaluate(summary, filters, mode).matchedFares});
   }
   return out;
 }
@@ -510,7 +511,7 @@ async function searchDateRange(p) {
       }
       const fares = normalizeRowFares(row).filter((f) => f.miles != null || f.cash != null);
       summaries.push(summary);
-      hits.push({ date, summary, fares, row, matchedCabins: verdict.matchedCabins });
+      hits.push({ date, summary, fares, row, matchedCabins: verdict.matchedCabins, matchedFares: verdict.matchedFares });
     }
     if (summaries.length) byDate[date] = summaries;
   });
@@ -550,92 +551,31 @@ async function findAwards(p) {
   return searchDateRange({ ...rest, start, end });
 }
 __name(findAwards, "findAwards");
-const _iframeInFlight = /* @__PURE__ */ new Map();
-let _iframeQueue = Promise.resolve();
-const _calCache = /* @__PURE__ */ new Map();
-function calKey(p) {
-  return `${p.from}|${p.to}|${p.month}|A=${p.adults}|${p.mode}`;
-}
-__name(calKey, "calKey");
 function normalizeCalendarCell(raw) {
-  if (!raw || typeof raw !== "object") return null;
-  const date = raw.date ?? raw.departureDate ?? raw.Date ?? raw.departure_date;
-  if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(date)) return null;
-  return {
-    date: date.slice(0, 10),
-    miles: numPos(raw.miles ?? raw.points ?? raw.atmosPoints ?? raw.minMiles ?? raw.lowestPrice?.miles),
-    cash: numPos(raw.cash ?? raw.grandTotal ?? raw.lowestPrice?.cash ?? raw.amount),
-    raw
-  };
+  return {date: raw.date.slice(0,10), miles: raw.awardPoints ?? null, cash: raw.price ?? null, raw};
 }
-__name(normalizeCalendarCell, "normalizeCalendarCell");
 const MONTH_CALENDAR_KEYS = ["from", "to", "month", "adults", "mode", "timeoutMs"];
+function parseCalendarPayload(text) {
+  for (const line of text.trim().split("\n")) {
+    const message = JSON.parse(line);
+    if (message.type === "redirect") throw new Error(`AS calendar redirect: ${message.location}`);
+    const chunks = message.type === "chunk" ? [message.data] : (message.nodes ?? []).filter(n => n?.type === "data").map(n => n.data);
+    for (const chunk of chunks) {
+      const decoded = devalueRevive(chunk);
+      const payload = [decoded, ...Object.values(decoded ?? {})].find(value => value && (value.calendarDates || value.shoulderDates));
+      if (payload) return payload;
+    }
+  }
+  throw new Error("AS calendar response did not contain calendarDates or shoulderDates");
+}
 async function getMonthCalendar(p) {
-  validateParams("getMonthCalendar", p, ["from", "to", "month"], MONTH_CALENDAR_KEYS);
-  const adults = adultsOf(p);
-  const mode = p.mode ?? "award";
-  const key = calKey({ from: p.from, to: p.to, month: p.month, adults, mode });
-  const cached = _calCache.get(key);
-  if (cached) return cached;
-  const inFlight = _iframeInFlight.get(key);
-  if (inFlight) return inFlight;
-  const promise = _iframeQueue = _iframeQueue.then(async () => {
-    return _calCache.get(key) ?? runCalendarIframe({ ...p, adults, mode });
-  });
-  _iframeInFlight.set(key, promise);
-  try {
-    const cells = await promise;
-    _calCache.set(key, cells);
-    return cells;
-  } finally {
-    _iframeInFlight.delete(key);
-  }
+  const qs = new URLSearchParams({O: p.from, D: p.to, OD: `${p.month}-15`, A: String(adultsOf(p)), RT: "false", RequestType: "Calendar", ShoppingMethod: p.mode === "cash" ? "onlinerevenue" : "onlineaward", locale: "en-us"});
+  const response = await fetch(`https://www.alaskaair.com/search/calendar/__data.json?${qs}`, {credentials: "include"});
+  if (!response.ok) throw new Error(`AS calendar HTTP ${response.status}`);
+  const payload = parseCalendarPayload(await response.text());
+  const cells = [...(payload.shoulderDates ?? []), ...(payload.calendarDates ?? [])].map(normalizeCalendarCell).filter(cell => cell.date.startsWith(p.month));
+  return [...new Map(cells.map(cell => [cell.date, cell])).values()].sort((a,b) => a.date.localeCompare(b.date));
 }
-__name(getMonthCalendar, "getMonthCalendar");
-async function runCalendarIframe(p) {
-  const sp = new URLSearchParams();
-  sp.set("O", p.from);
-  sp.set("D", p.to);
-  sp.set("OD", `${p.month}-16`);
-  sp.set("A", String(p.adults));
-  if (p.mode !== "cash") sp.set("ShoppingMethod", "onlineaward");
-  const url = `https://www.alaskaair.com/search/results?${sp}`;
-  const iframe = document.createElement("iframe");
-  iframe.style.cssText = "width:1px;height:1px;visibility:hidden;position:absolute;left:-9999px;top:-9999px;border:0;";
-  iframe.setAttribute("aria-hidden", "true");
-  iframe.src = url;
-  document.body.appendChild(iframe);
-  const timeoutMs = p.timeoutMs ?? 25e3;
-  try {
-    const datesArr = await new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        clearInterval(interval);
-        resolve(null);
-      }, timeoutMs);
-      const interval = setInterval(() => {
-        try {
-          const sd = iframe.contentDocument?.querySelector("shoulder-dates");
-          const attr = sd?.getAttribute("dates");
-          if (attr && attr.length > 50) {
-            clearInterval(interval);
-            clearTimeout(timer);
-            try {
-              resolve(JSON.parse(attr));
-            } catch {
-              resolve(null);
-            }
-          }
-        } catch {
-        }
-      }, 400);
-    });
-    if (!Array.isArray(datesArr)) return [];
-    return datesArr.map(normalizeCalendarCell).filter((x) => !!x && x.date.startsWith(p.month));
-  } finally {
-    iframe.remove();
-  }
-}
-__name(runCalendarIframe, "runCalendarIframe");
 function enumerateMonthDates(month) {
   const dim = daysInMonth(month);
   const out = [];
@@ -754,7 +694,7 @@ async function batchSearch(p) {
         fares,
         row,
         flight: row,
-        matchedCabins: verdict.matchedCabins
+        matchedCabins: verdict.matchedCabins, matchedFares: verdict.matchedFares
       });
     }
   });
@@ -764,50 +704,54 @@ async function batchSearch(p) {
 }
 __name(batchSearch, "batchSearch");
 
+const routeInput = z.object({from:z.string(),to:z.string(),date:z.string(),adults:z.number().int().min(1).max(9).optional(),mode:z.enum(["award","cash"]).optional()});
+const filtersInput = z.object({nonstopOnly:z.boolean().optional(),depAfter:z.union([z.string(),z.number()]).optional(),depBefore:z.union([z.string(),z.number()]).optional(),arriveAfter:z.union([z.string(),z.number()]).optional(),arriveBefore:z.union([z.string(),z.number()]).optional(),carriers:z.array(z.string()).optional(),excludeCarriers:z.array(z.string()).optional(),maxDurationMinutes:z.number().optional(),maxLayoverMinutes:z.number().optional(),minSeats:z.number().int().positive().optional(),bookingCodes:z.array(z.string()).optional(),noMixedCabin:z.boolean().optional(),maxMiles:z.object({main:z.number().optional(),business:z.number().optional(),first:z.number().optional()}).optional(),maxCash:z.number().nonnegative().optional()});
+const rangeInput = routeInput.omit({date:true}).merge(filtersInput).extend({start:z.string(),end:z.string(),concurrency:z.number().int().positive().optional()});
 export default defineSkill({
   batchSearch: fn({
     summary: "multi-route × multi-month scan.",
-    input: z.any().optional(),
+    input: rangeInput.omit({from:true,to:true,start:true,end:true}).extend({origins:z.array(z.string()),destinations:z.array(z.string()),months:z.array(z.string()).optional(),start:z.string().optional(),end:z.string().optional(),maxCandidateDates:z.number().int().positive().optional(),skipCalendar:z.boolean().optional()}),
     handler: async (params) => batchSearch(params),
   }),
   filterFlights: fn({
     summary: "post-search filter; accepts row/hit/summary.",
-    input: z.any().optional(),
-    handler: async (params) => filterFlights(params),
+    input: z.object({items: z.array(z.any()), filters: z.record(z.any()).optional()}),
+    handler: async (params) => filterFlights(params.items, params.filters),
   }),
   findAwards: fn({
     summary: "★ main entry. Date range + filters.",
-    input: z.any().optional(),
+    input: rangeInput.omit({start:true,end:true}).extend({date:z.string().optional(),start:z.string().optional(),end:z.string().optional(),days:z.number().int().positive().optional()}),
+    examples: [{args:{from:"SEA",to:"NRT",start:"2026-12-01",end:"2026-12-05",noMixedCabin:true,maxCash:100}}],
     handler: async (params) => findAwards(params),
   }),
   getMonthCalendar: fn({
-    summary: "iframe-based; heavy, serialized.",
-    input: z.any().optional(),
+    summary: "Native monthly SvelteKit calendar JSON; points and cash, no iframe.",
+    input: z.object({from: z.string(), to: z.string(), month: z.string(), adults: z.number().int().positive().optional(), mode: z.enum(["award", "cash"]).optional()}),
     handler: async (params) => getMonthCalendar(params),
   }),
   normalizeFare: fn({
-    summary: "normalizeFare(key, sol): NormalizedFare",
-    input: z.any().optional(),
-    handler: async (params) => normalizeFare(params),
+    summary: "Normalize one fare: {key, solution}; points, cash, seats and booking codes.",
+    input: z.object({key: z.string(), solution: z.record(z.any())}),
+    handler: async (params) => normalizeFare(params.key, params.solution),
   }),
   normalizeRowFares: fn({
     summary: "normalizeRowFares(row): NormalizedFare[]",
     input: z.any().optional(),
-    handler: async (params) => normalizeRowFares(params),
+    handler: async (params) => normalizeRowFares(params.row ?? params),
   }),
   searchAwards: fn({
     summary: "single date, raw rows.",
-    input: z.any().optional(),
+    input: routeInput,
     handler: async (params) => searchAwards(params),
   }),
   searchAwardsRaw: fn({
     summary: "searchAwardsRaw(params): { rows, status, redirectLocation? }",
-    input: z.any().optional(),
+    input: routeInput,
     handler: async (params) => searchAwardsRaw(params),
   }),
   searchDateRange: fn({
     summary: "explicit start+end variant.",
-    input: z.any().optional(),
+    input: rangeInput,
     handler: async (params) => searchDateRange(params),
   }),
   summarizeFlight: fn({

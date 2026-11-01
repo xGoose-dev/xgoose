@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         flyertalk
 // @namespace    ft
-// @version      0.2.5
+// @version      0.2.6
 // @description  FlyerTalk site-specific helpers — WordPress article search (anonymous /wp-json), URL parsing for the vBulletin SEO routes, a curated forum-slug-to-id map (airlines, hotels, credit cards), and a parallel searchAll fan-out across articles + forum posts + threads.
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*
@@ -266,16 +266,7 @@ function currentRouteImpl() {
 /* ───── searchAll fan-out ───── */
 
 async function getVbulletin() {
-  const w = window;
-  for (let i = 0; i < 20; i++) {
-    const ns = w.xgoose?.skills?.vbulletin;
-    if (ns && typeof ns.searchPosts === 'function') return ns;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error(
-    'flyertalk.searchAll: vbulletin-forum skill is not loaded. ' +
-      'On flyertalk.com root pages, both skills must be active — verify the extension is enabled and reload the page.',
-  );
+  return window.xgoose.skills.vbulletin;
 }
 
 /* ───── Current page: forum and thread ───── */

@@ -1,8 +1,8 @@
 // ==XGooseSkill==
 // @name        zhihu
 // @namespace   zhihu
-// @version     0.1.1
-// @description 知乎 (zhihu.com) Q&A + article reader. Pure JSON API + SSR-HTML parsing — search, read questions/answers/articles/comments/热榜/users. No DOM scraping, no clicks. Reply to the user in Chinese (中文).
+// @version     0.2.1
+// @description 知乎 (zhihu.com) Q&A + article reader. Browser-session API and loaded-page reader — search, questions/answers/articles/comments, hot searches, users and images. Reply to the user in Chinese (中文).
 // @match       *://www.zhihu.com/*
 // @match       *://zhuanlan.zhihu.com/*
 // @detect      location.hostname.endsWith('zhihu.com')
@@ -21,15 +21,8 @@
 // @keyword     想法
 // ==/XGooseSkill==
 
-/**
- * 知乎 (zhihu.com) Q&A + article reader. Pure JSON API + SSR-HTML parsing — search, read questions/answers/articles/comments/热榜/users. No DOM scraping, no clicks. Reply to the user in Chinese (中文).
- *
- * Migrated from webagent v0.1; runtime preserved verbatim. Per-fn input
- * schemas are intentionally widened to z.any() — refine with concrete Zod
- * schemas in a follow-up (see the original SKILL.md for parameter types).
- * # 知乎 (Zhihu) — Schema Reference
- * > **Read this BEFORE calling any function.** Every entrypoint takes a single options object. The skill activates on `www.zhihu.com` and `zhuanlan.zhihu.com`; it reads same-origin REST endpoints plus the page's SSR'd `#js-initialData` blob. **No login required for any of the read paths** — guest sessions return the same data the logged-in UI sees. Zhihu's signed `x-zse-96` header is _not_ used; the few endpoints that enforce it (e.g. `/api/v4/questions/{id}`) are avoided in favour of the SSR fallback.
- */
+// Uses the current browser session and Zhihu Web endpoints.
+// MCP reference: https://github.com/meurz/zhihu-mcp-server
 
 import { defineSkill, fn } from '@xgoose/skill';
 import { z } from 'zod';
@@ -65,30 +58,6 @@ function stripHtml(html) {
   ).replace(/\s+/g, " ").trim();
 }
 __name(stripHtml, "stripHtml");
-/** Answer/article HTML as text with paragraph breaks and `[image]` where a picture sits. */
-function htmlText(html) {
-  if (!html) return "";
-  return decodeEntities(
-    String(html).replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<noscript[\s\S]*?<\/noscript>/gi, " ").replace(/<img\b[^>]*>/gi, " [image] ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(?:p|h[1-6]|li|blockquote|figure|pre|tr)>/gi, "\n").replace(/<[^>]+>/g, " ")
-  ).replace(/(?:[ \t]*\[image\][ \t]*)+/g, " [image] ").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-}
-__name(htmlText, "htmlText");
-/** Zhihu epoch seconds as ISO time; null when absent. */
-function isoTime(seconds) {
-  const n = Number(seconds);
-  return n > 0 ? new Date(n * 1e3).toISOString() : null;
-}
-__name(isoTime, "isoTime");
-/** Drops absent and empty fields; zero counts and explicit false stay. */
-function compact(record) {
-  return Object.fromEntries(Object.entries(record).filter(([, v]) => v !== undefined && v !== null && v !== ""));
-}
-__name(compact, "compact");
-function times(created, updated) {
-  const createdAt = isoTime(created), updatedAt = isoTime(updated);
-  return { createdAt, updatedAt: updatedAt !== createdAt ? updatedAt : null };
-}
-__name(times, "times");
 async function fetchJson(url) {
   const r = await fetch(url, {
     method: "GET",
@@ -123,12 +92,14 @@ function extractInitialData(html) {
 }
 __name(extractInitialData, "extractInitialData");
 function toAuthor(a) {
-  if (!a) return { name: "" };
-  return compact({
+  if (!a) return { id: "", urlToken: "", name: "" };
+  return {
+    id: String(a.id ?? ""),
     urlToken: String(a.url_token ?? a.urlToken ?? ""),
     name: String(a.name ?? ""),
-    headline: a.headline ? String(a.headline) : void 0
-  });
+    headline: a.headline ? String(a.headline) : void 0,
+    avatarUrl: a.avatar_url ?? a.avatarUrl ?? void 0
+  };
 }
 __name(toAuthor, "toAuthor");
 function answerUrl(qid, aid) {
@@ -146,35 +117,39 @@ __name(articleUrl, "articleUrl");
 function toAnswerFromApi(r) {
   const qid = String(r.question?.id ?? "");
   const aid = String(r.id);
-  const contentText = htmlText(r.content);
-  return compact({
+  const html = r.content ?? "";
+  return {
     id: aid,
     questionId: qid,
     url: qid ? answerUrl(qid, aid) : "",
-    excerpt: contentText ? void 0 : stripHtml(r.excerpt ?? ""),
+    excerpt: stripHtml(r.excerpt ?? ""),
     voteupCount: Number(r.voteup_count ?? 0),
     commentCount: Number(r.comment_count ?? 0),
-    ...times(r.created_time, r.updated_time),
+    createdTime: Number(r.created_time ?? 0),
+    updatedTime: Number(r.updated_time ?? 0),
     author: toAuthor(r.author),
-    contentText
-  });
+    contentHtml: html,
+    contentText: stripHtml(html)
+  };
 }
 __name(toAnswerFromApi, "toAnswerFromApi");
 function toAnswerFromInitialData(r) {
   const qid = String(r.question?.id ?? "");
   const aid = String(r.id);
-  const contentText = htmlText(r.content);
-  return compact({
+  const html = r.content ?? "";
+  return {
     id: aid,
     questionId: qid,
     url: qid ? answerUrl(qid, aid) : "",
-    excerpt: contentText ? void 0 : stripHtml(r.excerpt ?? ""),
+    excerpt: stripHtml(r.excerpt ?? ""),
     voteupCount: Number(r.voteupCount ?? 0),
     commentCount: Number(r.commentCount ?? 0),
-    ...times(r.createdTime, r.updatedTime),
+    createdTime: Number(r.createdTime ?? 0),
+    updatedTime: Number(r.updatedTime ?? 0),
     author: toAuthor(r.author),
-    contentText
-  });
+    contentHtml: html,
+    contentText: stripHtml(html)
+  };
 }
 __name(toAnswerFromInitialData, "toAnswerFromInitialData");
 async function search(params) {
@@ -217,7 +192,7 @@ function toSearchHit(o) {
         url: qid ? answerUrl(qid, id) : "",
         voteupCount: Number(o.voteup_count ?? 0),
         commentCount: Number(o.comment_count ?? 0),
-        createdAt: isoTime(o.created_time),
+        createdTime: Number(o.created_time ?? 0),
         author: toAuthor(o.author)
       };
     }
@@ -230,7 +205,7 @@ function toSearchHit(o) {
         url: articleUrl(id),
         voteupCount: Number(o.voteup_count ?? 0),
         commentCount: Number(o.comment_count ?? 0),
-        createdAt: isoTime(o.created ?? o.created_time),
+        createdTime: Number(o.created ?? o.created_time ?? 0),
         author: toAuthor(o.author)
       };
     }
@@ -242,7 +217,7 @@ function toSearchHit(o) {
         excerpt: stripHtml(o.excerpt ?? ""),
         url: questionUrl(id),
         commentCount: Number(o.comment_count ?? 0),
-        createdAt: isoTime(o.created),
+        createdTime: Number(o.created ?? 0),
         author: toAuthor(o.author)
       };
     }
@@ -326,7 +301,8 @@ async function getQuestion(params) {
     title: stripHtml(rawQ.title ?? ""),
     detail: stripHtml(rawQ.detail ?? ""),
     url: questionUrl(qid),
-    ...times(rawQ.created, rawQ.updatedTime),
+    createdTime: Number(rawQ.created ?? 0),
+    updatedTime: Number(rawQ.updatedTime ?? 0),
     answerCount: Number(rawQ.answerCount ?? 0),
     followerCount: Number(rawQ.followerCount ?? 0),
     commentCount: Number(rawQ.commentCount ?? 0),
@@ -335,7 +311,6 @@ async function getQuestion(params) {
     topics: (rawQ.topics ?? []).map((t) => ({ id: String(t.id), name: stripHtml(t.name) })),
     author: toAuthor(rawQ.author)
   };
-  if (!question.updatedAt) delete question.updatedAt;
   const answers = Object.values(entities?.answers ?? {}).map((a) => toAnswerFromInitialData(a)).filter((a) => a.questionId === qid).sort((a, b) => b.voteupCount - a.voteupCount);
   return {
     question,
@@ -398,14 +373,16 @@ async function getArticle(params) {
   if (!rawA) {
     throw new Error(`zhihu.getArticle: article ${id} not found in initial data (404 / removed?)`);
   }
-  const contentText = htmlText(rawA.content);
-  return compact({
+  const content = rawA.content ?? "";
+  return {
     id,
     title: stripHtml(rawA.title ?? ""),
     url: articleUrl(id),
-    contentText,
-    excerpt: contentText ? void 0 : stripHtml(rawA.excerpt ?? ""),
-    ...times(rawA.created, rawA.updated),
+    contentHtml: content,
+    contentText: stripHtml(content),
+    excerpt: stripHtml(rawA.excerpt ?? ""),
+    createdTime: Number(rawA.created ?? 0),
+    updatedTime: Number(rawA.updated ?? 0),
     voteupCount: Number(rawA.voteupCount ?? 0),
     commentCount: Number(rawA.commentCount ?? 0),
     author: toAuthor(rawA.author),
@@ -414,7 +391,7 @@ async function getArticle(params) {
       title: stripHtml(rawA.column.title ?? ""),
       url: String(rawA.column.url ?? "")
     } : null
-  });
+  };
 }
 __name(getArticle, "getArticle");
 const TARGET_TYPE_NORMALIZE = {
@@ -445,13 +422,13 @@ async function getComments(params) {
   });
   const url = `https://www.zhihu.com/api/v4/comment_v5/${normalized}/${params.targetId}/root_comment?${sp}`;
   const json = await fetchJson(url);
-  const comments = (json.data ?? []).map((c) => compact({
+  const comments = (json.data ?? []).map((c) => ({
     id: String(c.id),
     authorName: String(c.author?.name ?? ""),
     authorUrlToken: String(c.author?.url_token ?? ""),
     contentText: stripHtml(c.content ?? ""),
     voteupCount: Number(c.like_count ?? c.vote_count ?? 0),
-    createdAt: isoTime(c.created_time)
+    createdTime: Number(c.created_time ?? 0)
   }));
   const paging = {
     isEnd: !!json.paging?.is_end,
@@ -474,6 +451,7 @@ async function getMember(params) {
     name: String(r.name ?? ""),
     headline: String(r.headline ?? ""),
     description: stripHtml(r.description ?? ""),
+    avatarUrl: String(r.avatar_url ?? ""),
     followerCount: Number(r.follower_count ?? 0),
     followingCount: Number(r.following_count ?? 0),
     answerCount: Number(r.answer_count ?? 0),
@@ -485,7 +463,48 @@ async function getMember(params) {
 }
 __name(getMember, "getMember");
 
+function loadedAnswerId(el) {
+  return el.getAttribute('name') || el.getAttribute('data-answer-id') || el.querySelector('meta[itemprop="url"]')?.getAttribute('content')?.match(/\/answer\/(\d+)/)?.[1];
+}
+function loadedImages(root) {
+  const urls=[...new Set([...root.querySelectorAll('img')].map(img=>img.getAttribute('data-original')||img.getAttribute('data-actualsrc')||img.currentSrc||img.src).filter(Boolean))];
+  return urls.map((url,i)=>({image:i+1,url}));
+}
 export default defineSkill({
+  readCurrent: fn({
+    summary: "从当前网页读取回答或文章正文、真实图片和来源；无需再次请求内容 API。",
+    input:z.object({answerId:z.string().optional()}),examples:[{args:{}}],
+    handler:async(args={})=>{
+      const answers=[...document.querySelectorAll('.AnswerItem')];
+      const answer=args.answerId?answers.find(el=>loadedAnswerId(el)===args.answerId):answers.length===1?answers[0]:null;
+      const article=document.querySelector('.Post-RichTextContainer');
+      if(!answer&&!article)return {status:answers.length?'answer_id_required':'not_loaded',answerIds:answers.map(loadedAnswerId).filter(Boolean)};
+      const content=answer?.querySelector('.RichContent-inner')||article;
+      const id=answer?loadedAnswerId(answer):null;
+      const link=answer?.querySelector('meta[itemprop="url"]')?.getAttribute('content')||location.href;
+      const title=document.querySelector('h1.QuestionHeader-title, .Post-Title')?.textContent.trim()||document.title;
+      const imgs=loadedImages(content);
+      return {readerVersion:1,sources:[{id:id||link,url:link,title,author:answer?.querySelector('.AuthorInfo-name')?.textContent.trim()||document.querySelector('.Post-Author .AuthorInfo-name')?.textContent.trim()||null,text:[content.innerText,...imgs.map(img=>`[image ${img.image}]`)].join('\n'),scope:'loaded_content',method:'dom'}],images:imgs,readImages:imgs.length?`readImages({${id?'answerId:"'+id+'",':''}images:[N]})`:undefined};
+    },
+  }),
+  getLoadedSearch: fn({
+    summary:"读取当前知乎搜索页已加载的结果卡片，返回摘要和原始链接。",
+    input:z.object({}),examples:[{args:{}}],handler:async()=>({query:new URL(location.href).searchParams.get('q')||'',sources:[...document.querySelectorAll('.SearchResult-Card')].flatMap(card=>{const link=card.querySelector('h2 a, .ContentItem-title a');return link?[{url:new URL(link.getAttribute('href'),location.href).href,title:link.textContent.trim(),text:card.querySelector('.RichContent-inner, .RichText')?.textContent.trim()||'',scope:'search_snippet',method:'dom'}]:[];})}),
+  }),
+  getHotSearch: fn({
+    summary: "热搜词和热度，区别于问题热榜 getHotList。",
+    input: z.object({}), examples: [{args:{}}],
+    handler: async () => {const data=await fetchJson('https://www.zhihu.com/api/v4/search/hot_search');return {queries:(data.hot_search_queries??[]).map(row=>({query:row.query,heat:row.hot_show??row.hot,label:row.label}))};},
+  }),
+  readImages: fn({
+    summary: "读取当前回答或文章的真实图片；编号从 1 开始，交给扩展后台附加像素。",
+    input:z.object({answerId:z.string().optional(),images:z.array(z.number().int().positive()).optional()}),examples:[{args:{images:[1]}}],
+    handler:async (args={})=>{const answers=[...document.querySelectorAll('.AnswerItem')];const answer=args.answerId?answers.find(el=>loadedAnswerId(el)===args.answerId):answers.length===1?answers[0]:null;const root=answer?.querySelector('.RichContent-inner')||document.querySelector('.Post-RichTextContainer');if(!root)throw new Error('Open an article or pass the current answerId.');
+      const imgs=loadedImages(root);
+      return {imageContext:{requested:true,delivery:'urls_only_until_host_attaches',images:(args.images??imgs.map(img=>img.image)).map(n=>imgs[n-1])}};
+    },
+  }),
+
   getAnswer: fn({
     summary: "single answer by id, full content.",
     input: z.any().optional(),
