@@ -24,6 +24,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Release safety tests
         run: python3 -m unittest discover -s tests -p 'release_test.py'
+      - name: iOS exported signature regression
+        run: python3 -m unittest discover -s apps/safari/scripts/tests -p 'test_*.py'
       - run: node --test scripts/tests/*.test.mjs
       - run: npm run check
       - name: Safari adapter typecheck and packaged resources
