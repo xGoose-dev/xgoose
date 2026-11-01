@@ -17,13 +17,13 @@ const [background,content]=await Promise.all([compile('../apps/chrome/src/backgr
 const model={provider:'xgoose-hosted',model:'deepseek-flash',thinking:false};
 const agent=(id='page',nonce='document-a'):PeerAgent=>({id,sessionId:'conversation',tabId:1,documentKey:nonce,url:'https://example.test/',title:'Page',status:'running',model,runId:'run-1'});
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
-function broker(incognito=false) {
+function broker(incognito: boolean | ((id:number)=>boolean)=false) {
   const peerState=emptyPeerState();peerState.agents.page=agent();
   let liveNonce:string|null='document-a',updated:(id:number,change:any)=>void,removed:(id:number)=>void;
   const sender={id:'extension',frameId:0,tab:{id:1},url:'https://example.test/'};
   const chrome={runtime:{id:'extension',getURL:(p:string)=>'chrome-extension://extension/'+p},tabs:{
-    get:async(id:number)=>({id,url:'https://example.test/',title:'Page',incognito}),
-    query:async()=>[{id:1,url:'https://example.test/',title:'Page',incognito}],
+    get:async(id:number)=>({id,url:'https://example.test/',title:'Page',incognito:typeof incognito==='function'?incognito(id):incognito}),
+    query:async()=>[1,2].map(id=>({id,url:'https://example.test/',title:'Page',incognito:typeof incognito==='function'?incognito(id):incognito})),
     sendMessage:async(id:number)=>id===2?{nonce:'document-b'}:liveNonce?{nonce:liveNonce}:null,
     onRemoved:{addListener:(f:any)=>removed=f},onUpdated:{addListener:(f:any)=>updated=f},
   }};
@@ -84,11 +84,12 @@ test('a late task settlement preserves the unavailable outcome and sends no dupl
 function page() {
   const calls:any[]=[],statuses:string[]=[],locks:number[]=[];let ignored=false,failStop=false;
   const fresh=agent('fresh');fresh.status='idle';
-  const context:any={crypto,console,location:{href:'https://example.test/'},chrome:{runtime:{getURL:(p:string)=>'chrome-extension://extension/'+p,onMessage:{addListener(){}}}},
+  const context:any={crypto,console,URL,location:{href:'https://example.test/'},chrome:{runtime:{getURL:(p:string)=>'chrome-extension://extension/'+p,onMessage:{addListener(){}}}},
     send:async(_kind:string,{operation}:any)=>{
       calls.push(operation);
       if(operation.op==='register')return{agent:{...fresh}};
       if(operation.op==='begin')return{agent:{...fresh,status:'running',runId:operation.runId}};
+      if(operation.op==='wait')return{waiting:true,agents:[{...fresh,url:'https://www.flyertalk.com/forum/',title:'FlyerTalk'}]};
       if(operation.op==='stop'&&failStop)throw Error('Background unavailable');
       if(operation.op==='settle')return ignored?{ignored:true}:{};
       return{message:null};
@@ -110,4 +111,30 @@ test('ignored cleanup clears waiting/run state and conversation reset clears sta
   assert.equal(f.peers.agent,undefined);assert.equal(f.peers.waiting,false);assert.deepEqual(f.statuses,[]);
   const count=f.calls.length;await f.peers.finish('completed','duplicate');assert.equal(f.calls.length,count);
   const reset=page();reset.peers.agent=agent('stale');reset.failStop();await assert.rejects(reset.peers.reset(),/Background unavailable/);assert.equal(reset.peers.agent,undefined);
+});
+
+test('waiting yields immediately with a named destination, and stop or failure ends the wait',async()=>{
+  const f=page();await f.peers.begin('waiting-run');
+  const wait=f.peers.tools().find((tool:any)=>tool.name==='wait_agents');
+  const result=await wait.execute({agentIds:['flyertalk']});
+  assert.equal(result.waiting,true);assert.equal(f.peers.waiting,true);
+  assert.match(f.peers.waitingLabel,/flyertalk.com/);
+  await f.peers.finish('completed','');assert.match(f.statuses.at(-1)!,/You can keep chatting/);
+  await f.peers.stop();assert.equal(f.peers.waiting,false);
+  await f.peers.begin('failed-run');await wait.execute({agentIds:['flyertalk']});
+  await f.peers.finish('failed','Network error');assert.equal(f.peers.waiting,false);
+});
+
+test('normal and private pages can assign work and return results in both directions',async()=>{
+  for(const privateTab of [1,2]){
+    const f=broker(id=>id===privateTab);
+    f.peerState.agents.other={...agent('other','document-b'),tabId:2,status:'idle',runId:undefined};
+    const task=await f.call({op:'spawn',tabId:2,requestId:'cross-window',task:'Read peer page'});
+    const delivery=await f.call({op:'take'},'document-b','other');assert.equal(delivery.message.taskId,task.taskId);
+    await f.call({op:'begin',runId:'peer-run',model},'document-b','other');
+    await f.call({op:'settle',runId:'peer-run',outcome:'completed',text:'Peer evidence'},'document-b','other');
+    const result=await f.call({op:'wait',agentIds:['other']});
+    assert.equal(result.messages[0].text,'Peer evidence');assert.equal(result.waiting,false);
+    assert.equal((await f.call({op:'tabs'})).tabs.length,2);
+  }
 });

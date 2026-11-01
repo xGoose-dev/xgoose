@@ -2670,12 +2670,17 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
         const st = card.querySelector(".tool-st") as HTMLElement;
         const sub = card.querySelector(".tool-sub") as HTMLElement;
         const detail = card.querySelector(".tool-detail") as HTMLElement;
-        card.classList.remove("running");
+        card.classList.remove("running", "waiting", "done", "error");
         if (error) {
           card.classList.add("error");
           st.className = "tool-st error";
           st.textContent = "✗";
           sub.textContent = `Error: ${truncate(error, 80)}`;
+        } else if (name === "wait_agents" && (output as {waiting?: boolean})?.waiting) {
+          card.classList.add("waiting");
+          st.className = "tool-st running";
+          st.innerHTML = '<div class="sp"></div>';
+          sub.textContent = "Waiting for peer results…";
         } else {
           card.classList.add("done");
           st.className = "tool-st done";

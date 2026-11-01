@@ -1,3 +1,6 @@
+import {boundedModelText} from "./resultStore";
+import type {ChatMessage} from "./createAgent";
+
 /** Durable peer coordination. Browser adapters own tab creation and delivery. */
 export type PeerStatus = "idle" | "running" | "waiting" | "stopped" | "unavailable";
 export type TaskStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "unavailable";
@@ -97,7 +100,7 @@ export function waitForPeers(state: PeerState, id: string, ids: string[]) {
     return {waiting: false, agents: ids.map(target => state.agents[target]), tasks};
   }
   agent.waitingOn = ids;
-  return {waiting: true};
+  return {waiting: true, agents: ids.map(target => state.agents[target])};
 }
 export function settlePeer(state: PeerState, id: string, runId: string, outcome: "completed" | "waiting" | "failed" | "cancelled", text: string): void {
   const agent = state.agents[id];
@@ -127,4 +130,34 @@ export function settlePeer(state: PeerState, id: string, runId: string, outcome:
     }
   }
   agent.runId = undefined;
+}
+
+/** Deliver an asynchronous result through the waiting tool, in history and model context. */
+export function receivePeerResult(history: ChatMessage[], context: ChatMessage[], message: PeerMessage) {
+  const pendingWait = (messages: ChatMessage[]) => {
+    const last = messages.at(-1);
+    if (last?.role !== "tool" || !Array.isArray(last.content)) return;
+    return last.content.find((part: any) => {
+      if (part.type !== "tool-result" || part.toolName !== "wait_agents") return false;
+      const raw = part.output?.value ?? part.output;
+      const output = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return output?.waiting === true && messages.some(m => m.role === "assistant" && Array.isArray(m.content) &&
+        m.content.some((call: any) => call.type === "tool-call" && call.toolCallId === part.toolCallId && call.input?.agentIds?.includes(message.from)));
+    });
+  };
+  const pending = pendingWait(history);
+  const toolCallId = pending?.toolCallId ?? `peer-receive:${message.id}`;
+  const input = {agentIds: [message.from]};
+  const output = {waiting: false, messages: [message]};
+  const call: ChatMessage = {role: "assistant", content: [{type: "tool-call", toolCallId, toolName: "wait_agents", input}]};
+  const deliver = (messages: ChatMessage[], value: unknown) => {
+    const result = {type: "tool-result", toolCallId, toolName: "wait_agents", output: {type: "json", value}};
+    if (pendingWait(messages)?.toolCallId === toolCallId) {
+      return [...messages.slice(0, -1), {...messages.at(-1)!, content: messages.at(-1)!.content.map((part: any) => part.toolCallId === toolCallId ? result : part)}];
+    }
+    // An unsolicited completion or a compacted-away wait is a new mailbox
+    // delivery. Keep the call/result pair together instead of inventing a user turn.
+    return [...messages, call, {role: "tool", content: [result]}];
+  };
+  return {history: deliver(history, output), context: deliver(context, boundedModelText(output, JSON.stringify(output), {id: toolCallId})), toolCallId, input, output};
 }

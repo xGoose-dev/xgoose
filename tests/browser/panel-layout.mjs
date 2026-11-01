@@ -46,6 +46,19 @@ try{
    assert.ok(metrics.composer.scroll<=metrics.composer.client+1,'short input must remain fully visible after Stop appears');
    assert.equal(metrics.borderTransform,'none','border must not rotate through message content');
   }
+  await page.evaluate(()=>{
+   window.peerWaitCard=panel.addToolCard('wait_agents',{agentIds:['flyertalk']});
+   peerWaitCard.setResult({waiting:true});panel.setSending(true);
+   panel.setLoadingStatus('Waiting for www.flyertalk.com… You can keep chatting.');
+  });
+  assert.equal(await page.locator('.tool[data-tool-name="wait_agents"]').getAttribute('class'),'tool waiting');
+  assert.equal(await page.locator('.gen-bar.active').count(),1);
+  await page.locator('.in-text').fill('Continue typing while the other page works');
+  assert.equal(await page.locator('.btn-send').isEnabled(),true);
+  assert.equal(await page.locator('.btn-stop').isVisible(),true);
+  await page.evaluate(()=>{peerWaitCard.setResult({waiting:false,messages:[{text:'Peer evidence'}]});panel.setSending(false);panel.setLoadingStatus(null);});
+  assert.equal(await page.locator('.tool[data-tool-name="wait_agents"]').getAttribute('class'),'tool done');
+  assert.equal(await page.locator('.gen-bar.active').count(),0);
   await page.close();
  }
 }finally{await browser.close();}

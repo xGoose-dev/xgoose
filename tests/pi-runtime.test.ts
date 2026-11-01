@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { z } from "zod";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import {receivePeerResult} from "../packages/core/src/peerAgents.ts";
+import {setResultBudget,storedResult} from "../packages/core/src/resultStore.ts";
 import { createAgent } from "../packages/core/src/createAgent.ts";
 import { defineTool } from "../packages/core/src/tools/buildTool.ts";
 const settings={provider:"openai-compat" as const,model:"luna",baseUrl:"https://example.test/ai",apiKey:"synthetic",thinking:false};
@@ -117,4 +119,36 @@ test("concurrency-safe calls in one turn run together while other calls run alon
   const run=await bundle.agent.stream({messages:[{role:"user",content:"go"}]});for await(const _ of run.fullStream){}
   assert.equal(peak,2);
   assert.deepEqual(order.slice(4),["write:c:start","write:c:end","read:d:start","read:d:end"]);
+});
+
+test("a yielded peer wait resumes from its tool response without creating a user turn", async () => {
+  let waiting = false, requests = 0;
+  const wait = defineTool({name:"wait_agents",description:"Wait for peers",inputSchema:z.object({agentIds:z.array(z.string())}),execute:()=>{waiting=true;return {waiting:true};}});
+  const initial = createAgent({settings,fetchImpl:fetch,tools:[wait],shouldYield:()=>waiting,streamFn:()=>{
+    requests++;return stream(answer([{type:"toolCall",id:"wait-1",name:"wait_agents",arguments:{agentIds:["flyertalk"]}}],"toolUse"));
+  }});
+  const history=[{role:"user",content:"Research this forum"}];
+  const run=await initial.agent.stream({messages:history});for await(const _ of run.fullStream){}
+  const saved=await run.response;assert.equal(requests,1);
+  const result={id:"result:task-1",from:"flyertalk",to:"uscf",kind:"result" as const,state:"claimed" as const,outcome:"completed" as const,text:"Peer evidence"};
+  const delivery=receivePeerResult([...history,...saved.messages],saved.modelContext,result);
+  assert.equal(delivery.toolCallId,"wait-1");
+  assert.equal(delivery.history.filter(m=>m.role==="user").length,1);
+  assert.equal(delivery.history.at(-1)?.content[0].output.value.messages[0].text,"Peer evidence");
+  const resumed=createAgent({settings,fetchImpl:fetch,tools:[wait],streamFn:(_model,ctx)=>{
+    requests++;assert.equal(ctx.messages.at(-1)?.role,"toolResult");
+    assert.ok(JSON.stringify(ctx.messages.at(-1)).includes("Peer evidence"));
+    return stream(answer([{type:"text",text:"Combined forum answer"}]));
+  }});
+  const next=await resumed.agent.stream({messages:delivery.context});for await(const _ of next.fullStream){}
+  assert.equal((await next.response).messages.at(-1)?.content[0].text,"Combined forum answer");assert.equal(requests,2);
+  // Another completion after a user has continued chatting has its own tool
+  // delivery; it cannot replace the earlier evidence or become a user message.
+  const later=receivePeerResult([...delivery.history,{role:"user",content:"More detail"},{role:"assistant",content:"Answer"}], [{role:"user",content:"Compacted context"}], {...result,id:"result:task-2",text:"Second peer evidence"});
+  assert.equal(later.history.at(-1)?.role,"tool");assert.equal(later.context.at(-2)?.role,"assistant");
+  assert.equal(later.history.filter(m=>m.role==="user").length,2);
+  setResultBudget(1000);
+  const large=receivePeerResult(history,history,{...result,text:"Full evidence ".repeat(10000)});
+  const bounded=JSON.parse(large.context.at(-1)?.content[0].output.value);
+  assert.equal(bounded.oversized,true);assert.equal((storedResult(bounded.resultId) as any).messages[0].text,large.history.at(-1)?.content[0].output.value.messages[0].text);
 });
