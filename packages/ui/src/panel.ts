@@ -1547,6 +1547,14 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   host.id = "xgoose-root";
   const shadow = host.attachShadow({ mode: "open" });
 
+  // Outside the shadow root, keyboard targets become the host DIV. Sites
+  // such as Discord then mistake typing here for a page shortcut and focus
+  // their own composer. Stop bubbling at the boundary, after panel controls
+  // have handled the event; keep native editing and browser shortcuts intact.
+  for (const type of ["keydown", "keypress", "keyup"]) {
+    shadow.addEventListener(type, (event) => event.stopPropagation());
+  }
+
   const style = document.createElement("style");
   style.textContent = CSS;
   shadow.appendChild(style);
