@@ -75,9 +75,10 @@ export const SettingsSchema = z.object({
    *   - "always"      → on every page (explicit opt-in).
    *   - "skill-sites" → only on pages where at least one enabled skill
    *                     matches. An already-open chat panel is never hidden.
+   *   - "never"       → hidden on all pages; the toolbar still opens chat.
    * Gated by the content script via `active_skills_for_url`.
    */
-  launcherVisibility: z.enum(["always", "skill-sites"]).default("skill-sites"),
+  launcherVisibility: z.enum(["always", "skill-sites", "never"]).default("skill-sites"),
   /**
    * Share anonymous, opt-out usage analytics (Google Analytics for Firebase).
    * On by default; flipping this off in the options page stops all event

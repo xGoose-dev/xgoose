@@ -55,6 +55,7 @@
   "Light": "Claro",
   "Dark": "Oscuro",
   "System mirrors your OS preference automatically.": "Sigue automáticamente el tema de tu sistema operativo.",
+  "Always hide (open from the extension button)": "Ocultar siempre (abrir desde el botón de la extensión)",
   "Floating button": "Botón flotante",
   "Show on every page": "Mostrar en todas las páginas",
   "Only on sites with a matching skill": "Solo en sitios con un skill compatible",

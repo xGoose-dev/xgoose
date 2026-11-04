@@ -24,8 +24,10 @@ import { DEFAULT_LAYOUT, type Corner, type Layout } from "./layout";
 
 const CSS = `
 *,*::before,*::after{box-sizing:border-box}
+/* Contain internal z-indices so site overlays and fullscreen cover the UI. */
 :host{
   all:initial;
+  position:relative;z-index:1000;isolation:isolate;
   font-family:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI Variable','Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
   font-size:13px;line-height:1.5;
   font-feature-settings:'cv11','ss01','ss03',normal;
