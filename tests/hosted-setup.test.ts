@@ -7,6 +7,7 @@ test("fresh installs use Hosted AI and only matching sites; saved preferences su
   const defaults = SettingsSchema.parse({});
   assert.equal(defaults.provider, "xgoose-hosted"); assert.equal(defaults.model, "default"); assert.equal(defaults.launcherVisibility, "skill-sites");
   assert.equal(SettingsSchema.parse({provider:"xgoose-hosted",model:"luna"}).model,"luna");
+  assert.equal(SettingsSchema.parse({launcherVisibility:"never"}).launcherVisibility,"never");
   const saved = SettingsSchema.parse({provider:"gemini",model:"saved-model",launcherVisibility:"always"});
   assert.equal(saved.provider,"gemini"); assert.equal(saved.model,"saved-model"); assert.equal(saved.launcherVisibility,"always");
 });

@@ -55,6 +55,7 @@
   "Light": "浅色",
   "Dark": "深色",
   "System mirrors your OS preference automatically.": "自动使用操作系统的主题偏好。",
+  "Always hide (open from the extension button)": "始终隐藏（通过插件按钮打开）",
   "Floating button": "悬浮按钮",
   "Show on every page": "在所有页面显示",
   "Only on sites with a matching skill": "仅在有匹配技能的网站显示",

@@ -138,8 +138,8 @@ async function bootstrap(): Promise<void> {
   );
   chrome.storage.onChanged.addListener(applyTheme);
 
-  // Launcher visibility: when `settings.launcherVisibility === "skill-sites"`
-  // the floating ✦ button is suppressed on pages with no matching skill. We
+  // Launcher visibility: "never" hides the floating button on all pages;
+  // "skill-sites" shows it only on pages with a matching skill. We
   // re-evaluate whenever the active-skill set changes (refreshSkills + the
   // `cs:set_active_skills` push) and whenever settings change. An open panel
   // is never hidden (enforced in the core panel).
@@ -147,7 +147,8 @@ async function bootstrap(): Promise<void> {
   const applyLauncherVisibility = (): void => {
     const s = getSettings();
     const visible =
-      s.launcherVisibility !== "skill-sites" || lastActiveSkillCount > 0;
+      s.launcherVisibility === "always" ||
+      (s.launcherVisibility === "skill-sites" && lastActiveSkillCount > 0);
     panel.setLauncherVisible(visible);
   };
   applyLauncherVisibility();
