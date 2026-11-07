@@ -13,6 +13,9 @@ A preset selects the complete material, shape, typography, border and shadow tre
 | Soft | Opaque rounded surfaces, 24px corners, inset highlights and soft shadows | tweakcn Claymorphism, adapted |
 | Bold | Opaque surface, square corners, 3px stroke, 4px hard offset shadow | tweakcn Neo Brutalism, adapted |
 
+Existing Settings buttons retain their original options-page or native-app destination.
+Appearance is an additional optional setting; an upgrade does not select a new preset.
+
 ## Storage and integration
 
 `theme` remains the existing top-level mode field. `appearance` stores only
