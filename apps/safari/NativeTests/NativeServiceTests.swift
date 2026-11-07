@@ -20,6 +20,24 @@ final class NativeServiceTests:XCTestCase {
         let defaults=UserDefaults(suiteName:appGroup)!
         for key in ["xgoose.settings","xgoose.account"] {if let value=legacyDefaults[key]{defaults.set(value,forKey:key)}else{defaults.removeObject(forKey:key)}}
     }
+    func testAppearancePatchesPreserveProviderAndShareWithExtensionSnapshot() async throws {
+        _ = await NativeQueue.shared.run("patch",["settings":["provider":"gemini","theme":"dark","language":"es"]])
+        _ = await NativeQueue.shared.run("patch",["settings":["appearance":["preset":"notebook","font":"serif","fontScale":1.15,"accentColor":"#123456"]]])
+        let snapshot=(await NativeQueue.shared.run("snapshot"))["value"] as? JSONObject
+        let settings=((snapshot?["values"] as? JSONObject)?["xgoose.settings"]) as? JSONObject
+        XCTAssertEqual(settings?["provider"] as? String,"gemini");XCTAssertEqual(settings?["theme"] as? String,"dark");XCTAssertEqual(settings?["language"] as? String,"es")
+        XCTAssertEqual((settings?["appearance"] as? JSONObject)?["preset"] as? String,"notebook")
+    }
+    func testAppearanceTelemetryConsentAndPersistentQueue() async throws {
+        _ = await NativeQueue.shared.run("analytics-track",["name":"appearance_opened","params":["preset":"notebook"]])
+        XCTAssertTrue((try NativeService.load()["appearanceEvents"] as? [JSONObject] ?? []).isEmpty)
+        _ = await NativeQueue.shared.run("patch",["settings":["analyticsEnabled":true]])
+        _ = await NativeQueue.shared.run("analytics-track",["name":"appearance_used","params":["preset":"notebook","font":"serif","font_scale":1.15,"custom_accent":true,"accentColor":"#123456"]])
+        let queue=try XCTUnwrap(NativeService.load()["appearanceEvents"] as? [JSONObject]);XCTAssertEqual(queue.count,1)
+        let params=try XCTUnwrap(queue.first?["params"] as? JSONObject);XCTAssertEqual(params["surface"] as? String,"app");XCTAssertEqual(params["platform"] as? String,"safari");XCTAssertNil(params["accentColor"]);XCTAssertNotNil(params["event_id"])
+        _ = await NativeQueue.shared.run("patch",["settings":["analyticsEnabled":false]])
+        XCTAssertTrue((try NativeService.load()["appearanceEvents"] as? [JSONObject] ?? []).isEmpty)
+    }
     func testPublicReaderRejectsPrivateHostsCredentialsAndPaths() throws {
         XCTAssertNoThrow(try NativeService.publicURL("https://hacker-news.firebaseio.com/v0/topstories.json"))
         for raw in ["http://hn.algolia.com/api/v1/search","https://localhost/api/v1/search","https://user@hn.algolia.com/api/v1/search","https://hn.algolia.com:8443/api/v1/search","https://hn.algolia.com/admin"] {XCTAssertThrowsError(try NativeService.publicURL(raw))}

@@ -14,7 +14,7 @@ const adapter={name:'safari-native-adapters',setup(b){b.onResolve({filter:/^(\.|
 for(const [entry,name] of [['background/index.ts','background'],['content/index.ts','content'],['page/pageBridgeEntry.ts','pageBridge'],['page/skillRuntimeEntry.ts','skillRuntime']]){
  await build({entryPoints:[name==='content'?resolve(root,'src/content.ts'):name==='pageBridge'?resolve(root,'src/page.ts'):resolve(chrome,'src',entry)],outfile:resolve(out,name+'.js'),bundle:true,format:'iife',platform:'browser',target:'safari18',minify:true,legalComments:'none',banner:{js:'globalThis.chrome = globalThis.browser ?? globalThis.chrome;'},tsconfig:resolve(chrome,'tsconfig.json'),define:{__XGOOSE_PLATFORM__:'"safari"'},plugins:[adapter]});
 }
-await build({entryPoints:[resolve(root,'src/popup.ts')],outfile:resolve(out,'popup.js'),bundle:true,target:'safari18'});
+await build({entryPoints:[resolve(root,'src/popup.ts')],outfile:resolve(out,'popup.js'),bundle:true,target:'safari18',tsconfig:resolve(chrome,'tsconfig.json'),define:{__XGOOSE_PLATFORM__:'"safari"'},plugins:[adapter]});
 execFileSync(process.execPath,[resolve(chrome,'scripts/build-skills.mjs')],{stdio:'inherit'});
 cpSync(resolve(chrome,'dist/skills'),resolve(out,'skills'),{recursive:true});
 // Product help must describe Safari's shipped capabilities, never Chrome setup.
@@ -30,11 +30,12 @@ for(const file of ['skillRuntime.js',...registry.map(s=>s.filePath)]){
 }
 writeFileSync(resolve(out,'skills/registry.json'),JSON.stringify(registry,null,2));
 cpSync(resolve(chrome,'static/images'),resolve(out,'images'),{recursive:true});
+cpSync(resolve(root,'../../packages/ui/src/theme-presets/fonts'),resolve(out,'fonts'),{recursive:true});
 for(const file of ['agent.html','agent.css'])cpSync(resolve(chrome,'static',file),resolve(out,file));
 for(const f of ['manifest.json','popup.html','popup.css'])cpSync(resolve(root,'static',f),resolve(out,f));
 const manifest=JSON.parse(readFileSync(resolve(out,'manifest.json'),'utf8'));
 if(typeof manifest.description!=='string'||manifest.description.length>112)throw new Error('Safari manifest description must contain at most 112 characters.');
-cpSync(resolve(chrome,'static/third-party-notices.txt'),resolve(out,'third-party-notices.txt'));
+writeFileSync(resolve(out,'third-party-notices.txt'),readFileSync(resolve(chrome,'static/third-party-notices.txt'),'utf8')+'\n'+['NOTICE','LICENSE.tweakcn','LICENSE.daisyui','fonts/OFL.txt'].map(file=>readFileSync(resolve(root,'../../packages/ui/src/theme-presets',file),'utf8')).join('\n'));
 // Native settings can display all bundled skills before Safari has ever run.
 writeFileSync(resolve(root,'Native/Shared/skills.json'),readFileSync(resolve(out,'skills/registry.json')));
 console.log('Safari resources ready:',out);

@@ -375,13 +375,8 @@ registerRouter({
 
   // ── options / panel ─────────────────────────────────────────────────
   "sw:open_options": async () => {
-    if (isSafari) { await chrome.tabs.create({url:"xgoose://settings"}); return; }
-    if (chrome.runtime.openOptionsPage) {
-      await chrome.runtime.openOptionsPage();
-    } else {
-      const url = chrome.runtime.getURL("options.html");
-      await chrome.tabs.create({ url });
-    }
+    if (isSafari) { await chrome.tabs.create({url:"xgoose://appearance"}); return; }
+    await chrome.tabs.create({url:chrome.runtime.getURL("options.html#appearance")});
   },
   "sw:get_page_info": async (_payload, sender) => {
     const tab = sender.tab ?? (await chrome.tabs.query({

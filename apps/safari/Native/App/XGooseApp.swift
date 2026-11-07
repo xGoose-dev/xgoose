@@ -1,12 +1,14 @@
 import SwiftUI
+import CoreText
 import SafariServices
 
 @main struct XGooseApp: App {
+    init() {NativeAppearance.registerFont()}
     @StateObject private var model = AppModel()
     @Environment(\.scenePhase) private var phase
     var body: some Scene {
-        WindowGroup { RootView().environmentObject(model).tint(Color("AccentColor"))
-            .onOpenURL { _ in Task { await model.reload() } }
+        WindowGroup { RootView().environmentObject(model).modifier(NativeAppearanceStyle(settings:model.settings))
+            .onOpenURL { url in Task { await model.reload();if url.host == "appearance" {model.appearancePresented=true} } }
             .preferredColorScheme(model.settings["theme"] as? String == "dark" ? .dark : model.settings["theme"] as? String == "light" ? .light : nil)
         }.onChange(of:phase) { _, next in if next == .active { Task { await model.reload() } } }
     }
@@ -14,6 +16,7 @@ import SafariServices
 
 @MainActor final class AppModel: ObservableObject {
     @Published var state: JSONObject = [:]
+    @Published var appearancePresented=false
     @Published var error: String?
     @Published var busy = false
     @Published var enabled: Bool?
@@ -34,7 +37,7 @@ import SafariServices
         return result["value"]
     }
     func reload() async {
-        if let view = await call("view",showBusy:state.isEmpty) as? JSONObject { state = view }
+        if let view = await call("view",showBusy:state.isEmpty) as? JSONObject { state = view; sampleAppearance() }
         if #available(iOS 26.2, *) {
             do { enabled = try await SFSafariExtensionManager.stateOfExtension(withIdentifier:extensionIdentifier).isEnabled }
             catch { enabled = nil }
@@ -42,6 +45,55 @@ import SafariServices
     }
     func patch(_ value:JSONObject) async { _ = await call("patch",value); await reload() }
     func settingsPatch(_ value:JSONObject) async { await patch(["settings":value]) }
+    @Published var appearanceStatus = ""
+    private var appearanceTask:Task<Void,Never>?
+    private var appearanceSaved:JSONObject?
+    private var appearanceFailed:JSONObject?
+    private var appearanceRevision=0
+    private var appearanceFlow=UUID().uuidString
+    private var appearanceReset=false
+    private var appearanceDirty=false
+    private var lastAppearanceUsage=""
+    private var appearanceActivity:Date = .distantPast
+    func appearanceTrack(_ name:String,_ fields:JSONObject=[:]) {
+        var params=NativeAppearance(settings:settings).params
+        params.merge(fields){_,new in new};params["entry_point"]="native_personalization";params["flow_id"]=appearanceFlow
+        Task { _ = await NativeQueue.shared.run("analytics-track",["name":name,"params":params]); await NativeAppearanceTransport.shared.flush() }
+    }
+    func sampleAppearance() {
+        guard settings["analyticsEnabled"] as? Bool == true else {lastAppearanceUsage="";return}
+        let params=NativeAppearance(settings:settings).params
+        let key=String(data:(try? JSONSerialization.data(withJSONObject:params,options:.sortedKeys)) ?? Data(),encoding:.utf8) ?? ""
+        if Date().timeIntervalSince(appearanceActivity)>1800 {lastAppearanceUsage=""}
+        appearanceActivity=Date();guard key != lastAppearanceUsage else{return};lastAppearanceUsage=key
+        appearanceTrack("appearance_used")
+    }
+    func openAppearance() {appearanceFlow=UUID().uuidString;if !appearanceDirty {appearanceSaved=["theme":settings["theme"] ?? "system","appearance":settings["appearance"] ?? NativeAppearance.defaults]};appearanceTrack("appearance_opened")}
+    func previewAppearance(_ patch:JSONObject,reset:Bool=false) {
+        let old:JSONObject=["theme":settings["theme"] ?? "system","appearance":settings["appearance"] ?? NativeAppearance.defaults]
+        if appearanceSaved == nil {appearanceSaved=old}
+        var next=settings;next.merge(patch){_,new in new}
+        let current=NativeAppearance(settings:settings),candidate=NativeAppearance(settings:next)
+        guard reset || current != candidate else{return}
+        state["settings"]=next;appearanceDirty=true;appearanceRevision += 1;appearanceReset=reset;appearanceStatus="Saving…"
+        appearanceTask?.cancel();appearanceTask=Task {do {try await Task.sleep(for:.milliseconds(300))} catch{return};await flushAppearance()}
+    }
+    func flushAppearance() async {
+        appearanceTask?.cancel();appearanceTask=nil;guard appearanceDirty else{return};appearanceDirty=false
+        let revision=appearanceRevision,reset=appearanceReset
+        let patch:JSONObject=["theme":settings["theme"] ?? "system","appearance":settings["appearance"] ?? NativeAppearance.defaults]
+        if !reset {appearanceTrack("appearance_changed")}
+        let result=await NativeQueue.shared.run("patch",["settings":patch])
+        if result["ok"] as? Bool == true {
+            appearanceSaved=patch;appearanceFailed=nil
+            if revision==appearanceRevision {appearanceStatus="Saved"}
+            appearanceTrack(reset ? "appearance_reset":"appearance_saved",NativeAppearance(settings:patch).params);sampleAppearance()
+        } else {
+            appearanceFailed=patch;appearanceTrack("appearance_failed",["reason":"storage","outcome":"failed"])
+            if revision==appearanceRevision {var saved=settings;saved.merge(appearanceSaved ?? [:]){_,new in new};state["settings"]=saved;appearanceStatus="Could not save. Try again."}
+        }
+    }
+    func retryAppearance() {if let failed=appearanceFailed {previewAppearance(failed)}}
     func openSettings() async {
         if #available(iOS 26.2, *) {
             do { try await SFSafariSettings.openExtensionsSettings(forIdentifiers:[extensionIdentifier]) }
@@ -79,9 +131,10 @@ struct RootView: View {
                 }
             }
             .navigationTitle("xgoose").navigationBarTitleDisplayMode(.inline)
-            .tint(Color("AccentColor"))
+            .modifier(NativeAppearanceStyle(settings:model.settings))
             .alert(model.t("Please try again","请重试","Inténtalo de nuevo"),isPresented:Binding(get:{model.error != nil},set:{if !$0 {model.error=nil}})) { Button("OK") {model.error=nil} } message: {Text(model.error ?? "")}
             .overlay { if model.busy { ProgressView().padding().background(.regularMaterial,in:RoundedRectangle(cornerRadius:16)) } }
+            .navigationDestination(isPresented:$model.appearancePresented) {NativeAppearanceView()}
             .task {await model.reload();setupPresented=model.state["dismissed"] as? Bool != true && model.state["firstAnswerAt"] == nil}
             .sheet(isPresented:$setupPresented) {GuidedSetupView()}
         }
@@ -284,7 +337,8 @@ struct PersonalizationView:View {
     var body:some View {Form {
         NavigationLink(model.t("Interface language","界面语言","Idioma")) {LanguageView()}
         Picker(model.t("Answer language","回答语言","Idioma de respuestas"),selection:Binding(get:{model.settings["answerLanguage"] as? String ?? "auto"},set:{v in Task {await model.settingsPatch(["answerLanguage":v])}})) {ForEach(["auto","zh-CN","en","es"],id:\.self) {Text($0).tag($0)}}
-        Picker(model.t("Appearance","外观","Apariencia"),selection:Binding(get:{model.settings["theme"] as? String ?? "system"},set:{v in Task {await model.settingsPatch(["theme":v])}})) {Text(model.t("System","跟随系统","Sistema")).tag("system");Text(model.t("Light","浅色","Claro")).tag("light");Text(model.t("Dark","深色","Oscuro")).tag("dark")}
+        NavigationLink(model.t("Appearance","外观","Apariencia")) {NativeAppearanceView()}
+
         Toggle(model.t("Show launcher on all websites","在所有网站显示悬浮按钮","Mostrar botón en todos los sitios"),isOn:Binding(get:{model.settings["launcherVisibility"] as? String == "always"},set:{v in Task {await model.settingsPatch(["launcherVisibility":v ? "always":"skill-sites"])}}))
         Toggle(model.t("Optional usage analytics","可选使用统计","Análisis de uso opcional"),isOn:Binding(get:{model.settings["analyticsEnabled"] as? Bool ?? false},set:{v in Task {await model.settingsPatch(["analyticsEnabled":v])}}))
         Text(model.t("Usage analytics include feature names and error categories, never your messages, email or API keys.","使用统计仅包含功能名称与错误类别，不包含消息、邮箱或 API key。","Las estadísticas no incluyen mensajes, correo ni claves API。")).font(.footnote).foregroundStyle(.secondary)
@@ -306,4 +360,148 @@ struct HelpView:View {
         }
         Text("xgoose 1.6 · Core 0.3.4").foregroundStyle(.secondary)
     }.navigationTitle(model.t("Help & privacy","帮助与隐私","Ayuda y privacidad"))}
+}
+
+
+
+struct NativeAppearance:Equatable {
+    static let presets=["default","glass","notebook","soft","bold"]
+    static let fonts=["default","sans","serif","mono"]
+    static let defaults:JSONObject=["preset":"default","font":"default","fontScale":1.0]
+    static let imported:[String:[String:[String:String]]]=["notebook":["light":["background":"#F9F9F9","foreground":"#3A3A3A","card":"#FFFFFF","muted":"#E3E3E3","muted-foreground":"#505050","primary":"#606060","border":"#747272","input":"#FFFFFF","accent":"#F3EAC8"],"dark":["background":"#2B2B2B","foreground":"#DCDCDC","card":"#333333","muted":"#454545","muted-foreground":"#A0A0A0","primary":"#B0B0B0","border":"#4F4F4F","input":"#333333","accent":"#E0E0E0"]],"soft":["light":["background":"#E7E5E4","foreground":"#1E293B","card":"#F5F5F4","muted":"#E7E5E4","muted-foreground":"#6B7280","primary":"#6366F1","border":"#D6D3D1","input":"#D6D3D1","accent":"#F3E5F5"],"dark":["background":"#1E1B18","foreground":"#E2E8F0","card":"#2C2825","muted":"#1F1C19","muted-foreground":"#9CA3AF","primary":"#818CF8","border":"#3A3633","input":"#3A3633","accent":"#484441"]],"bold":["light":["background":"#FFFFFF","foreground":"#000000","card":"#FFFFFF","muted":"#F0F0F0","muted-foreground":"#333333","primary":"#FF3333","border":"#000000","input":"#000000","accent":"#0066FF"],"dark":["background":"#000000","foreground":"#FFFFFF","card":"#333333","muted":"#1A1A1A","muted-foreground":"#CCCCCC","primary":"#FF6666","border":"#FFFFFF","input":"#FFFFFF","accent":"#3399FF"]]]
+    let theme:String,preset:String,font:String
+    let scale:Double
+    init(settings:JSONObject) {
+        let a=settings["appearance"] as? JSONObject ?? [:]
+        theme=settings["theme"] as? String ?? "system"
+        let p=a["preset"] as? String ?? "default",f=a["font"] as? String ?? "default"
+        preset=Self.presets.contains(p) ? p:"default";font=Self.fonts.contains(f) ? f:"default"
+        scale=min(1.3,max(0.9,a["fontScale"] as? Double ?? 1))
+    }
+    var dictionary:JSONObject {["preset":preset,"font":font,"fontScale":scale]}
+    var params:JSONObject {["preset":preset,"font":font,"font_scale":scale,"theme":theme,"resolved_theme":theme == "system" ? (nativeDark ? "dark":"light"):theme,"is_customized":theme != "system" || preset != "default" || font != "default" || scale != 1]}
+    var radius:CGFloat {preset=="bold" ? 0:preset=="soft" ? 24:preset=="notebook" ? 10:20}
+    var border:CGFloat {preset=="bold" ? 3:1}
+    func token(_ key:String,dark:Bool)->String {
+        if let value=Self.imported[preset]?[dark ? "dark":"light"]?[key] {return value}
+        switch key {
+        case "background":return dark ? "#101A27":"#EDF3F9"
+        case "foreground":return dark ? "#E8F1FA":"#172C3C"
+        case "border":return dark ? "#6D8BA5":"#B4C9D9"
+        case "primary":return preset=="default" ? "#7352E4":dark ? "#A8C5E5":"#386585"
+        default:return dark ? "#192738":"#F6FAFD"
+        }
+    }
+    static func registerFont() {
+        guard let data=NSDataAsset(name:"NotebookFont")?.data,let provider=CGDataProvider(data:data as CFData),let font=CGFont(provider) else {return}
+        CTFontManagerRegisterGraphicsFont(font,nil)
+    }
+}
+private var nativeDark:Bool {
+    #if os(iOS)
+    return UITraitCollection.current.userInterfaceStyle == .dark
+    #else
+    return NSApp.effectiveAppearance.bestMatch(from:[.darkAqua,.aqua]) == .darkAqua
+    #endif
+}
+private func nativeColor(_ hex:String)->Color {
+    let value=UInt32(hex.dropFirst(),radix:16) ?? 0x7352E4
+    return Color(red:Double((value>>16)&255)/255,green:Double((value>>8)&255)/255,blue:Double(value&255)/255)
+}
+struct NativeAppearanceStyle:ViewModifier {
+    let settings:JSONObject
+    @Environment(\.colorScheme) private var mode
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    #if os(macOS)
+    @ScaledMetric(relativeTo:.body) private var size:CGFloat=13
+    #else
+    @ScaledMetric(relativeTo:.body) private var size:CGFloat=17
+    #endif
+    func body(content:Content)->some View {
+        let a=NativeAppearance(settings:settings),dark=mode == .dark
+        let design:Font.Design=a.font=="serif" ? .serif:a.font=="mono" ? .monospaced:a.font=="default"&&a.preset=="soft" ? .rounded:.default
+        let font:Font=a.font=="default"&&a.preset=="notebook" ? .custom("ArchitectsDaughter-Regular",size:size*a.scale,relativeTo:.body):.system(size:size*a.scale,weight:a.font=="default"&&a.preset=="bold" ? .semibold:.regular,design:design)
+        let accent=a.preset=="default" ? Color("AccentColor"):nativeColor(a.token("primary",dark:dark))
+        content.font(font).tint(accent).accentColor(accent)
+            .scrollContentBackground(a.preset=="default" ? .automatic:.hidden)
+            .background {
+                if a.preset=="glass" && !reduceTransparency {nativeColor(a.token("background",dark:dark)).opacity(0.25).background(.ultraThinMaterial)}
+                else if a.preset != "default" {nativeColor(a.token("background",dark:dark))}
+            }
+    }
+}
+struct NativeAppearanceSurface:View {
+    let appearance:NativeAppearance
+    @Environment(\.colorScheme) private var mode
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    var body:some View {
+        let a=appearance,dark=mode == .dark
+        RoundedRectangle(cornerRadius:a.radius)
+            .fill(a.preset=="glass" && !reduceTransparency ? AnyShapeStyle(.ultraThinMaterial):AnyShapeStyle(nativeColor(a.token("card",dark:dark))))
+            .overlay(RoundedRectangle(cornerRadius:a.radius).strokeBorder(a.preset=="glass" ? .white.opacity(0.55):nativeColor(a.token("border",dark:dark)),lineWidth:a.border))
+            .shadow(color:a.preset=="bold" ? (dark ? .white.opacity(0.7):.black):.black.opacity(a.preset=="soft" ? 0.16:0.06),radius:a.preset=="bold" ? 0:a.preset=="soft" ? 10:5,x:a.preset=="bold" ? 4:a.preset=="soft" ? 6:1,y:a.preset=="bold" ? 4:a.preset=="soft" ? 6:4)
+    }
+}
+struct NativePresetThumbnail:View {
+    let preset:String
+    @Environment(\.colorScheme) private var mode
+    var body:some View {
+        let a=NativeAppearance(settings:["appearance":["preset":preset]]),dark=mode == .dark
+        VStack(alignment:.leading,spacing:5) {
+            Text("xgoose").font(preset=="notebook" ? .custom("ArchitectsDaughter-Regular",size:11):.system(size:10,weight:preset=="bold" ? .black:.medium,design:preset=="soft" ? .rounded:.default))
+            Rectangle().fill(nativeColor(a.token("foreground",dark:dark)).opacity(0.2)).frame(width:28,height:2)
+            HStack {Spacer();RoundedRectangle(cornerRadius:preset=="bold" ? 0:6).fill(nativeColor(a.token("primary",dark:dark))).frame(width:26,height:8)}
+        }.padding(9).frame(width:66,height:58).foregroundStyle(nativeColor(a.token("foreground",dark:dark))).background(NativeAppearanceSurface(appearance:a))
+    }
+}
+struct NativeAppearanceSection<Content:View>:View {
+    let title:String
+    let appearance:NativeAppearance
+    let content:Content
+    init(_ title:String,appearance:NativeAppearance,@ViewBuilder content:()->Content) {self.title=title;self.appearance=appearance;self.content=content()}
+    var body:some View {VStack(alignment:.leading,spacing:14) {
+        if !title.isEmpty {Text(title).font(.headline)}
+        content
+    }.padding(16).frame(maxWidth:.infinity,alignment:.leading).background(NativeAppearanceSurface(appearance:appearance))}
+}
+struct NativeAppearanceView:View {
+    @EnvironmentObject var model:AppModel
+    @Environment(\.scenePhase) private var phase
+    private var a:NativeAppearance {NativeAppearance(settings:model.settings)}
+    private func update(_ key:String,_ value:Any) {var next=a.dictionary;next[key]=value;model.previewAppearance(["appearance":next])}
+    var body:some View {ScrollView {VStack(alignment:.leading,spacing:20) {
+        NativeAppearanceSection(model.t("Interface style","界面风格","Estilo de interfaz"),appearance:a) {
+            ForEach(Array(NativeAppearance.presets.enumerated()),id:\.element) {index,id in
+                Button {update("preset",id)} label: {
+                    HStack(spacing:14) {NativePresetThumbnail(preset:id);VStack(alignment:.leading,spacing:4) {
+                        Text(model.t(["Classic","Glass","Notebook","Soft","Bold"][index],["经典","磨砂","手帐","软糖","积木"][index]))
+                        Text(model.t(["The familiar xgoose interface","Frosted glass and light edges","Paper and handwritten type","Soft surfaces and rounded buttons","Square corners and hard shadows"][index],["熟悉的 xgoose 界面","半透明磨砂与细亮边","纸面、细线与手写字体","柔软立体的表面与圆润按钮","直角、粗边框与硬阴影"][index])).font(.caption).foregroundStyle(.secondary)
+                    };Spacer(minLength:4);if a.preset==id {Image(systemName:"checkmark").accessibilityLabel(model.t("Selected","已选择"))}}
+                    .padding(.vertical,5).foregroundStyle(.primary)
+                }.buttonStyle(.plain).accessibilityIdentifier("appearance-preset-"+id).accessibilityAddTraits(a.preset==id ? .isSelected:[])
+            }
+        }
+        NativeAppearanceSection("",appearance:a) {
+            Picker(model.t("Color mode","明暗模式","Modo de color"),selection:Binding(get:{a.theme},set:{model.previewAppearance(["theme":$0])})) {Text(model.t("Follow system","跟随系统","Sistema")).tag("system");Text(model.t("Light","浅色","Claro")).tag("light");Text(model.t("Dark","深色","Oscuro")).tag("dark")}
+            Picker(model.t("Font","字体","Tipografía"),selection:Binding(get:{a.font},set:{update("font",$0)})) {ForEach(Array(NativeAppearance.fonts.enumerated()),id:\.element) {index,id in Text(model.t(["Follow preset","Clean sans","Reading serif","Monospace"][index],["跟随预设","简洁黑体","阅读宋体","等宽"][index])).tag(id)}}
+            Picker(model.t("Font size","字号","Tamaño"),selection:Binding(get:{a.scale},set:{update("fontScale",$0)})) {ForEach([0.9,1.0,1.15,1.3],id:\.self) {Text("\(Int(($0*100).rounded()))%").tag($0)}}
+        }
+        NativeAppearanceSection(model.t("Preview","预览","Vista previa"),appearance:a) {
+            VStack(alignment:.leading,spacing:12) {
+                Text("阅读，思考，再出发。\nRead, think, and keep exploring.")
+                TextField(model.t("Your next question","你的下一个问题"),text:.constant("")).textFieldStyle(.roundedBorder).disabled(true)
+                Text("const idea = \"xgoose\";").font(.body.monospaced())
+                Button(model.t("Preview","预览")) {}.buttonStyle(.borderedProminent)
+            }.padding(12).background(NativeAppearanceSurface(appearance:a))
+        }
+        NativeAppearanceSection("",appearance:a) {
+            Button(model.t("Restore appearance defaults","恢复默认外观","Restablecer apariencia")) {model.previewAppearance(["theme":"system","appearance":NativeAppearance.defaults],reset:true)}
+            Text(model.t(model.appearanceStatus,["Saving…":"保存中…","Saved":"已保存","Could not save. Try again.":"保存失败，请重试。"][model.appearanceStatus] ?? model.appearanceStatus)).accessibilityAddTraits(.updatesFrequently)
+            if model.appearanceStatus == "Could not save. Try again." {Button(model.t("Try again","重试","Reintentar")) {model.retryAppearance()}}
+        }
+    }.padding(20).pickerStyle(.menu)}.modifier(NativeAppearanceStyle(settings:model.settings)).navigationTitle(model.t("Appearance","外观","Apariencia"))
+     .onAppear {model.openAppearance()}
+     .onDisappear {Task {await model.flushAppearance()}}
+     .onChange(of:phase) {_,next in if next != .active {Task {await model.flushAppearance()}}}
+    }
 }

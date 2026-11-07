@@ -1,0 +1,14 @@
+Bundled theme sources
+
+tweakcn Notebook, Claymorphism and Neo Brutalism
+https://github.com/jnsahaj/tweakcn
+Apache License 2.0 (LICENSE.tweakcn)
+
+daisyUI glass utility
+Copyright (c) 2020 Pouya Saadeghi
+https://github.com/saadeghi/daisyui
+MIT (LICENSE.daisyui)
+
+The original source snapshots are unmodified. xgoose adaptations live in
+appearance.ts, appearanceStyles.ts and the native Appearance views.
+Colors are converted to sRGB for the existing HSL token interface.

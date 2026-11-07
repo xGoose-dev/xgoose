@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AD89C644C19B4E6D9CD542D8 /* fonts in Resources */ = {isa = PBXBuildFile; fileRef = A5E92197C20E45389B59A4D1 /* fonts */; };
 		2BDC887E282C3C319382A122 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 94AF4481D7D7CBA8821D066F /* PrivacyInfo.xcprivacy */; };
 		34E3891E89923A32979BC8DC /* skills.json in Resources */ = {isa = PBXBuildFile; fileRef = 750EBB372E6496ED69CECC36 /* skills.json */; };
 		375139A8E74A3748DD0EF278 /* third-party-notices.txt in Resources */ = {isa = PBXBuildFile; fileRef = AF628712EC87D244D5D6BCEA /* third-party-notices.txt */; };
@@ -65,6 +66,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		A5E92197C20E45389B59A4D1 /* fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; path = fonts; sourceTree = "<group>"; };
 		0BA0C32989E0594EB9037B44 /* popup.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = popup.html; sourceTree = "<group>"; };
 		0D75987129D2957C629F7D67 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = background.js; sourceTree = "<group>"; };
 		1470670A5C0A14F116625A45 /* agent.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = agent.css; sourceTree = "<group>"; };
@@ -150,6 +152,7 @@
 				9AF477FADF592D453B2FA6DB /* agent.html */,
 				0D75987129D2957C629F7D67 /* background.js */,
 				55AB5544C4895498D37DF137 /* content.js */,
+				A5E92197C20E45389B59A4D1 /* fonts */,
 				DC56DE2586E02CA6FAC029CA /* images */,
 				2235CEF00B8E72FAF6E84E51 /* manifest.json */,
 				739AD40BBA4479CF4B7355AC /* pageBridge.js */,
@@ -305,6 +308,7 @@
 				CAD6EFCC4BAE605A56F0531D /* agent.html in Resources */,
 				B227B681447B4DF57C8CB9AF /* background.js in Resources */,
 				E65E8F1100EE97B987E4CCF9 /* content.js in Resources */,
+				AD89C644C19B4E6D9CD542D8 /* fonts in Resources */,
 				7C9D6597B7D6449471812C2A /* images in Resources */,
 				4DDCED019BFD313B2AE94A84 /* manifest.json in Resources */,
 				53C6D297AE31995FA83F05BA /* pageBridge.js in Resources */,

@@ -57,7 +57,10 @@ targets:
       - Native/Extension
       - Native/Shared
       - path: dist
-        excludes: [images, skills]
+        excludes: [images, skills, fonts]
+        buildPhase: resources
+      - path: dist/fonts
+        type: folder
         buildPhase: resources
       - path: dist/images
         type: folder

@@ -1,3 +1,4 @@
+import {bindDocumentAppearance} from "@/shared/appearance";
 import {mountNotifications} from "./notifications";
 import {HOSTED_DEFAULT_CHOICE, resolveHostedModel, hostedModelLabel} from "@/shared/hostedModels";
 import {initializeLocale,saveLanguage,mountAnswerLanguage,translate,type LanguagePreference} from "@/shared/locale";
@@ -102,7 +103,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   });
   chrome.storage.onChanged.addListener((changes,area)=>{if(area==="local"&&changes[SETTINGS_KEY])languageEl.value=(changes[SETTINGS_KEY].newValue as any)?.language??"auto";});
   await mountAnswerLanguage($<HTMLSelectElement>("#answerLanguage"),document.querySelector<HTMLElement>("#answerLanguageStatus"));
-  const themeEl = $<HTMLSelectElement>("#theme");
+  const appearanceEditor=await bindDocumentAppearance("options",document.querySelector<HTMLElement>("#appearance")!);
   const launcherVisibilityEl = $<HTMLSelectElement>("#launcherVisibility");
   const jsExecTimeoutMsEl = $<HTMLInputElement>("#jsExecTimeoutMs");
   const jsExecTimeoutMsLabelEl = $<HTMLSpanElement>("#jsExecTimeoutMsLabel");
@@ -258,7 +259,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   populateModelDropdown(settings.provider, settings.model, settings.thinking);
   apiKeyEl.value = getProviderApiKey(settings);
   baseUrlEl.value = getProviderBaseUrl(settings);
-  themeEl.value = settings.theme;
+
   launcherVisibilityEl.value = settings.launcherVisibility;
   jsExecTimeoutMsEl.value = String(settings.jsExecTimeoutMs);
   jsExecTimeoutMsLabelEl.textContent = formatTimeout(settings.jsExecTimeoutMs);
@@ -505,7 +506,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
     }
 
     const next: Settings = {
-      ...settings,
+      ...(await loadSettings()),
       provider,
       model: chosenModel || DEFAULT_MODEL_BY_PROVIDER[provider],
       // Per-provider maps are the authoritative storage. The legacy flat
@@ -521,7 +522,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
       // Hosted collapses to openai-compat over the wire so the core
       // `providerOptionsFor` would ignore thinking anyway — force false.
       thinking: isHosted ? false : choice.thinking,
-      theme: themeEl.value as Settings["theme"],
+
       language: languageEl.value as Settings["language"],
       answerLanguage: $<HTMLSelectElement>("#answerLanguage").value as Settings["answerLanguage"],
       launcherVisibility:
@@ -540,7 +541,9 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
       launcher_visibility: next.launcherVisibility,
       analytics_enabled: next.analyticsEnabled,
     });
-    await persistSettings(next);
+    await appearanceEditor?.controller.flush();
+    const currentAppearance=await loadSettings();
+    await persistSettings({...next,theme:currentAppearance.theme,appearance:currentAppearance.appearance});
     saveStatus.textContent = "Saved";
     saveStatus.classList.add("saved");
     setTimeout(() => {

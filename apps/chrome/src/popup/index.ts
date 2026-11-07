@@ -1,3 +1,5 @@
+import {bindDocumentAppearance} from "@/shared/appearance";
+void bindDocumentAppearance("popup");
 import {initializeLocale} from "@/shared/locale";
 void initializeLocale(document.body);
 /// <reference types="chrome" />

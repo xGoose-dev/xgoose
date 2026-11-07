@@ -72,7 +72,8 @@
       "resources": [
         "pageBridge.js",
         "skillRuntime.js",
-        "skills/*"
+        "skills/*",
+        "fonts/*"
       ],
       "matches": [
         "<all_urls>"

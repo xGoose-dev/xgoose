@@ -94,7 +94,8 @@
         "skills/registry.json",
         "install.html",
         "install.css",
-        "installPage.js"
+        "installPage.js",
+        "fonts/*"
       ],
       "matches": [
         "<all_urls>"
