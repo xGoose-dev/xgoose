@@ -1,3 +1,5 @@
+import {bindDocumentAppearance} from "@/shared/appearance";
+void bindDocumentAppearance("installPage");
 import {initializeLocale} from "@/shared/locale";
 /// <reference types="chrome" />
 //

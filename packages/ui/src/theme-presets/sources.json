@@ -1,0 +1,30 @@
+{
+  "retrieved": "2026-11-06",
+  "sources": {
+    "notebook.json": {
+      "url": "https://tweakcn.com/r/themes/notebook.json",
+      "sha256": "7f1db5bb6a0ada8013c494a127168607dacc01a218ec5e6dfb29b7d214b7e91d"
+    },
+    "claymorphism.json": {
+      "url": "https://tweakcn.com/r/themes/claymorphism.json",
+      "sha256": "46e429411136dc2b51259fe24176f731d47312be07b8e637d3a1a7f2d34a038a"
+    },
+    "neo-brutalism.json": {
+      "url": "https://tweakcn.com/r/themes/neo-brutalism.json",
+      "sha256": "f43ede9dd270c8168daa96b9130970032f60f950de90a4a6b92e58e76287cb60"
+    },
+    "glass.css": {
+      "url": "https://raw.githubusercontent.com/saadeghi/daisyui/master/packages/daisyui/src/utilities/glass.css",
+      "sha256": "fe8790ea6fb90a0a3d2129f15df8eebe0a6c49d8a054097ecfccafdfe504b3cf"
+    },
+    "LICENSE.tweakcn": {
+      "url": "https://raw.githubusercontent.com/jnsahaj/tweakcn/main/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    "LICENSE.daisyui": {
+      "url": "https://raw.githubusercontent.com/saadeghi/daisyui/master/LICENSE",
+      "sha256": "8709e3ac65c84637c422dc8082b893d9997fce093751c77b2f1983bf29dbf9ea"
+    }
+  },
+  "adaptations": "xgoose maps the original color, radius, typography and shadow tokens to its website, Shadow DOM and SwiftUI surfaces. Glass fill, card strokes, hand-drawn paper lines and native materials are xgoose adaptations."
+}

@@ -143,7 +143,7 @@ enum NativeService {
     }
     static func request(_ path: String, method: String = "GET", body: JSONObject? = nil, bearer: String? = nil) async throws -> JSONObject {
         var request = URLRequest(url: URL(string:apiBase + path)!)
-        request.httpMethod = method; request.timeoutInterval = 45
+        request.httpMethod = method; request.timeoutInterval = path == "/a/collect" ? 10:45
         request.setValue("application/json",forHTTPHeaderField:"Content-Type")
         if let bearer { request.setValue("Bearer \(bearer)",forHTTPHeaderField:"Authorization") }
         if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
@@ -205,6 +205,7 @@ enum NativeService {
                     else {state["loginError"]="Connection interrupted. Confirmation will be checked again when you return."}
                 }
                 var view = state
+                view.removeValue(forKey:"appearanceEvents");view.removeValue(forKey:"appearanceClientId")
                 let vault = try Vault.read()
                 if let account = vault["account"] as? JSONObject { view["user"] = account["user"] }
                 if let pending = vault["pending"] as? JSONObject { view["pending"] = ["email":pending["email"] ?? "","expiresAt":pending["expiresAt"] ?? 0] }
@@ -213,7 +214,7 @@ enum NativeService {
             case "patch":
                 // Field patches avoid overwriting unrelated changes made by the extension.
                 var settings = state["settings"] as? JSONObject ?? [:]
-                let allowed = Set(["provider","model","thinking","language","answerLanguage","theme","launcherVisibility","analyticsEnabled","baseUrls"])
+                let allowed = Set(["provider","model","thinking","language","answerLanguage","theme","appearance","launcherVisibility","analyticsEnabled","baseUrls"])
                 if let patch=payload["settings"] as? JSONObject,let provider=patch["provider"] as? String,provider != settings["provider"] as? String {state.removeValue(forKey:"providerAccepted")}
                 if let patch = payload["settings"] as? JSONObject { for (key,item) in patch where allowed.contains(key) { settings[key] = item } }
                 if let key = payload["apiKey"] as? String, let provider = settings["provider"] as? String {
@@ -221,12 +222,38 @@ enum NativeService {
                 }
                 if let patch=payload["settings"] as? JSONObject, patch.keys.contains(where:{["provider","model","baseUrls"].contains($0)}) || payload["apiKey"] != nil {state.removeValue(forKey:"connectionTested")}
                 state["settings"] = settings; state["configured"] = true
+                if settings["analyticsEnabled"] as? Bool != true {state["appearanceEvents"]=[]}
                 for key in ["hostedAccepted","providerAccepted","languageChosen","dismissed","connectionTested"] { if let item = payload[key] { state[key] = item } }
                 if let disabled = payload["disabledSkills"] as? [String] { state["xgoose.skills.disabled"] = disabled }
                 if let toggle=payload["skillToggle"] as? JSONObject,let name=toggle["name"] as? String,let disabled=toggle["disabled"] as? Bool {
                     var names=Set(state["xgoose.skills.disabled"] as? [String] ?? []);if disabled {names.insert(name)} else {names.remove(name)};state["xgoose.skills.disabled"]=Array(names).sorted()
                 }
                 if let layout=payload["layout"] as? JSONObject {state["xgoose.layout"]=layout}
+            case "analytics-track":
+                guard (state["settings"] as? JSONObject)?["analyticsEnabled"] as? Bool == true else {state["appearanceEvents"]=[];break}
+                let name=payload["name"] as? String ?? ""
+                guard ["appearance_opened","appearance_changed","appearance_saved","appearance_reset","appearance_failed","appearance_used"].contains(name) else {throw ServiceError(message:"Unknown appearance event.")}
+                let keys=Set(["preset","font","font_scale","theme","resolved_theme","is_customized","entry_point","flow_id","reason","outcome"])
+                var params=(payload["params"] as? JSONObject ?? [:]).filter{keys.contains($0.key)}
+                params["surface"]="app";params["platform"]="safari";params["event_id"]=UUID().uuidString
+                params["extension_version"]=Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "unknown"
+                let now=Date().timeIntervalSince1970*1000
+                var session=state["appearanceSession"] as? JSONObject ?? [:]
+                if now-(session["last"] as? Double ?? 0)>1800000 {session["id"]=Int(now/1000)}
+                session["last"]=now;state["appearanceSession"]=session;params["session_id"]=session["id"] ?? Int(now/1000)
+                var queue=state["appearanceEvents"] as? [JSONObject] ?? []
+                let owner=((try Vault.read())["account"] as? JSONObject)?["user"] as? JSONObject
+                queue.append(["name":name,"at":Int(now),"params":params,"owner":owner?["id"] ?? NSNull()]);state["appearanceEvents"]=Array(queue.suffix(500))
+                if state["appearanceClientId"] == nil {state["appearanceClientId"]=UUID().uuidString}
+            case "analytics-batch":
+                guard (state["settings"] as? JSONObject)?["analyticsEnabled"] as? Bool == true else {state["appearanceEvents"]=[];value=["events":[]];break}
+                let queue=state["appearanceEvents"] as? [JSONObject] ?? []
+                let owner=queue.first?["owner"] as? String
+                let batch=Array(queue.prefix(25).prefix{($0["owner"] as? String)==owner})
+                value=["client_id":state["appearanceClientId"] ?? "","owner":owner as Any? ?? NSNull(),"events":batch]
+            case "analytics-ack":
+                let ids=Set(payload["ids"] as? [String] ?? [])
+                state["appearanceEvents"]=(state["appearanceEvents"] as? [JSONObject] ?? []).filter{!ids.contains(($0["params"] as? JSONObject)?["event_id"] as? String ?? "")}
             case "hosted-ready":
                 guard state["hostedAccepted"] as? Bool == true else {throw ServiceError(message:"Open xgoose and agree to Hosted data use first.")}
             case "credentials":
@@ -245,6 +272,7 @@ enum NativeService {
                 let vault = try Vault.read(); let pending = vault["pending"] as? JSONObject
                 value = ["phase":pending == nil ? "idle":"pending","email":pending?["email"] ?? NSNull(),"verificationUri":NSNull(),"expiresAt":pending?["expiresAt"] ?? NSNull(),"error":state["loginError"] ?? NSNull()]
             case "logout":
+                state["appearanceEvents"]=[]
                 var vault = try Vault.read()
                 if let account = vault["account"] as? JSONObject { _ = try? await request("/auth/logout",method:"POST",body:["refresh_token":account["refreshToken"] ?? ""]) }
                 vault.removeValue(forKey:"account"); vault.removeValue(forKey:"pending"); try Vault.write(vault)
@@ -321,5 +349,40 @@ enum NativeService {
             if kind == "snapshot" || kind == "migrate", var snapshot = value as? JSONObject {snapshot["revision"] = state["revision"] ?? 0;value=snapshot}
             return ["ok":true,"value":value]
         } catch { return ["ok":false,"error":error.localizedDescription] }
+    }
+}
+
+
+/// Collection runs outside the shared-store lock, so a slow network cannot delay a settings save.
+actor NativeAppearanceTransport {
+    static let shared=NativeAppearanceTransport()
+    private var flushing=false
+    func flush() async {
+        guard !flushing else{return};flushing=true;defer{flushing=false}
+        while true {
+            let result=await NativeQueue.shared.run("analytics-batch")
+            guard let batch=result["value"] as? JSONObject,let queued=batch["events"] as? [JSONObject],!queued.isEmpty else{return}
+            let ids=queued.compactMap{($0["params"] as? JSONObject)?["event_id"] as? String}
+            let owner=batch["owner"] as? String
+            var account:JSONObject?
+            if owner != nil {
+                let response=await NativeQueue.shared.run("account")
+                guard response["ok"] as? Bool == true else{return}
+                account=response["value"] as? JSONObject
+                guard (account?["user"] as? JSONObject)?["id"] as? String == owner else {_ = await NativeQueue.shared.run("analytics-ack",["ids":ids]);continue}
+            }
+            let events=queued.map{row -> JSONObject in var event=row;event.removeValue(forKey:"owner");return event}
+            let body:JSONObject=["client_id":batch["client_id"] ?? "","consent":true,"identity_version":2,"events":events]
+            do {
+                do {_ = try await NativeService.request("/a/collect",method:"POST",body:body,bearer:account?["accessToken"] as? String)}
+                catch {
+                    guard let error=error as? ServiceError,error.status==401,let owner else {return}
+                    let response=await NativeQueue.shared.run("account",["refresh":true])
+                    guard let renewed=response["value"] as? JSONObject,(renewed["user"] as? JSONObject)?["id"] as? String == owner else{return}
+                    _ = try await NativeService.request("/a/collect",method:"POST",body:body,bearer:renewed["accessToken"] as? String)
+                }
+                _ = await NativeQueue.shared.run("analytics-ack",["ids":ids])
+            } catch {return}
+        }
     }
 }

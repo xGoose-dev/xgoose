@@ -11,6 +11,7 @@
 		34E3891E89923A32979BC8DC /* skills.json in Resources */ = {isa = PBXBuildFile; fileRef = 750EBB372E6496ED69CECC36 /* skills.json */; };
 		375139A8E74A3748DD0EF278 /* third-party-notices.txt in Resources */ = {isa = PBXBuildFile; fileRef = AF628712EC87D244D5D6BCEA /* third-party-notices.txt */; };
 		37D934569AB2ACD2D0DB5005 /* agent.css in Resources */ = {isa = PBXBuildFile; fileRef = 1470670A5C0A14F116625A45 /* agent.css */; };
+		3A71834748928232A8542216 /* fonts in Resources */ = {isa = PBXBuildFile; fileRef = 6F9D91549FBFF22A524D0A7C /* fonts */; };
 		4DDCED019BFD313B2AE94A84 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 2235CEF00B8E72FAF6E84E51 /* manifest.json */; };
 		50D915BC6242A74CAAA344A7 /* NativeServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D79724DCB5B9ECF9D72EF5 /* NativeServiceTests.swift */; };
 		53C6D297AE31995FA83F05BA /* pageBridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 739AD40BBA4479CF4B7355AC /* pageBridge.js */; };
@@ -75,6 +76,7 @@
 		4F93AB2498265A72491E223B /* skillRuntime.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = skillRuntime.js; sourceTree = "<group>"; };
 		54A382181D5692D14E982554 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
 		55AB5544C4895498D37DF137 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = content.js; sourceTree = "<group>"; };
+		6F9D91549FBFF22A524D0A7C /* fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = fonts; path = dist/fonts; sourceTree = SOURCE_ROOT; };
 		739AD40BBA4479CF4B7355AC /* pageBridge.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = pageBridge.js; sourceTree = "<group>"; };
 		750EBB372E6496ED69CECC36 /* skills.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = skills.json; sourceTree = "<group>"; };
 		8543356E25F8AFC2AD3952FE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -150,6 +152,7 @@
 				9AF477FADF592D453B2FA6DB /* agent.html */,
 				0D75987129D2957C629F7D67 /* background.js */,
 				55AB5544C4895498D37DF137 /* content.js */,
+				6F9D91549FBFF22A524D0A7C /* fonts */,
 				DC56DE2586E02CA6FAC029CA /* images */,
 				2235CEF00B8E72FAF6E84E51 /* manifest.json */,
 				739AD40BBA4479CF4B7355AC /* pageBridge.js */,
@@ -305,6 +308,7 @@
 				CAD6EFCC4BAE605A56F0531D /* agent.html in Resources */,
 				B227B681447B4DF57C8CB9AF /* background.js in Resources */,
 				E65E8F1100EE97B987E4CCF9 /* content.js in Resources */,
+				3A71834748928232A8542216 /* fonts in Resources */,
 				7C9D6597B7D6449471812C2A /* images in Resources */,
 				4DDCED019BFD313B2AE94A84 /* manifest.json in Resources */,
 				53C6D297AE31995FA83F05BA /* pageBridge.js in Resources */,
@@ -468,7 +472,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 24;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 2L6B6ZA57F;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -484,7 +488,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MARKETING_VERSION = 1.11;
+				MARKETING_VERSION = 1.12;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -572,7 +576,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 21;
+				CURRENT_PROJECT_VERSION = 24;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 2L6B6ZA57F;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -594,7 +598,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MARKETING_VERSION = 1.11;
+				MARKETING_VERSION = 1.12;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

@@ -53,11 +53,10 @@ html,
 body {
   margin: 0;
   padding: 0;
-  font-family:
-    "Inter", system-ui, -apple-system, BlinkMacSystemFont,
+  font-family:var(--xg-font,"Inter", system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI Variable", "Segoe UI", Roboto, "Helvetica Neue", Arial,
-    sans-serif;
-  font-size: 13px;
+    sans-serif);
+  font-size:calc(13px * var(--xg-font-scale,1));
   line-height: 1.5;
   background: var(--bg);
   color: var(--text);
@@ -92,7 +91,7 @@ body::before {
   align-items: center;
   gap: 9px;
   font-weight: 650;
-  font-size: 15px;
+  font-size:calc(15px * var(--xg-font-scale,1));
   letter-spacing: -0.005em;
   background-image: linear-gradient(
     120deg,
@@ -147,7 +146,7 @@ body::before {
   }
 }
 .ver {
-  font-size: 11px;
+  font-size:calc(11px * var(--xg-font-scale,1));
   color: var(--text-faint);
   font-family:
     "JetBrains Mono", "SF Mono", ui-monospace, SFMono-Regular, Menlo,
@@ -155,7 +154,7 @@ body::before {
 }
 
 .status {
-  font-size: 11.5px;
+  font-size:calc(11.5px * var(--xg-font-scale,1));
   color: var(--text-muted);
   padding: 7px 10px;
   border-radius: 8px;
@@ -177,7 +176,7 @@ body::before {
   display: flex;
   gap: 9px;
   align-items: center;
-  font-size: 12.5px;
+  font-size:calc(12.5px * var(--xg-font-scale,1));
 }
 .account .dot-status {
   width: 7px;
@@ -249,7 +248,7 @@ body::before {
   cursor: pointer;
   font: inherit;
   font-weight: 600;
-  font-size: 13px;
+  font-size:calc(13px * var(--xg-font-scale,1));
   text-align: center;
   -webkit-appearance: none;
   appearance: none;
@@ -302,7 +301,7 @@ body::before {
 
 .hint {
   margin-top: 12px;
-  font-size: 11.5px;
+  font-size:calc(11.5px * var(--xg-font-scale,1));
   color: var(--text-muted);
   line-height: 1.5;
 }
@@ -321,3 +320,42 @@ body::before {
     display: none;
   }
 }
+
+:root[data-xg-mode="dark"]{
+  --bg: #08080d;
+  --bg-elevated: rgba(22, 22, 30, 0.78);
+  --bg-input: rgba(255, 255, 255, 0.04);
+  --bg-hover: rgba(139, 92, 246, 0.10);
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(168, 85, 247, 0.28);
+  --border-input: rgba(255, 255, 255, 0.09);
+  --text: #d4d8e0;
+  --text-strong: #f7f7fb;
+  --text-muted: #888a96;
+  --text-faint: #4a4a52;
+  --gradient-from: #6366f1;
+  --gradient-via: #a855f7;
+  --gradient-to: #ec4899;
+  --halo-1: rgba(99, 102, 241, 0.18);
+  --halo-2: rgba(168, 85, 247, 0.14);
+  --halo-3: rgba(236, 72, 153, 0.12);
+  color-scheme: dark light;
+}
+:root[data-xg-mode="light"]{
+    --bg: #ffffff;
+    --bg-elevated: rgba(244, 244, 251, 0.85);
+    --bg-input: rgba(15, 23, 42, 0.04);
+    --bg-hover: rgba(99, 102, 241, 0.06);
+    --border: rgba(15, 23, 42, 0.08);
+    --border-strong: rgba(99, 102, 241, 0.30);
+    --border-input: rgba(15, 23, 42, 0.12);
+    --text: #1c1c25;
+    --text-strong: #0a0a14;
+    --text-muted: #5b5b6c;
+    --text-faint: #a1a1ad;
+    --halo-1: rgba(99, 102, 241, 0.10);
+    --halo-2: rgba(168, 85, 247, 0.10);
+    --halo-3: rgba(236, 72, 153, 0.08);
+}
+
+:root[style*="--xg-accent"] button.primary{color:var(--xg-on-accent)}

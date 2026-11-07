@@ -1,3 +1,6 @@
+import {installAppearanceFont} from "@xgoose/ui";
+import {bindDocumentAppearance} from "@/shared/appearance";
+import {createAppearanceUsage,normalizeState} from "@xgoose/ui";
 import {HOSTED_AUTH_STOPPED,isHostedAuthStopped} from '@/shared/hosted';
 import {PagePeers} from './peers';
 import {receivePeerResult} from '../../../../packages/core/src/peerAgents';
@@ -105,7 +108,9 @@ async function bootstrap(): Promise<void> {
 
   if(isSafari) await send("sw:host_prepare",undefined);
   await loadAll();
+  if(isAgentPage())await bindDocumentAppearance("peer");
   await initializeLocale();
+  installAppearanceFont(chrome.runtime.getURL("fonts/notebook.ttf"));
   const panel = createPanel({imageUploads:true,visualViewport:isSafari,editableSkills:!isSafari});
   localizeRoot(document.querySelector("#xgoose-root")!.shadowRoot!);
   const permissionGuide=isSafari ? {check:async()=>false,setBuiltinSite:(_value:boolean)=>{}} : mountUserScriptsGuide(()=>{resetBridgeReadiness();resetInjectedSkills();void refreshSkills();});
@@ -121,22 +126,14 @@ async function bootstrap(): Promise<void> {
 
   if (origin && isPanelOpenForOrigin(origin)) panel.open();
 
-  // Theme: follow user setting, fall back to system.
-  const applyTheme = (): void => {
-    const s = getSettings();
-    if (s.theme === "system") {
-      const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-      panel.setTheme(dark ? "dark" : "light");
-    } else {
-      panel.setTheme(s.theme);
-    }
-  };
+  const appearanceUsage=createAppearanceUsage(track,"panel");
+  const sampleAppearance=()=>appearanceUsage(normalizeState(getSettings()),matchMedia("(prefers-color-scheme: dark)").matches,panel.isOpen()&&document.visibilityState==="visible");
+  const applyTheme=()=>{panel.setAppearance(normalizeState(getSettings()));sampleAppearance();};
   applyTheme();
-  matchMedia("(prefers-color-scheme: dark)").addEventListener(
-    "change",
-    applyTheme,
-  );
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change",applyTheme);
   chrome.storage.onChanged.addListener(applyTheme);
+  document.addEventListener("visibilitychange",sampleAppearance);
+  window.addEventListener("focus",sampleAppearance);
 
   // Launcher visibility: "never" hides the floating button on all pages;
   // "skill-sites" shows it only on pages with a matching skill. We
@@ -157,6 +154,7 @@ async function bootstrap(): Promise<void> {
   panel.onOpen(async () => {
     setAnalyticsActive(true);
     track("panel_opened");
+    sampleAppearance();
     void permissionGuide.check();
     if (origin) await setPanelOpenForOrigin(origin, true);
   });

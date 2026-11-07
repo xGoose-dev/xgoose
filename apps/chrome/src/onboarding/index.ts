@@ -1,3 +1,5 @@
+import {bindDocumentAppearance} from "@/shared/appearance";
+void bindDocumentAppearance("onboarding");
 import {extensionDetailsUrl, isMicrosoftEdge} from '@/shared/browser';
 import {mountAccountSection} from "@/shared/accountSection";
 import {initializeLocale,mountAnswerLanguage} from "@/shared/locale";

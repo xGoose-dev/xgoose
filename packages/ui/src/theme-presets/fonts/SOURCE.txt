@@ -1,0 +1,5 @@
+Architects Daughter Regular by Kimberly Geswein.
+https://github.com/google/fonts/tree/main/ofl/architectsdaughter
+https://raw.githubusercontent.com/google/fonts/main/ofl/architectsdaughter/ArchitectsDaughter-Regular.ttf
+License: SIL Open Font License 1.1 (OFL.txt).
+Bundled on 2026-11-06; never fetched at runtime.
