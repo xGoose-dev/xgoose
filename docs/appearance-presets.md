@@ -16,6 +16,12 @@ A preset selects the complete material, shape, typography, border and shadow tre
 Existing Settings buttons retain their original options-page or native-app destination.
 Appearance is an additional optional setting; an upgrade does not select a new preset.
 
+Extension settings show Appearance as its own section with a direct navigation link, after the existing
+personalization preferences. Preset thumbnails use one shared grid; mode/font fields have equal
+widths, size selection keeps its percentage beside the label, and the preview has one surface.
+Narrow layouts stack controls and wrap action labels. Native appearance uses aligned labeled
+rows and one preview surface. Existing Settings destinations and Save behavior stay intact.
+
 ## Storage and integration
 
 `theme` remains the existing top-level mode field. `appearance` stores only
@@ -73,7 +79,10 @@ not distinct people. Existing general analytics and extension-activity summaries
 
 Browser acceptance covers all five presets in light and dark modes, computed radius/stroke/
 blur, screenshots, persistence, cross-tab updates, live panel updates, storage rollback/retry,
-reset, opt-out and preservation of host-page styles. Unit tests cover normalization,
+reset, opt-out and preservation of host-page styles. Settings layout regression covers 45
+preset/locale/viewport combinations at 130% text, including 320px width, aligned controls,
+section navigation and the existing Save action preserving appearance. Firefox also checks
+maximum-size Spanish controls and footer actions in its real browser. Unit tests cover normalization,
 contrast, actual material differences, serial writes, native preset parity and upstream checksums.
 Worker fixtures cover collection, dimension allowlists, latest-use aggregation, ordered visits,
 filters, deduplication and app surfaces. Swift tests cover shared settings and durable opt-in queues.

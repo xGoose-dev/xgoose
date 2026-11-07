@@ -20,7 +20,7 @@ try {
  await expect(peer.locator('[data-preset=notebook]')).toHaveAttribute('aria-pressed','true');
  await expect.poll(()=>page.evaluate(()=>document.querySelector('#xgoose-root').shadowRoot.querySelector('.panel').style.getPropertyValue('--xg-font-scale'))).toBe('1.3');
  assert.equal(await page.evaluate(()=>getComputedStyle(document.body).fontSize),'19px');assert.equal(await page.evaluate(()=>getComputedStyle(document.body).color),'rgb(90, 20, 30)');
- await settings.locator("#section-personalization").screenshot({path:resolve(out,'extension-desktop.png')});
+ await settings.locator("#section-appearance").screenshot({path:resolve(out,'extension-desktop.png')});
  await settings.reload();await expect(settings.locator('[data-preset=notebook]')).toHaveAttribute('aria-pressed','true');
  // Persistence failure rolls back immediately and a retry stores the original selection.
  await settings.evaluate(()=>{const original=chrome.storage.local.set.bind(chrome.storage.local);globalThis.restoreAppearanceStorage=()=>{chrome.storage.local.set=original;};chrome.storage.local.set=async()=>{throw new Error('fixture storage failure');};});

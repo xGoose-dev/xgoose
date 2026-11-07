@@ -335,13 +335,21 @@ struct SkillsView:View {
 struct PersonalizationView:View {
     @EnvironmentObject var model:AppModel
     var body:some View {Form {
-        NavigationLink(model.t("Interface language","界面语言","Idioma")) {LanguageView()}
-        Picker(model.t("Answer language","回答语言","Idioma de respuestas"),selection:Binding(get:{model.settings["answerLanguage"] as? String ?? "auto"},set:{v in Task {await model.settingsPatch(["answerLanguage":v])}})) {ForEach(["auto","zh-CN","en","es"],id:\.self) {Text($0).tag($0)}}
-        NavigationLink(model.t("Appearance","外观","Apariencia")) {NativeAppearanceView()}
-
-        Toggle(model.t("Show launcher on all websites","在所有网站显示悬浮按钮","Mostrar botón en todos los sitios"),isOn:Binding(get:{model.settings["launcherVisibility"] as? String == "always"},set:{v in Task {await model.settingsPatch(["launcherVisibility":v ? "always":"skill-sites"])}}))
-        Toggle(model.t("Optional usage analytics","可选使用统计","Análisis de uso opcional"),isOn:Binding(get:{model.settings["analyticsEnabled"] as? Bool ?? false},set:{v in Task {await model.settingsPatch(["analyticsEnabled":v])}}))
-        Text(model.t("Usage analytics include feature names and error categories, never your messages, email or API keys.","使用统计仅包含功能名称与错误类别，不包含消息、邮箱或 API key。","Las estadísticas no incluyen mensajes, correo ni claves API。")).font(.footnote).foregroundStyle(.secondary)
+        Section(model.t("Language","语言","Idioma")) {
+            NavigationLink(model.t("Interface language","界面语言","Idioma")) {LanguageView()}
+            Picker(model.t("Answer language","回答语言","Idioma de respuestas"),selection:Binding(get:{model.settings["answerLanguage"] as? String ?? "auto"},set:{v in Task {await model.settingsPatch(["answerLanguage":v])}})) {ForEach(["auto","zh-CN","en","es"],id:\.self) {Text($0).tag($0)}}
+        }
+        Section(model.t("Appearance","外观","Apariencia")) {
+            NavigationLink(model.t("Appearance","外观","Apariencia")) {NativeAppearanceView()}
+        }
+        Section(model.t("Floating button","悬浮按钮","Botón flotante")) {
+            Toggle(model.t("Show launcher on all websites","在所有网站显示悬浮按钮","Mostrar botón en todos los sitios"),isOn:Binding(get:{model.settings["launcherVisibility"] as? String == "always"},set:{v in Task {await model.settingsPatch(["launcherVisibility":v ? "always":"skill-sites"])}}))
+        }
+        Section {
+            Toggle(model.t("Optional usage analytics","可选使用统计","Análisis de uso opcional"),isOn:Binding(get:{model.settings["analyticsEnabled"] as? Bool ?? false},set:{v in Task {await model.settingsPatch(["analyticsEnabled":v])}}))
+        } footer: {
+            Text(model.t("Usage analytics include feature names and error categories, never your messages, email or API keys.","使用统计仅包含功能名称与错误类别，不包含消息、邮箱或 API key。","Las estadísticas no incluyen mensajes, correo ni claves API。")).font(.footnote).foregroundStyle(.secondary)
+        }
     }.navigationTitle(model.t("Personalization","个性化","Personalización"))}
 }
 struct HelpView:View {
@@ -482,9 +490,15 @@ struct NativeAppearanceView:View {
             }
         }
         NativeAppearanceSection("",appearance:a) {
-            Picker(model.t("Color mode","明暗模式","Modo de color"),selection:Binding(get:{a.theme},set:{model.previewAppearance(["theme":$0])})) {Text(model.t("Follow system","跟随系统","Sistema")).tag("system");Text(model.t("Light","浅色","Claro")).tag("light");Text(model.t("Dark","深色","Oscuro")).tag("dark")}
-            Picker(model.t("Font","字体","Tipografía"),selection:Binding(get:{a.font},set:{update("font",$0)})) {ForEach(Array(NativeAppearance.fonts.enumerated()),id:\.element) {index,id in Text(model.t(["Follow preset","Clean sans","Reading serif","Monospace"][index],["跟随预设","简洁黑体","阅读宋体","等宽"][index])).tag(id)}}
-            Picker(model.t("Font size","字号","Tamaño"),selection:Binding(get:{a.scale},set:{update("fontScale",$0)})) {ForEach([0.9,1.0,1.15,1.3],id:\.self) {Text("\(Int(($0*100).rounded()))%").tag($0)}}
+            LabeledContent(model.t("Color mode","明暗模式","Modo de color")) {
+                Picker("",selection:Binding(get:{a.theme},set:{model.previewAppearance(["theme":$0])})) {Text(model.t("Follow system","跟随系统","Sistema")).tag("system");Text(model.t("Light","浅色","Claro")).tag("light");Text(model.t("Dark","深色","Oscuro")).tag("dark")}.labelsHidden()
+            }.frame(minHeight:44)
+            LabeledContent(model.t("Font","字体","Tipografía")) {
+                Picker("",selection:Binding(get:{a.font},set:{update("font",$0)})) {ForEach(Array(NativeAppearance.fonts.enumerated()),id:\.element) {index,id in Text(model.t(["Follow preset","Clean sans","Reading serif","Monospace"][index],["跟随预设","简洁黑体","阅读宋体","等宽"][index])).tag(id)}}.labelsHidden()
+            }.frame(minHeight:44)
+            LabeledContent(model.t("Font size","字号","Tamaño")) {
+                Picker("",selection:Binding(get:{a.scale},set:{update("fontScale",$0)})) {ForEach([0.9,1.0,1.15,1.3],id:\.self) {Text("\(Int(($0*100).rounded()))%").tag($0)}}.labelsHidden()
+            }.frame(minHeight:44)
         }
         NativeAppearanceSection(model.t("Preview","预览","Vista previa"),appearance:a) {
             VStack(alignment:.leading,spacing:12) {
@@ -492,14 +506,14 @@ struct NativeAppearanceView:View {
                 TextField(model.t("Your next question","你的下一个问题"),text:.constant("")).textFieldStyle(.roundedBorder).disabled(true)
                 Text("const idea = \"xgoose\";").font(.body.monospaced())
                 Button(model.t("Preview","预览")) {}.buttonStyle(.borderedProminent)
-            }.padding(12).background(NativeAppearanceSurface(appearance:a))
+            }
         }
-        NativeAppearanceSection("",appearance:a) {
+        VStack(alignment:.leading,spacing:12) {
             Button(model.t("Restore appearance defaults","恢复默认外观","Restablecer apariencia")) {model.previewAppearance(["theme":"system","appearance":NativeAppearance.defaults],reset:true)}
             Text(model.t(model.appearanceStatus,["Saving…":"保存中…","Saved":"已保存","Could not save. Try again.":"保存失败，请重试。"][model.appearanceStatus] ?? model.appearanceStatus)).accessibilityAddTraits(.updatesFrequently)
             if model.appearanceStatus == "Could not save. Try again." {Button(model.t("Try again","重试","Reintentar")) {model.retryAppearance()}}
-        }
-    }.padding(20).pickerStyle(.menu)}.modifier(NativeAppearanceStyle(settings:model.settings)).navigationTitle(model.t("Appearance","外观","Apariencia"))
+        }.padding(.horizontal,4)
+    }.padding(20).frame(maxWidth:720).frame(maxWidth:.infinity).pickerStyle(.menu)}.modifier(NativeAppearanceStyle(settings:model.settings)).navigationTitle(model.t("Appearance","外观","Apariencia"))
      .onAppear {model.openAppearance()}
      .onDisappear {Task {await model.flushAppearance()}}
      .onChange(of:phase) {_,next in if next != .active {Task {await model.flushAppearance()}}}

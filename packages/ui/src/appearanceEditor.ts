@@ -2,27 +2,41 @@ import {APPEARANCE_STYLE_CSS} from "./appearanceStyles";
 import {PRESETS,FONTS,applyAppearance,normalizeState,type AppearanceState} from "./appearance";
 import {AppearanceController,type AppearanceTrack} from "./appearanceController";
 export const APPEARANCE_EDITOR_CSS=APPEARANCE_STYLE_CSS+`
-.xg-appearance{display:grid;gap:20px;min-width:0;font-family:var(--xg-font,inherit);color:inherit}
-.xg-appearance fieldset{padding:0;margin:0;border:0;min-width:0}.xg-appearance legend{font-weight:650;margin-bottom:10px}
-.xg-preset-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(102px,1fr));gap:12px}
-.xg-preset-choice{display:grid;align-content:start;gap:8px;background:transparent;color:inherit;border:2px solid transparent!important;border-radius:12px!important;padding:5px!important;min-height:44px;cursor:pointer;font:inherit;text-align:left}
-.xg-preset-choice[aria-pressed=true]{border-color:currentColor!important}.xg-preset-label{font-weight:650;padding:0 2px}.xg-sample{display:flex;flex-direction:column;gap:8px;width:100%;height:94px;padding:9px!important;font-family:var(--xg-font,system-ui);overflow:hidden;box-sizing:border-box;pointer-events:none}
-.xg-sample-title{font-size:12px;font-weight:700;line-height:1.1}.xg-sample-line{height:3px;width:70%;background:currentColor;opacity:.2;flex:none}.xg-sample-line.short{width:48%}.xg-sample-bubble{height:14px;width:64%;align-self:end;background:var(--xg-accent,#7352e4);border-radius:var(--xg-control-radius,5px);border:1px solid var(--xg-border-color,transparent);flex:none}.xg-sample-input{height:13px;width:100%;border:1px solid currentColor;opacity:.3;border-radius:var(--xg-control-radius,5px);flex:none}
+.xg-appearance{display:grid;gap:24px;min-width:0;container:appearance-editor / inline-size;font-family:var(--xg-font,inherit);color:inherit;line-height:1.5}
+.xg-appearance,.xg-appearance *{box-sizing:border-box}
+.xg-appearance fieldset{padding:0;margin:0;border:0;min-width:0}
+.xg-appearance legend{width:100%;font-weight:600;margin-bottom:10px;padding:0;font-size:1em}
+.xg-preset-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.xg-preset-choice{display:grid;align-content:start;gap:8px;min-width:0;background:transparent;color:inherit;border:2px solid transparent!important;border-radius:12px!important;padding:5px!important;min-height:44px;cursor:pointer;font:inherit;text-align:left}
+.xg-preset-choice[aria-pressed=true]{border-color:var(--xg-accent,#7352e4)!important}
+.xg-preset-label{font-weight:600;padding:0 2px;overflow-wrap:anywhere}
+.xg-sample{display:flex;flex-direction:column;gap:8px;width:100%;height:88px;padding:9px!important;font-family:var(--xg-font,system-ui);overflow:hidden;pointer-events:none}
+.xg-sample-title{font-size:12px;font-weight:700;line-height:1.1}.xg-sample-line{height:3px;width:70%;background:currentColor;opacity:.2;flex:none}.xg-sample-bubble{height:14px;width:64%;align-self:end;background:var(--xg-accent,#7352e4);border-radius:var(--xg-control-radius,5px);border:1px solid var(--xg-border-color,transparent);flex:none}.xg-sample-input{height:13px;width:100%;border:1px solid currentColor;opacity:.3;border-radius:var(--xg-control-radius,5px);flex:none}
 .xg-sample[data-xg-preset=default]{background:#f6f4fc;color:#252233;border:1px solid #d9d5e8;border-radius:12px;box-shadow:0 4px 12px #20104012}
-.xg-appearance label{display:grid;gap:6px}.xg-appearance select,.xg-appearance input[type=text]{width:100%;min-width:0;min-height:44px;padding:8px;border-radius:7px;border:1px solid var(--border-input,#9296a0);font:inherit;background:var(--bg-input,transparent);color:inherit}
-.xg-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}.xg-accent{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.xg-accent label{flex:1;min-width:130px}.xg-accent input[type=color]{width:48px;height:44px;padding:2px;background:transparent;border:1px solid #9296a0;border-radius:7px}
-.xg-appearance button:not(.xg-preset-choice){min-height:44px;border:var(--xg-border-width,1px) solid #9296a0;border-radius:var(--xg-control-radius,7px);padding:8px 12px;background:transparent;color:inherit;font:inherit;cursor:pointer}
-.xg-appearance button:focus-visible,.xg-appearance input:focus-visible,.xg-appearance select:focus-visible{outline:2px solid var(--xg-accent,#7352e4);outline-offset:3px}
-.xg-size-presets{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.xg-size-presets button[aria-pressed=true]{box-shadow:inset 0 0 0 2px currentColor}.xg-appearance input[type=range]{width:100%;accent-color:var(--xg-accent,#7352e4);min-height:32px}
-.xg-preview{padding:18px;border:1px solid var(--border-input,#9296a0);border-radius:var(--xg-radius,10px);overflow-wrap:anywhere}.xg-preview p{margin:0 0 12px}.xg-preview code{font-family:ui-monospace,monospace}.xg-preview button{background:var(--xg-accent,#7352e4)!important;color:var(--xg-on-accent,#fff)!important;border:0!important}.xg-preview input{display:block;width:100%;margin:12px 0}
-.xg-editor-footer{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.xg-save-status{flex:1;min-width:120px}.xg-retry[hidden]{display:none}
+.xg-appearance label{display:grid;gap:8px;font-weight:600;min-width:0}
+.xg-appearance select,.xg-appearance input[type=text]{width:100%;min-width:0;min-height:44px;margin:0;padding:10px 12px;border-radius:var(--xg-control-radius,8px);border:1px solid var(--border-input,#9296a0);font:inherit;font-weight:400;background-color:var(--bg-input,transparent);color:inherit}
+.xg-controls{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+.xg-appearance button:not(.xg-preset-choice){min-height:44px;border:var(--xg-border-width,1px) solid var(--border-input,#9296a0);border-radius:var(--xg-control-radius,8px);padding:8px 12px;background:transparent;color:inherit;font:inherit;cursor:pointer;overflow-wrap:anywhere}
+.xg-appearance :is(button,input,select):focus-visible{outline:2px solid var(--xg-accent,#7352e4);outline-offset:3px}
+.xg-size-heading output{float:right;font-weight:400;color:var(--text-muted,inherit);font-variant-numeric:tabular-nums}
+.xg-size-presets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.xg-size-presets button[aria-pressed=true]{border-color:var(--xg-accent,#7352e4);box-shadow:inset 0 0 0 1px var(--xg-accent,#7352e4);background:var(--bg-input,transparent)}
+.xg-preview{display:grid;gap:16px;padding:18px;border:1px solid var(--border-input,#9296a0);border-radius:var(--xg-radius,12px);overflow-wrap:anywhere;background:var(--bg-input,transparent)}
+.xg-preview-copy{display:grid;align-content:center;gap:10px;min-width:0}.xg-preview p{margin:0;line-height:1.6}.xg-preview code{font-family:ui-monospace,monospace;font-size:.85em}.xg-preview-controls{display:grid;align-content:center;gap:10px;min-width:0}
+.xg-preview button{justify-self:start;background:var(--xg-accent,#7352e4)!important;color:var(--xg-on-accent,#fff)!important;border:0!important;cursor:default!important}
+.xg-editor-footer{display:flex;gap:12px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border-input,#9296a0);padding-top:16px}
+.xg-appearance .xg-editor-footer [data-action=reset]{border-color:transparent;padding-inline:0;font-size:.875em;text-align:left}
+.xg-save-status{margin-inline-start:auto;font-size:.875em;color:var(--text-muted,inherit)}.xg-save-status:empty{display:none}.xg-retry[hidden]{display:none}
+@container appearance-editor (min-width:400px){.xg-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.xg-size-presets{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@container appearance-editor (min-width:520px){.xg-preset-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.xg-preview{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}}
 `;
 export function mountAppearanceEditor(root:HTMLElement,options:{initial:AppearanceState;save:(state:AppearanceState)=>Promise<void>;apply:(state:AppearanceState)=>void;track:AppearanceTrack;entry:string;t?:(value:string)=>string}) {
   const t=options.t??((s:string)=>s),dark=()=>matchMedia("(prefers-color-scheme: dark)").matches;
   root.classList.add("xg-appearance");
   // The template is static; user supplied values are assigned through DOM properties.
-  root.innerHTML=`<fieldset><legend></legend><div class="xg-preset-grid"></div></fieldset><div class="xg-controls"><label data-label="Color mode"><select data-field="theme"></select></label><label data-label="Font"><select data-field="font"></select></label></div><fieldset><legend data-size-legend></legend><div class="xg-size-presets"></div><output></output></fieldset><section class="xg-preview"><p>阅读，思考，再出发。<br>Read, think, and keep exploring.</p><input placeholder="Your next question · 你的下一个问题" readonly aria-label="Preview input"><p><code>const idea = "xgoose";</code></p><button type="button" disabled></button></section><div class="xg-editor-footer"><button type="button" data-action="reset"></button><span class="xg-save-status" role="status" aria-live="polite"></span><button type="button" class="xg-retry" hidden></button></div>`;
+  root.innerHTML=`<fieldset><legend></legend><div class="xg-preset-grid"></div></fieldset><div class="xg-controls"><label data-label="Color mode"><select data-field="theme"></select></label><label data-label="Font"><select data-field="font"></select></label></div><fieldset><legend class="xg-size-heading"><span data-size-legend></span><output></output></legend><div class="xg-size-presets"></div></fieldset><div class="xg-preview" role="group" aria-label="Preview"><div class="xg-preview-copy"><p>阅读，思考，再出发。<br>Read, think, and keep exploring.</p><p><code>const idea = "xgoose";</code></p></div><div class="xg-preview-controls"><input type="text" placeholder="Your next question · 你的下一个问题" readonly aria-label="Preview input"><button type="button" disabled></button></div></div><div class="xg-editor-footer"><button type="button" data-action="reset"></button><span class="xg-save-status" role="status" aria-live="polite"></span><button type="button" class="xg-retry" hidden></button></div>`;
   root.querySelector("legend")!.textContent=t("Interface style");
+  root.querySelector(".xg-preview")!.setAttribute("aria-label",t("Preview"));
   root.querySelector("[data-size-legend]")!.textContent=t("Font size");
   for(const label of root.querySelectorAll<HTMLElement>("[data-label]"))label.prepend(t(label.dataset.label!));
   const select=(key:string)=>root.querySelector<HTMLSelectElement>(`[data-field=${key}]`)!;

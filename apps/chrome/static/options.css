@@ -1675,3 +1675,31 @@ a.btn { text-decoration:none; display:inline-flex; align-items:center; justify-c
 }
 
 :root[style*="--xg-accent"] button.primary{color:var(--xg-on-accent)}
+
+/* Settings hierarchy: one alignment grid, restrained dividers, separate appearance. */
+.settings-page .btn{max-width:100%;min-width:0;white-space:normal;overflow-wrap:anywhere}
+.settings-page .page-header .dot{animation:none;-webkit-animation:none;box-shadow:none}
+.settings-page .settings-main > section{padding:24px;margin-bottom:20px;border:1px solid var(--border-input);box-shadow:none}
+.settings-page .settings-main > section::before{display:none}
+.settings-page .section-head h2{background:none;color:var(--text-strong);-webkit-text-fill-color:currentColor;letter-spacing:normal;text-transform:none}
+.settings-page .section-head{margin-bottom:20px}
+.settings-page .settings-nav{box-shadow:none;border:1px solid var(--border-input);padding:8px}
+.settings-page .nav-link{min-height:44px}
+.settings-page .preference-row{grid-template-columns:minmax(0,1fr) minmax(0,260px);gap:24px}
+.settings-page .preference-row > :is(select,.btn){width:100%;min-height:44px}
+.settings-page .analytics-choice{grid-template-columns:minmax(0,1fr) 24px}
+.settings-page .settings-main > section{scroll-margin-top:24px}
+.settings-page .footer{padding-inline:max(24px,calc((100vw - 1032px) / 2));background:var(--bg);backdrop-filter:none;-webkit-backdrop-filter:none}
+@media(max-width:700px){
+ .settings-page .settings-main > section{padding:20px 18px;scroll-margin-top:76px}
+ .settings-page .preference-row{grid-template-columns:minmax(0,1fr);gap:12px}
+ .settings-page .analytics-choice{grid-template-columns:minmax(0,1fr) 24px}
+ .settings-page .footer{padding-inline:16px}
+}
+
+@media(max-width:700px){
+ .settings-page .footer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 12px}
+ .settings-page .footer .btn{min-width:0;white-space:normal;padding:10px 12px;min-height:44px}
+ .settings-page #saveStatus{grid-column:1 / -1;margin:0}
+ .settings-page #saveStatus:empty{display:none}
+}
