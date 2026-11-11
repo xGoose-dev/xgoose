@@ -24,6 +24,7 @@ test('provider base URLs agree for native, LiteLLM and OpenAI-compatible version
   ['openai-compat','https://proxy.test/ai','https://proxy.test/ai/v1'],
   ['openai-compat','https://proxy.test/v1/','https://proxy.test/v1'],
   ['openai-compat','https://proxy.test/v1/chat/completions','https://proxy.test/v1'],
+  ['openai-compat','https://proxy.test/v1/responses','https://proxy.test/v1'],
   ['openai-compat','https://generativelanguage.googleapis.com/v1beta/openai/','https://generativelanguage.googleapis.com/v1beta/openai'],
  ] as const)assert.equal(normalizeProviderBaseUrl(provider,input),expected);
 });
@@ -70,7 +71,7 @@ test('OpenAI format: fragmented tool arguments, tool response IDs, images and st
  assert.equal(requests.length,2);assert.ok(events.some(e=>e.text==='OpenAI format verified.'));assert.deepEqual(events.filter(e=>e.type==='error'),[]);
 });
 
-for (const [model, thinking] of [['gpt-6-luna',false], ['gpt-6-luna',true], ['gpt-6-sol',true], ['gpt-6.1-terra',true], ['gpt-5-mini',true], ['o3',true], ['o4-mini',true]] as const) {
+for (const [model, thinking] of [['gpt-6-luna',false], ['gpt-6-luna',true], ['gpt-5-mini',true], ['o3',true], ['o4-mini',true]] as const) {
  test(`OpenAI BYOK ${model} (thinking=${thinking}): modern completion limit survives tools and follow-up`, async () => {
   const requests:any[]=[];
   let toolCalls=0;
@@ -162,4 +163,61 @@ test('Gemini HTTP errors surface and abort reaches the active custom transport',
   init!.signal!.addEventListener('abort',()=>{aborted=true;reject(new DOMException('Aborted','AbortError'));},{once:true});started();
  })}),[{role:'user',content:'Hello'}],ac.signal);
  await ready;ac.abort();await running;assert.equal(aborted,true);
+});
+
+function responsesFrame(call: boolean, text = 'Responses verified.') {
+ const item = call
+  ? {type:'function_call',id:'fc_fixture',call_id:'call_fixture',name:'lookup',arguments:'{"query":"current post"}',status:'completed'}
+  : {type:'message',id:'msg_fixture',role:'assistant',status:'completed',content:[{type:'output_text',text,annotations:[]}]};
+ const events = [
+  {type:'response.created',response:{id:'resp_fixture',status:'in_progress'}},
+  {type:'response.output_item.added',output_index:0,item:call?{...item,arguments:''}:{...item,content:[]}},
+  call ? {type:'response.function_call_arguments.delta',output_index:0,delta:item.arguments}
+       : {type:'response.output_text.delta',output_index:0,content_index:0,delta:text},
+  {type:'response.output_item.done',output_index:0,item},
+  {type:'response.completed',response:{id:'resp_fixture',status:'completed',output:[item],usage:{input_tokens:10,output_tokens:3,total_tokens:13}}},
+ ];
+ return new Response(events.map(event=>`data: ${JSON.stringify(event)}\n\n`).join(''),{headers:{'content-type':'text/event-stream'}});
+}
+
+for (const model of ['gpt-6.1-sol','gpt-6.1-terra','gpt-6-sol','gpt-6-astra','gpt-6.1-sol-2026-11-01']) {
+ for (const thinking of [false,true]) test(`BYOK ${model} thinking=${thinking}: Responses streams tool, result, image and follow-up`,async()=>{
+  const requests:any[]=[];
+  const bundle=createAgent({settings:{...settings,provider:'openai-compat',model,baseUrl:'',thinking},tools:[tool],fetchImpl:async(input,init)=>{
+   const req=new Request(input,init),body=await req.json();requests.push(body);
+   assert.equal(req.url,'https://api.openai.com/v1/responses');
+   assert.equal(req.headers.get('authorization'),'Bearer fixture-key');
+   assert.equal(body.max_output_tokens,16384);assert.equal(body.max_tokens,undefined);assert.equal(body.max_completion_tokens,undefined);
+   assert.equal(body.store,false);assert.equal(body.stream,true);assert.equal(body.temperature,undefined);
+   assert.equal(body.tools[0].type,'function');assert.equal(body.tools[0].name,'lookup');
+   if(/sol|astra/.test(model)&&model!=='gpt-6-sol')assert.ok(['low','medium'].includes(body.reasoning?.effort),JSON.stringify(body.reasoning));
+   if(requests.length===1){
+    assert.match(JSON.stringify(body.input),/data:image\/png;base64,aW1hZ2U=/);
+    return responsesFrame(true);
+   }
+   const result=body.input.find((item:any)=>item.type==='function_call_output');
+   assert.equal(result.call_id,'call_fixture');assert.match(result.output,/verified current post/);
+   return responsesFrame(false);
+  }});
+  const first=await drain(bundle,[{role:'user',content:[{type:'text',text:'Read this image.'},{type:'image',data:'aW1hZ2U=',mimeType:'image/png'}]}]);
+  assert.deepEqual(first.events.filter(e=>e.type==='error'),[]);
+  assert.ok(first.events.some(e=>e.type==='tool-result'));assert.ok(first.events.some(e=>e.text==='Responses verified.'));
+  const saved=bundle.agent.snapshot().messages;
+  assert.equal(saved.find(m=>m.role==='assistant')?.api,'openai-responses');
+  const next=await drain(bundle,[...saved,{role:'user',content:'Continue.'}]);
+  assert.deepEqual(next.events.filter(e=>e.type==='error'),[]);assert.equal(requests.length,3);
+ });
+}
+
+test('Responses compaction and errors use the same host transport',async()=>{
+ let summaries=0;
+ const {events}=await drain(createAgent({settings:{...settings,provider:'openai-compat',model:'gpt-6.1-sol',baseUrl:''},tools:[],contextBudgetChars:1000,fetchImpl:async(input,init)=>{
+  const req=new Request(input,init),body=await req.json();assert.equal(req.url,'https://api.openai.com/v1/responses');
+  const summary=JSON.stringify(body).includes('Summarize this browser-agent history');if(summary)summaries++;
+  assert.equal(body.max_output_tokens,summary?2048:16384);
+  return responsesFrame(false,summary?'Earlier page read finished.':'Continued.');
+ }}),[{role:'user',content:'Earlier question'},{role:'assistant',content:'History '.repeat(500)},{role:'user',content:'Continue'}]);
+ assert.ok(summaries>0);assert.ok(events.some(e=>e.type==='context-summary'));assert.deepEqual(events.filter(e=>e.type==='error'),[]);
+ const failed=await drain(createAgent({settings:{...settings,provider:'openai-compat',model:'gpt-6.1-sol',baseUrl:''},tools:[],fetchImpl:async()=>Response.json({error:{message:'Responses fixture rejected',code:'invalid_request'}},{status:400})}),[{role:'user',content:'Hello'}]);
+ assert.ok(failed.events.some(e=>e.type==='error'&&String(e.error).includes('Responses fixture rejected')));
 });

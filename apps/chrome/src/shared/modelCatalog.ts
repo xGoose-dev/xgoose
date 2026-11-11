@@ -57,6 +57,7 @@ const GEMINI_ENTRIES: ModelEntry[] = [
 ];
 
 const OPENAI_COMPAT_ENTRIES: ModelEntry[] = [
+  ...["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra"].map(id => ({id, thinking:false, label:id})),
   { id: "gpt-4o", thinking: false, label: "gpt-4o" },
   { id: "gpt-4o-mini", thinking: false, label: "gpt-4o-mini" },
   { id: "gpt-4.1", thinking: false, label: "gpt-4.1" },

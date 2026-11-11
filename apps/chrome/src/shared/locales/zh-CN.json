@@ -414,5 +414,9 @@
   "Square corners, strong borders and hard shadows": "直角、粗边框与硬阴影",
   "Choose a style. Saved on this device.": "选择界面风格，仅保存在此设备。",
   "Follow preset": "跟随预设",
-  "Classic": "经典"
+  "Classic": "经典",
+  "xgoose Hosted AI — account credit": "xgoose 托管 AI — 使用账号额度",
+  "OpenAI-compatible API base URL. We add /v1 if missing. Sol, Terra and Astra use Responses; other models use Chat Completions. Works with OpenAI, LiteLLM, Together, Ollama, Azure OpenAI, etc.": "OpenAI 兼容 API 地址。缺少 /v1 时会自动补上。Sol、Terra 和 Astra 使用 Responses，其他模型使用 Chat Completions。支持 OpenAI、LiteLLM、Together、Ollama、Azure OpenAI 等。",
+  "AI service access": "AI 服务访问权限",
+  "Allow AI service access": "允许连接 AI 服务"
 }

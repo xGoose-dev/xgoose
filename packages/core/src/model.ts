@@ -17,7 +17,7 @@ export const KNOWN_MODELS: Record<Provider, string[]> = {
     "gemini-2.0-flash",
   ],
   "gemini-litellm": ["gemini-2.5-pro", "gemini-2.5-flash"],
-  "openai-compat": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o4-mini"],
+  "openai-compat": ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra", "gpt-4o", "gpt-4o-mini", "gpt-4.1", "o4-mini"],
 };
 
 /** Model credentials and transport stay in the host; this object contains no secrets. */
@@ -27,7 +27,7 @@ export function normalizeProviderBaseUrl(provider: Provider, value: string): str
   if (google) {
     if (!/\/v\d+(?:beta\d*|alpha\d*)?$/.test(root)) root += "/v1beta";
   } else {
-    root = root.replace(/\/chat\/completions$/, "");
+    root = root.replace(/\/(?:chat\/completions|responses)$/, "");
     // Preserve versioned compatible APIs, including Gemini's /v1beta/openai.
     if (!/\/v\d+(?:beta\d*|alpha\d*)?(?:\/openai)?$/.test(root)) root += "/v1";
   }
@@ -40,14 +40,20 @@ export function createModel(s: CoreSettings, _fetchImpl?: HostFetcher): Model<Ap
   // Modern OpenAI models reject max_tokens. Keep legacy compatible providers
   // and our Hosted gateway's existing wire contract unchanged.
   const hosted = /^https:\/\/api\.xgoose\.org\/ai\/v1\/?$/.test(baseUrl);
-  const modernOpenAI = !hosted && /^(?:gpt-(?:5|6)(?:[.-]|$)|o[134](?:-|$))/i.test(s.model);
+  const modernOpenAI = !google && !hosted && /^(?:gpt-(?:5|6)(?:[.-]|$)|o[134](?:-|$))/i.test(s.model);
+  // Sol/Terra/Astra use Responses so function calling can retain reasoning.
+  // https://developers.openai.com/api/docs/guides/deployment-checklist
+  // Hosted keeps its gateway contract; Luna keeps its supported chat path.
+  const responses = modernOpenAI && /^gpt-6(?:\.\d+)?-(?:sol|terra|astra)(?:-|$)/i.test(s.model);
+  const requiresReasoning = responses && /-(?:sol|astra)(?:-|$)/i.test(s.model) && !/^gpt-6-sol(?:-|$)/i.test(s.model);
   return {
     id: s.model, name: s.model, provider: google ? "google" : "xgoose",
-    api: google ? "google-generative-ai" : "openai-completions",
-    baseUrl, reasoning: s.thinking, input: ["text", "image"],
+    api: google ? "google-generative-ai" : responses ? "openai-responses" : "openai-completions",
+    baseUrl, reasoning: responses || s.thinking,
+    ...(requiresReasoning ? { thinkingLevelMap: { off: "low" as const } } : {}), input: ["text", "image"],
     contextWindow: s.contextWindowTokens ?? modelContextWindow(s.model), maxTokens: modelOutputTokens(s.model),
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    ...(!google ? { compat: { supportsDeveloperRole: false, supportsStore: false, maxTokensField: modernOpenAI ? "max_completion_tokens" as const : "max_tokens" as const } } : {}),
+    ...(responses ? { compat: { supportsDeveloperRole: false } } : !google ? { compat: { supportsDeveloperRole: false, supportsStore: false, maxTokensField: modernOpenAI ? "max_completion_tokens" as const : "max_tokens" as const } } : {}),
   } as Model<Api>;
 }
 

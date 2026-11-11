@@ -414,5 +414,9 @@
   "Square corners, strong borders and hard shadows": "Esquinas rectas, bordes fuertes y sombras duras",
   "Choose a style. Saved on this device.": "Elige un estilo. Se guarda en este dispositivo.",
   "Follow preset": "Seguir el estilo",
-  "Classic": "Clásico"
+  "Classic": "Clásico",
+  "xgoose Hosted AI — account credit": "xgoose Hosted AI — crédito de la cuenta",
+  "OpenAI-compatible API base URL. We add /v1 if missing. Sol, Terra and Astra use Responses; other models use Chat Completions. Works with OpenAI, LiteLLM, Together, Ollama, Azure OpenAI, etc.": "URL base de una API compatible con OpenAI. Añadimos /v1 si falta. Sol, Terra y Astra usan Responses; los demás modelos usan Chat Completions. Compatible con OpenAI, LiteLLM, Together, Ollama, Azure OpenAI, etc.",
+  "AI service access": "Acceso al servicio de IA",
+  "Allow AI service access": "Permitir acceso al servicio de IA"
 }

@@ -1,4 +1,5 @@
 import {bindDocumentAppearance} from "@/shared/appearance";
+import {mountServiceAccess} from "./serviceAccess";
 import {mountNotifications} from "./notifications";
 import {HOSTED_DEFAULT_CHOICE, resolveHostedModel, hostedModelLabel} from "@/shared/hostedModels";
 import {initializeLocale,saveLanguage,mountAnswerLanguage,translate,type LanguagePreference} from "@/shared/locale";
@@ -79,6 +80,10 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   const settings = await loadSettings();
   const connectionModeEl = $<HTMLSelectElement>("#connectionMode");
   const providerEl = $<HTMLSelectElement>("#provider");
+  const hostedProviderOption = new Option("xgoose Hosted AI", "xgoose-hosted");
+  hostedProviderOption.hidden = true;
+  hostedProviderOption.disabled = true;
+  providerEl.add(hostedProviderOption);
   const modelEl = $<HTMLSelectElement>("#model");
   const modelCustomToggleEl = $<HTMLInputElement>("#modelCustomToggle");
   const modelCustomRowEl = $<HTMLDivElement>("#modelCustomRow");
@@ -265,6 +270,9 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   jsExecTimeoutMsLabelEl.textContent = formatTimeout(settings.jsExecTimeoutMs);
   analyticsEnabledEl.checked = settings.analyticsEnabled !== false;
   updateProviderDependent(settings.provider);
+  const refreshServiceAccess=mountServiceAccess(()=>({provider:providerEl.value as Provider,baseUrl:baseUrlEl.value}));
+  baseUrlEl.addEventListener("change", refreshServiceAccess);
+  providerEl.addEventListener("change", refreshServiceAccess);
 
   setAnalyticsActive(true);
   track("options_page_opened", { provider: settings.provider });
@@ -346,7 +354,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
       "gemini-litellm":
         "Point this at your LiteLLM-Gemini proxy. The Google SDK uses this as baseURL.",
       "openai-compat":
-        "OpenAI Chat-Completions endpoint. We add /v1 if missing. Works with OpenAI, LiteLLM, Together, Ollama, Azure OpenAI, etc.",
+        "OpenAI-compatible API base URL. We add /v1 if missing. Sol, Terra and Astra use Responses; other models use Chat Completions. Works with OpenAI, LiteLLM, Together, Ollama, Azure OpenAI, etc.",
       "xgoose-hosted":
         "Routed through https://api.xgoose.org/ai using your signed-in account token; no key needed.",
     };

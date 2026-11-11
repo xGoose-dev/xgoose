@@ -100,7 +100,7 @@ export async function startLogin(email?:string): Promise<LoginState> {
     cancelPending();
     recordEvent("email_login_requested",{method:"extension_email"});
     const response=await apiFetch<{poll_token:string;expires_in:number;interval:number}>("/auth/extension/request",{method:"POST",body:JSON.stringify({email:normalized})})
-      .catch(() => ({ok:false as const,status:0,error:"Could not send the email request. Check your connection and try again."}));
+      .catch(error => ({ok:false as const,status:0,error:error instanceof Error ? error.message : String(error)}));
     if(!response.ok){recordEvent("email_login_failed",{reason:failureReason(response.error),http_status:response.status});lastPhase="error";lastError=response.error;return getLoginState();}
     recordEvent("email_login_sent");
     pending={mode:"email",email:normalized,deviceCode:response.data.poll_token,userCode:"",clientId:CLIENT_ID,expiresAt:Date.now()+response.data.expires_in*1000,intervalMs:Math.max(5000,response.data.interval*1000),pollTimer:null};

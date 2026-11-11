@@ -76,13 +76,14 @@ try {
     button.textContent = 'Fullscreen'; button.onclick = () => document.documentElement.requestFullscreen();
     player.append(button); document.body.append(player);
   });
-  assert.equal(await video.locator('.toggle').isVisible(), true, 'launcher stays rendered under the site overlay');
-  assert.equal(await covered(), true, 'ordinary site layer covers launcher');
+  assert.equal(await video.locator('.toggle').isVisible(), true, 'launcher stays reachable above page navigation');
+  assert.equal(await covered(), false, 'ordinary page overlays cannot strand the launcher');
   await video.locator('#enter-fullscreen').click();
-  await video.waitForFunction(() => !!document.fullscreenElement);
-  assert.equal(await video.locator('.toggle').isVisible(), true, 'fullscreen does not change launcher display');
+  await video.waitForFunction(() => !!document.fullscreenElement && document.querySelector('#xgoose-root').hasAttribute('data-fullscreen'));
+  assert.equal(await video.locator('.toggle').isVisible(), false, 'root fullscreen hides launcher');
   assert.equal(await covered(), true, 'document-root fullscreen player covers launcher');
   await video.evaluate(() => document.exitFullscreen());
+  await video.waitForFunction(() => !document.fullscreenElement && !document.querySelector('#xgoose-root').hasAttribute('data-fullscreen'));
   await video.locator('#site-player').evaluate(el => el.remove());
   assert.equal(await covered(), false, 'launcher is reachable when the player is gone');
   await video.evaluate(() => {
@@ -91,9 +92,10 @@ try {
     document.body.append(button);
   });
   await video.locator('#enter-fullscreen').click();
-  await video.waitForFunction(() => !!document.fullscreenElement);
+  await video.waitForFunction(() => !!document.fullscreenElement && document.querySelector('#xgoose-root').hasAttribute('data-fullscreen'));
   assert.equal(await covered(), true, 'native video top layer covers launcher');
   await video.evaluate(() => document.exitFullscreen());
+  await video.waitForFunction(() => !document.fullscreenElement && !document.querySelector('#xgoose-root').hasAttribute('data-fullscreen'));
   await video.locator('#enter-fullscreen').evaluate(el => el.remove());
   assert.equal(await covered(), false);
   await video.locator('.toggle').click();
@@ -106,10 +108,11 @@ try {
     player.append(button); document.body.append(player);
   });
   await video.locator('#enter-fullscreen').click();
-  await video.waitForFunction(() => !!document.fullscreenElement);
-  assert.equal(await video.locator('.panel').isVisible(), true, 'open chat stays rendered beneath fullscreen');
+  await video.waitForFunction(() => !!document.fullscreenElement && document.querySelector('#xgoose-root').hasAttribute('data-fullscreen'));
+  assert.equal(await video.locator('.panel').isVisible(), false, 'root fullscreen hides open chat without closing it');
   assert.equal(await covered(), true, 'site fullscreen covers the panel');
   await video.evaluate(() => document.exitFullscreen());
+  await video.waitForFunction(() => !document.fullscreenElement && !document.querySelector('#xgoose-root').hasAttribute('data-fullscreen'));
   await video.locator('#site-player').evaluate(el => el.remove());
   assert.equal(await covered(), false);
   assert.equal(await video.locator('.in-text').inputValue(), 'Draft survives fullscreen');

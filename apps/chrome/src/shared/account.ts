@@ -1,3 +1,4 @@
+import {connectionErrorMessage} from "./connectionError";
 import {isSafari} from "./host";
 import {nativeCommand} from "./platformBridge";
 /**
@@ -121,7 +122,13 @@ export async function apiFetch<T = unknown>(
     headers.set("content-type", "application/json");
   }
   if (init.bearer) headers.set("Authorization", `Bearer ${init.bearer}`);
-  const res = await fetch(`${XGOOSE_API_URL}${path}`, { ...init, headers, signal: init.signal ?? AbortSignal.timeout(30_000) });
+  let res: Response;
+  try {
+    res = await fetch(`${XGOOSE_API_URL}${path}`, { ...init, headers, signal: init.signal ?? AbortSignal.timeout(30_000) });
+  } catch (error) {
+    if (init.signal?.aborted || (error as Error)?.name !== "TypeError") throw error;
+    throw new Error(connectionErrorMessage(XGOOSE_API_URL), {cause:error});
+  }
   const ctype = res.headers.get("content-type") ?? "";
   if (res.status === 204) {
     return res.ok
