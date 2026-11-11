@@ -29,7 +29,7 @@ try{
  await mkdir(resolve('artifacts'),{recursive:true});await options.screenshot({path:resolve('artifacts/email-login-ui.png'),animations:'disabled'});
  const before=context.pages().length;
  await options.locator('#loginEmail').fill('new@example.test');await options.getByRole('button',{name:'Send sign-in email',exact:true}).click();
- await options.getByText('Could not send the email request.',{exact:false}).waitFor();
+ await options.getByText('Could not connect to https://api.xgoose.org.',{exact:false}).waitFor();
  await options.getByRole('button',{name:'Send sign-in email',exact:true}).click();
  await options.getByText('Email sent to new@example.test.',{exact:false}).waitFor();assert.equal(context.pages().length,before);
  // A pending login poll must preserve keyboard focus and clickable controls.

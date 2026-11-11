@@ -26,10 +26,10 @@ import { DEFAULT_LAYOUT, type Corner, type Layout } from "./layout";
 
 const CSS = `
 *,*::before,*::after{box-sizing:border-box}
-/* Contain internal z-indices so site overlays and fullscreen cover the UI. */
+/* Keep controls above ordinary site navigation; fullscreen is handled below. */
 :host{
   all:initial;
-  position:relative;z-index:1000;isolation:isolate;
+  position:relative;z-index:2147483647;isolation:isolate;
   font-family:var(--xg-font,'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI Variable','Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif);
   font-size:calc(13px * var(--xg-font-scale,1));line-height:1.5;
   font-feature-settings:'cv11','ss01','ss03',normal;
@@ -37,6 +37,8 @@ const CSS = `
   text-rendering:optimizeLegibility;
   color-scheme:dark light;
 }
+
+:host([data-fullscreen]){visibility:hidden}
 
 /* ── theme tokens ──
  * Aligned with the xgoose.org design system: indigo (252) → violet (280) →
@@ -1568,6 +1570,12 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   wrap.innerHTML = HTML;
   shadow.appendChild(wrap);
   document.body.appendChild(host);
+  // Root-element fullscreen still contains the extension. Hide it explicitly
+  // without closing the conversation or losing the current draft.
+  const syncFullscreen = () => host.toggleAttribute("data-fullscreen", Boolean(document.fullscreenElement || (document as Document & {webkitFullscreenElement?: Element}).webkitFullscreenElement));
+  document.addEventListener("fullscreenchange", syncFullscreen);
+  document.addEventListener("webkitfullscreenchange", syncFullscreen);
+  syncFullscreen();
 
   const $ = <T extends Element = Element>(sel: string): T =>
     shadow.querySelector(sel) as T;
@@ -1848,9 +1856,9 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     const horiz = corner === "br" || corner === "tr" ? "right" : "left";
     const vert = corner === "br" || corner === "bl" ? "bottom" : "top";
     toggleBtn.style[horiz] =
-      `max(${offset.h}px, env(safe-area-inset-${horiz}, 0px))`;
+      `max(8px, min(${offset.h}px, calc(100vw - 56px)), env(safe-area-inset-${horiz}, 0px))`;
     toggleBtn.style[vert] =
-      `max(${offset.v}px, env(safe-area-inset-${vert}, 0px))`;
+      `max(8px, min(${offset.v}px, calc(100vh - 56px)), env(safe-area-inset-${vert}, 0px))`;
   }
 
   // The corner the panel is *actually* anchored to (after the mobile override

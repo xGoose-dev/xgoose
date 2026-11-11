@@ -1,0 +1,48 @@
+import {chromium} from '@playwright/test';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {resolve} from 'node:path';
+import assert from 'node:assert/strict';
+const profile=await mkdtemp(resolve(tmpdir(),'xgoose-service-access-'));
+const dist=resolve('apps/chrome/dist');
+const context=await chromium.launchPersistentContext(profile,{channel:'chromium',headless:true,args:[`--disable-extensions-except=${dist}`,`--load-extension=${dist}`]});
+try{
+ const sw=context.serviceWorkers()[0]??await context.waitForEvent('serviceworker');
+ await sw.evaluate(()=>{const original=fetch;globalThis.fetch=async(input,init)=>{const req=new Request(input,init);return new URL(req.url).hostname==='api.xgoose.org'?Response.json({items:[],data:[{id:'deepseek-flash'}]}):original(input,init);};});
+ const page=await context.newPage();await page.goto(`chrome-extension://${sw.url().split('/')[2]}/options.html`);
+ await page.locator('#saveBtn').waitFor();
+ await page.evaluate(()=>{
+  window.accessFixture={granted:[],requests:[],nextGrant:false};
+  chrome.permissions.contains=async permission=>permission.origins.every(origin=>accessFixture.granted.includes(origin));
+  chrome.permissions.request=async permission=>{accessFixture.requests.push(permission);if(accessFixture.nextGrant)accessFixture.granted.push(...permission.origins);return accessFixture.nextGrant;};
+  window.dispatchEvent(new Event('focus'));
+ });
+ await page.locator('#allowServiceAccess').waitFor();
+ assert.match(await page.locator('#serviceAccessStatus').textContent(),/api.xgoose.org/);
+ await page.locator('#allowServiceAccess').click();
+ await page.locator('#serviceAccessStatus').filter({hasText:'was not granted'}).waitFor();
+ await page.evaluate(()=>{accessFixture.nextGrant=true;});await page.locator('#allowServiceAccess').click();
+ await page.locator('#allowServiceAccess').waitFor({state:'hidden'});
+ assert.deepEqual(await page.evaluate(()=>accessFixture.requests.at(-1).origins),['https://api.xgoose.org/*']);
+ await page.locator('#connectionMode').selectOption('byok');
+ await page.locator('#provider').selectOption('openai-compat');
+ for(const model of ['gpt-6.1-sol','gpt-6.1-terra','gpt-6-sol','gpt-6-luna'])assert.equal(await page.locator(`#model option[value="${model}"]`).count(),1);
+ assert.equal(await page.locator('#provider option[value="xgoose-hosted"]').isDisabled(),true);
+ await page.locator('#apiKey').fill('synthetic-byok-key');
+ await page.locator('#baseUrl').fill('https://proxy.fixture.test:9443/v1');await page.locator('#baseUrl').blur();
+ await page.locator('#allowServiceAccess').waitFor();
+ await page.locator('#serviceAccessStatus').filter({hasText:'proxy.fixture.test:9443'}).waitFor();
+ await page.locator('#allowServiceAccess').click();await page.locator('#allowServiceAccess').waitFor({state:'hidden'});
+ assert.deepEqual(await page.evaluate(()=>accessFixture.requests.at(-1).origins),['https://proxy.fixture.test/*']);
+ await page.locator('#model').selectOption('gpt-6.1-sol');
+ await page.locator('#saveBtn').click();await page.locator('#saveStatus').filter({hasText:'Saved'}).waitFor();
+ const saved=await page.evaluate(async()=>(await chrome.storage.local.get('xgoose.settings'))['xgoose.settings']);
+ assert.equal(saved.provider,'openai-compat');assert.equal(saved.model,'gpt-6.1-sol');assert.equal(saved.apiKeys['openai-compat'],'synthetic-byok-key');
+ await page.locator('#connectionMode').selectOption('hosted');
+ assert.equal(await page.locator('#providerRow').isVisible(),false);
+ await page.locator('#connectionMode').selectOption('byok');
+ assert.equal(await page.locator('#provider').inputValue(),'openai-compat');
+ assert.equal(await page.locator('#apiKey').inputValue(),'synthetic-byok-key');
+ assert.equal(await page.locator('#baseUrl').inputValue(),'https://proxy.fixture.test:9443/v1');
+ console.log(JSON.stringify({passed:true,scopedAccess:true,denialThenGrant:true,byokCatalogue:true,hostedSeparate:true,credentialDraftPreserved:true}));
+}finally{await context.close();await rm(profile,{recursive:true,force:true});}

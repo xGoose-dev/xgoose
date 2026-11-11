@@ -5,6 +5,7 @@ import {setResultBudget} from './resultStore';
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { Agent, type AgentMessage, type StreamFn, type AgentContext } from "@earendil-works/pi-agent-core";
 import { streamSimple as openai } from "@earendil-works/pi-ai/api/openai-completions";
+import { streamSimple as responses } from "@earendil-works/pi-ai/api/openai-responses";
 import { streamSimple as google } from "@earendil-works/pi-ai/api/google-generative-ai";
 import type { AssistantMessage, Model, Api } from "@earendil-works/pi-ai";
 import {AssistantMessageEventStream} from "@earendil-works/pi-ai/utils/event-stream";
@@ -135,6 +136,7 @@ export class PageAgentRuntime {
           },
         });
       }
+      if (m.api === "openai-responses") return responses(m as any, context, requestOptions);
       return openai(m as any, context, {
         ...requestOptions,
         onPayload: async (payload: any, model) => {

@@ -57,3 +57,13 @@ test('Hosted credentials are confined to the fixed HTTPS model endpoint',async()
  for(const url of ['https://other.test/ai/v1/chat/completions','http://api.xgoose.org/ai/v1/chat/completions','https://api.xgoose.org/other','https://user@api.xgoose.org/ai/v1/chat/completions'])await assert.rejects(f.fetch({...req,url}),/cannot be sent/);
  assert.equal(f.calls.length,0);
 });
+
+for(const hosted of [false,true])test(`transport failure identifies the service without replay (Hosted=${hosted})`,async()=>{
+ const f=fixture(async()=>{const error=new Error('offline');error.name='TypeError';throw error;});
+ const response=await f.fetch({...req,...(hosted?{}:{hostedAccountId:undefined,url:'https://provider.test/v1/responses?secret=never-print'})});
+ assert.equal(response.status,502);
+ const data=await response.json();assert.equal(data.error.code,'provider_connection_failed');
+ assert.match(data.error.message,hosted?/https:\/\/api.xgoose.org/:/https:\/\/provider.test/);
+ assert.match(data.error.message,/Site access/);assert.doesNotMatch(data.error.message,/never-print|Bearer/);
+ assert.equal(f.calls.length,1);assert.equal(f.refreshes(),0);
+});
