@@ -27,9 +27,10 @@ function broker(incognito: boolean | ((id:number)=>boolean)=false) {
     sendMessage:async(id:number)=>id===2?{nonce:'document-b'}:liveNonce?{nonce:liveNonce}:null,
     onRemoved:{addListener:(f:any)=>removed=f},onUpdated:{addListener:(f:any)=>updated=f},
   }};
-  const context:any={chrome,peerState,crypto,console};vm.runInNewContext(background.outputFiles[0].text,context);
+  const context:any={chrome,peerState,crypto,console,DOMException,setTimeout,clearTimeout};vm.runInNewContext(background.outputFiles[0].text,context);
   context.module.installPeerEvents();
   return {peerState,setNonce:(v:string|null)=>liveNonce=v,
+    probe:(fn:typeof chrome.tabs.sendMessage)=>{chrome.tabs.sendMessage=fn;},
     updated:async(status:string)=>{updated!(1,{status});await tick();},closed:async()=>{removed!(1);await tick();},
     call:(operation:any,nonce='document-a',agentId='page')=>context.module.peerCommand({nonce,agentId,operation},{...sender,tab:{id:peerState.agents[agentId]?.tabId??1}})};
 }
@@ -81,13 +82,14 @@ test('a late task settlement preserves the unavailable outcome and sends no dupl
   assert.equal(state.tasks.task.status,'unavailable');assert.equal(state.tasks.task.result,'Navigated');assert.equal(state.messages.length,messages);
 });
 
-function page() {
+function page(register?:()=>Promise<unknown>) {
   const calls:any[]=[],statuses:string[]=[],locks:number[]=[];let ignored=false,failStop=false;
+  let busy=false;
   const fresh=agent('fresh');fresh.status='idle';
   const context:any={crypto,console,URL,location:{href:'https://example.test/'},chrome:{runtime:{getURL:(p:string)=>'chrome-extension://extension/'+p,onMessage:{addListener(){}}}},
     send:async(_kind:string,{operation}:any)=>{
       calls.push(operation);
-      if(operation.op==='register')return{agent:{...fresh}};
+      if(operation.op==='register')return register?await register():{agent:{...fresh}};
       if(operation.op==='begin')return{agent:{...fresh,status:'running',runId:operation.runId}};
       if(operation.op==='wait')return{waiting:true,agents:[{...fresh,url:'https://www.flyertalk.com/forum/',title:'FlyerTalk'}]};
       if(operation.op==='stop'&&failStop)throw Error('Background unavailable');
@@ -95,8 +97,8 @@ function page() {
       return{message:null};
     }};
   vm.runInNewContext(content.outputFiles[0].text,context);
-  const peers=new context.module.PagePeers({sessionId:()=>'conversation',model:()=>model,busy:()=>false,lock:()=>locks.push(1),unlock:()=>locks.push(-1),receive:async()=>{},status:(s:string)=>statuses.push(s)});
-  return {peers,calls,statuses,locks,ignore:()=>ignored=true,failStop:()=>failStop=true};
+  const peers=new context.module.PagePeers({sessionId:()=>'conversation',model:()=>model,busy:()=>busy,lock:()=>locks.push(1),unlock:()=>locks.push(-1),receive:async()=>{},status:(s:string)=>statuses.push(s)});
+  return {peers,calls,statuses,locks,setBusy:(value:boolean)=>{busy=value;},ignore:()=>ignored=true,failStop:()=>failStop=true};
 }
 test('starting a new user run refreshes a cached page identity before begin',async()=>{
   const f=page();f.peers.agent=agent('stale');await f.peers.begin('next-run');
@@ -105,6 +107,40 @@ test('starting a new user run refreshes a cached page identity before begin',asy
 test('an idle inbox pull refreshes identity and unlocks even without a peer message',async()=>{
   const f=page();f.peers.agent=agent('stale');f.peers.kick();await tick();
   assert.deepEqual(f.calls.map(c=>c.op),['register','take']);assert.deepEqual(f.locks,[1,-1]);
+});
+test('pending housekeeping does not reserve the user queue or unlock a user turn that started meanwhile',async()=>{
+  let finish!:(value:unknown)=>void;
+  const f=page(()=>new Promise(resolve=>{finish=resolve;}));
+  f.peers.kick();await tick();
+  assert.deepEqual(f.locks,[]);
+  f.setBusy(true);finish({agent:agent()});await tick();
+  assert.deepEqual(f.locks,[]);
+  assert.deepEqual(f.calls.map(c=>c.op),['register']);
+});
+test('a failed housekeeping registration leaves the user queue unlocked and can be retried',async()=>{
+  let attempts=0;
+  const f=page(async()=>{if(++attempts===1)throw Error('Worker timed out');return{agent:agent()};});
+  f.peers.kick();await tick();
+  assert.deepEqual(f.locks,[]);assert.match(f.statuses.at(-1)!,/Worker timed out/);
+  f.peers.kick();await tick();assert.deepEqual(f.locks,[1,-1]);
+});
+
+test('an unresponsive tab releases the shared broker so another tab can run',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const f=broker();f.peerState.agents.other={...agent('other','document-b'),tabId:2};
+  f.probe(async()=>await new Promise(()=>{}));
+  const blocked=assert.rejects(f.call({op:'register',sessionId:'conversation',model}),/Peer tab 1 did not respond/);
+  const other=f.call({op:'begin',runId:'other-run',model},'document-b','other');
+  await tick();t.mock.timers.tick(3000);await blocked;await other;
+  assert.equal(f.peerState.agents.other.runId,'other-run');
+});
+test('a timed-out navigation probe preserves a running peer and does not stall later requests',async t=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  const f=broker();f.probe(async()=>await new Promise(()=>{}));
+  await f.updated('loading');await f.updated('complete');
+  const pending=f.call({op:'list'});
+  t.mock.timers.tick(3000);await pending;
+  assert.equal(f.peerState.agents.page.status,'running');
 });
 test('ignored cleanup clears waiting/run state and conversation reset clears stale identity even on failure',async()=>{
   const f=page();await f.peers.begin('one');f.peers.waiting=true;f.ignore();await f.peers.finish('completed','late');

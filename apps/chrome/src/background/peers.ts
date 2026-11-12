@@ -1,4 +1,5 @@
 import {peerTransaction} from "./sessionDb";
+import {withDeadline} from "@/shared/deadline";
 import type {PeerRequest, PeerReply, PeerAgent} from "@/shared/peers";
 import {claimPeerMessage, invalidatePeer, peer, putPeerMessage, queuePeerTask, settlePeer, waitForPeers} from "../../../../packages/core/src/peerAgents";
 
@@ -13,9 +14,11 @@ const allowedUrl = (url: string) => /^https?:\/\//i.test(url) || url.split(/[?#]
 async function sendPeer(tabId: number, message: {kind: string; payload?: unknown}) {
   const tab = await chrome.tabs.get(tabId);
   // tabs.sendMessage reaches content scripts, not extension-owned HTML pages.
-  return tab.url?.split(/[?#]/)[0] === agentUrl()
+  const response = tab.url?.split(/[?#]/)[0] === agentUrl()
     ? chrome.runtime.sendMessage({...message, peerTabId: tabId})
     : chrome.tabs.sendMessage(tabId, message, {frameId: 0});
+  // A frozen tab must not hold the shared broker queue for every other page.
+  return withDeadline(response, 3000, `Peer tab ${tabId} did not respond to ${message.kind}`);
 }
 async function senderTab(request: PeerRequest, sender: chrome.runtime.MessageSender) {
   if (sender.id !== chrome.runtime.id || (sender.frameId ?? 0) !== 0) throw new Error("Peer operations require an extension's top-level page");
@@ -156,7 +159,13 @@ export function installPeerEvents(): void {
       // A loading event can outlive registration, or occur without replacing
       // a SPA document. Validate the live nonce rather than invalidating the
       // newly registered/current page solely because of a tab status change.
-      const identity = await sendPeer(tabId, {kind: "cs:peer_identity"}).catch(() => null);
+      let identity;
+      try {identity = await sendPeer(tabId, {kind: "cs:peer_identity"});}
+      catch (error) {
+        // A timeout is inconclusive: do not cancel a live task on a sleeping tab.
+        if (error instanceof DOMException && error.name === "TimeoutError") {console.warn("[xgoose:peer]", error); return;}
+        identity = null;
+      }
       await peerTransaction(state => {for (const agent of Object.values(state.agents)) if (agent.tabId === tabId && agent.documentKey && agent.documentKey !== identity?.nonce) invalidatePeer(state, agent.id, "The peer page navigated or reloaded");});
       await notifyPending();
     }).catch(console.warn);

@@ -14,6 +14,7 @@
 
 import {isSafari} from "./host";
 import {prepareHost} from "./platformBridge";
+import {withDeadline} from "./deadline";
 import type { Account } from "./account";
 import type { LoginState } from "@/background/account";
 import type { Provider, RegistrySkill, UserSkill } from "./types";
@@ -306,7 +307,16 @@ export async function send<K extends MessageKey>(
   payload: MessageMap[K]["request"],
 ): Promise<MessageMap[K]["response"]> {
   const envelope = { kind, payload, ...(isSafari && documentNonce ? {documentNonce} : {}) };
-  const response = await chrome.runtime.sendMessage(envelope);
+  const request = chrome.runtime.sendMessage(envelope);
+  // These control/storage calls must settle before a chat can start or finish.
+  // Leave long-running tools and provider streams on their own deadlines.
+  const peerOperation = kind === "sw:peer" ? (payload as MessageMap["sw:peer"]["request"]).operation.op : undefined;
+  // Spawning a tab or delivering a task can succeed after the caller stops
+  // waiting. Do not turn those uncertain external effects into retryable errors.
+  const bounded = (peerOperation !== undefined && peerOperation !== "spawn" && peerOperation !== "send") ||
+    kind === "sw:session" || kind === "sw:transcript_event" || kind === "sw:consent_get";
+  const response = await (bounded ? withDeadline(request, 25000,
+    `Extension request timed out (${kind}). Reload xgoose in your browser's extension settings, then refresh this page.`) : request);
   if (response?.__error) throw new Error(response.__error);
   return response as MessageMap[K]["response"];
 }

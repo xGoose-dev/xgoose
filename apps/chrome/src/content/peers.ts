@@ -79,16 +79,20 @@ export class PagePeers {
   private async pump() {
     if (this.pumping || this.host.busy() || this.stopped) return;
     this.pumping = true;
-    this.host.lock();
+    let locked = false;
     try {
       await this.register();
+      // Registration is background housekeeping, not an active chat. A user
+      // may have started a turn while it was pending; never unlock that turn.
+      if (this.host.busy() || this.stopped) return;
+      this.host.lock(); locked = true;
       while (!this.stopped) {
         const result = await this.rpc({op: "take"});
         if (!result.message) break;
         this.agent = result.agent;
         await this.host.receive(result.message, this.agent!);
       }
-    } finally {this.pumping = false; this.host.unlock();}
+    } finally {this.pumping = false; if (locked) this.host.unlock();}
   }
   start() {
     this.kick();
