@@ -266,7 +266,10 @@ export class PageAgentRuntime {
           execute: async (id: string, args: unknown, signal?: AbortSignal) => {
             signal?.throwIfAborted();
             const parsed = def.inputSchema.parse(args);
-            const output = await scheduleTool(!!def.isConcurrencySafe?.(parsed), async () => def.execute(parsed, { abortSignal: signal, toolCallId: id }));
+            const output = await scheduleTool(!!def.isConcurrencySafe?.(parsed), async () => {
+              signal?.throwIfAborted();
+              return def.execute(parsed, { abortSignal: signal, toolCallId: id });
+            });
             signal?.throwIfAborted();
             const parts = def.toModelOutput?.(output, parsed);
             const content = parts?.length ? parts.map(p => p.type === "text" ? p : { type: "image" as const, data: p.data, mimeType: p.mediaType }) : [{ type: "text" as const, text: typeof output === "string" ? output : JSON.stringify(output ?? null) }];

@@ -76,6 +76,9 @@ try {
  page.once('dialog',d=>d.accept());await uninstall.click();await uninstall.waitFor({state:'hidden'});
  assert.equal(await send('sw:get_user_skill',{name:'amex-chat'}),null);
  const restored=(await send('sw:list_skills')).find(skill=>skill.name==='amex-chat');assert.equal(restored.version,JSON.parse(await readFile(resolve(dist,'skills/registry.json'),'utf8')).find(skill=>skill.name==='amex-chat').version);assert.equal(restored.userAuthored,false);
- await mkdir('artifacts/skill-updates',{recursive:true});await page.screenshot({path:'artifacts/skill-updates/uninstalled-restored-builtin.png',fullPage:true});
+ // The expanded mobile catalogue produces a very tall diagnostic image.
+ // Keep the diagnostic bounded; the restore/identity assertions above cover correctness.
+ await page.locator('#installedSkillSummary').scrollIntoViewIfNeeded();
+ await mkdir('artifacts/skill-updates',{recursive:true});await page.screenshot({path:'artifacts/skill-updates/uninstalled-restored-builtin.png'});
  console.log(JSON.stringify({passed:true,legacyAmexLink:true,uninstallCancel:true,uninstallRestoresBuiltin:true,detect:true,badge:true,decline:true,update:true,preserveDisabled:true,localEditWarning:true,digestProtection:true,offline:true,mobile:true}));
 } finally {await context.close();await rm(profile,{recursive:true,force:true});}

@@ -194,9 +194,6 @@ export async function deleteUserSkill(name: string): Promise<void> {
   });
 }
 
-const MAX_MEMORY_LINES = 20;
-const MAX_MEMORY_BYTES = 2048;
-
 export function getMemoryForOrigin(origin: string): string {
   return mirror.memory.get(origin) ?? "";
 }
@@ -204,27 +201,10 @@ export async function appendMemoryForOrigin(
   origin: string,
   note: string,
 ): Promise<string> {
-  const existing = mirror.memory.get(origin) ?? "";
-  const cleaned = note.trim().replace(/\s+/g, " ");
-  if (!cleaned) return existing;
-  const ts = new Date().toISOString().split("T")[0];
-  const next = (existing ? existing + "\n" : "") + `- ${ts}: ${cleaned}`;
-  const trimmed = trimMemory(next);
-  mirror.memory.set(origin, trimmed);
-  await chrome.storage.local.set({ [MEMORY_PREFIX + origin]: trimmed });
-  return trimmed;
+  return send("sw:memory", {op:"append", origin, note});
 }
 export async function clearMemoryForOrigin(origin: string): Promise<void> {
-  mirror.memory.delete(origin);
-  await chrome.storage.local.remove(MEMORY_PREFIX + origin);
-}
-function trimMemory(blob: string): string {
-  const lines = blob.split("\n").filter(Boolean);
-  let kept = lines.slice(-MAX_MEMORY_LINES);
-  while (kept.join("\n").length > MAX_MEMORY_BYTES && kept.length > 1) {
-    kept = kept.slice(1);
-  }
-  return kept.join("\n");
+  await send("sw:memory", {op:"clear", origin});
 }
 
 export function getLayout(): Layout {

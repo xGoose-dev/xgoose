@@ -1247,14 +1247,12 @@ async function bootstrap(): Promise<void> {
       if (initial && initial.trim()) {
         await runAgentTurn(initial, { hidden: false,images });
       }
-      // Drain anything the user queued while we were running. Joining
-      // multiple queued items with a blank line keeps them as a single
-      // follow-up turn so the agent can reason about them together
-      // (most users queue "and also check X" / "do Y next" style adds).
+      // Keep waiting prompts in the shared queue so Stop and conversation
+      // switches can discard every item that has not started yet.
       while (queuedMessages.length > 0) {
-        const batch = queuedMessages.splice(0, queuedMessages.length);
-        panel.setQueuedMessages([]);
-        for(const item of batch) await runAgentTurn(item.text, { hidden: false,images:item.images });
+        const item = queuedMessages.shift()!;
+        panel.setQueuedMessages(queuedMessages.map(queueLabel));
+        await runAgentTurn(item.text, { hidden: false,images:item.images });
       }
     } finally {
       agentLoopActive = false;

@@ -145,14 +145,24 @@ function parseTableRow(line: string): string[] {
 }
 
 function inline(text: string): string {
+  let html = "", offset = 0;
+  for (const match of text.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)) {
+    html += inlineText(text.slice(offset, match.index));
+    const label = inlineText(match[1]!);
+    const url = match[2]!;
+    let allowed = false;
+    try { allowed = ["http:", "https:", "mailto:"].includes(new URL(url, "https://xgoose.org").protocol); } catch {}
+    html += allowed ? `<a href="${escAttr(url)}" target="_blank" rel="noopener">${label}</a>` : label;
+    offset = match.index! + match[0].length;
+  }
+  return html + inlineText(text.slice(offset));
+}
+
+function inlineText(text: string): string {
   let s = esc(text);
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
   s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/\*(.+?)\*/g, "<em>$1</em>");
-  s = s.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener">$1</a>',
-  );
   return s;
 }
 

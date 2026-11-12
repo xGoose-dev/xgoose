@@ -32,3 +32,16 @@ test("code fence metadata cannot break out of the language class attribute", () 
   assert(!html.includes("<img"));
   assert.equal(renderMarkdown("```typescript\nconst x = 1;\n```"), '<pre><code class="lang-typescript">const x = 1;</code></pre>');
 });
+
+test("links escape attributes, retain query strings and reject executable schemes", () => {
+  assert.equal(renderMarkdown('[source](https://example.test/" onmouseover="globalThis.pwned=1)'),
+    '<p><a href="https://example.test/&quot; onmouseover=&quot;globalThis.pwned=1" target="_blank" rel="noopener">source</a></p>');
+  assert.equal(renderMarkdown('[**source**](https://example.test/?a=1&b=2)'),
+    '<p><a href="https://example.test/?a=1&amp;b=2" target="_blank" rel="noopener"><strong>source</strong></a></p>');
+  for (const url of ['javascript:globalThis.pwned=1','JaVaScRiPt:globalThis.pwned=1','java\tscript:globalThis.pwned=1','data:text/html,unsafe','vbscript:unsafe']) {
+    assert.equal(renderMarkdown(`[source](${url})`), '<p>source</p>');
+  }
+  for (const url of ['/topic/1','#reply-2','mailto:hello@example.test']) {
+    assert.ok(renderMarkdown(`[source](${url})`).includes(`href="${url}"`));
+  }
+});

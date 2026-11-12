@@ -16,6 +16,7 @@ import {isSafari} from "./host";
 import {prepareHost} from "./platformBridge";
 import {withDeadline} from "./deadline";
 import type { Account } from "./account";
+import type {MemoryCommand} from "@/background/memory";
 import type { LoginState } from "@/background/account";
 import type { Provider, RegistrySkill, UserSkill } from "./types";
 
@@ -161,6 +162,7 @@ export type MessageMap = {
   // ── xgoose cloud account (email confirmation login) ─────────────────────────
   /** Returns the currently-persisted account, or null when signed out. */
   "sw:account_get": { request: void; response: Account | null };
+  "sw:memory": {request: MemoryCommand; response: string};
   /**
    * Returns the current login flow status. `phase` mirrors RFC-8628
    * vocabulary plus an `idle` sentinel for "no flow in progress". Use
