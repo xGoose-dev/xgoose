@@ -9,6 +9,13 @@ let opening: Promise<IDBDatabase> | undefined;
 function open(): Promise<IDBDatabase> {
   return opening ??= new Promise((resolve, reject) => {
     const request = indexedDB.open("xgoose-sessions", 1);
+    let abandoned = false;
+    const fail = (error: unknown) => {
+      if (abandoned) return;
+      abandoned = true; clearTimeout(timer); opening = undefined; reject(error);
+    };
+    const timer = setTimeout(() => fail(new Error("Local session storage did not open. Reload xgoose, then refresh this page.")), 8000);
+    request.onblocked = () => fail(new Error("Local session storage is blocked. Close other xgoose extension pages, then retry."));
     request.onupgradeneeded = () => {
       const db = request.result;
       db.createObjectStore("sessions", { keyPath: "id" });
@@ -16,8 +23,14 @@ function open(): Promise<IDBDatabase> {
       db.createObjectStore("outbox", { keyPath: "id" });
       db.createObjectStore("meta");
     };
-    request.onerror = () => { opening = undefined; reject(request.error); };
-    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => {if (!abandoned) fail(request.error);};
+    request.onsuccess = () => {
+      clearTimeout(timer);
+      const db = request.result;
+      if (abandoned) {db.close(); return;}
+      db.onversionchange = () => {opening = undefined; db.close();};
+      resolve(db);
+    };
   });
 }
 async function transaction<T>(stores: string[], mode: IDBTransactionMode, fn: (tx: IDBTransaction, result: (value: T) => void) => void): Promise<T> {
@@ -25,9 +38,15 @@ async function transaction<T>(stores: string[], mode: IDBTransactionMode, fn: (t
   return new Promise((resolve, reject) => {
     let value: T;
     const tx = db.transaction(stores, mode);
-    tx.oncomplete = () => resolve(value);
-    tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("Session storage interrupted"));
-    fn(tx, next => { value = next; });
+    const timer = setTimeout(() => {
+      try {tx.abort();}
+      catch (error) {reject(error); return;}
+      reject(new Error("Local session storage timed out. Reload xgoose, then refresh this page."));
+    }, 8000);
+    tx.oncomplete = () => {clearTimeout(timer); resolve(value);};
+    tx.onerror = tx.onabort = () => {clearTimeout(timer); reject(tx.error ?? new Error("Session storage interrupted"));};
+    try {fn(tx, next => { value = next; });}
+    catch (error) {clearTimeout(timer); tx.abort(); reject(error);}
   });
 }
 

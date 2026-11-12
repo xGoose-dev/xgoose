@@ -34,15 +34,24 @@ try{
  await page.locator('#serviceAccessStatus').filter({hasText:'proxy.fixture.test:9443'}).waitFor();
  await page.locator('#allowServiceAccess').click();await page.locator('#allowServiceAccess').waitFor({state:'hidden'});
  assert.deepEqual(await page.evaluate(()=>accessFixture.requests.at(-1).origins),['https://proxy.fixture.test/*']);
+ // A provider change must check its own draft, after replacing the old URL.
+ await page.locator('#provider').selectOption('gemini');
+ await page.locator('#serviceAccessStatus').filter({hasText:'generativelanguage.googleapis.com'}).waitFor();
+ await page.locator('#allowServiceAccess').waitFor();
+ await page.locator('#provider').selectOption('openai-compat');
+ await page.locator('#serviceAccessStatus').filter({hasText:'proxy.fixture.test:9443'}).waitFor();
+ await page.locator('#allowServiceAccess').waitFor({state:'hidden'});
  await page.locator('#model').selectOption('gpt-6.1-sol');
  await page.locator('#saveBtn').click();await page.locator('#saveStatus').filter({hasText:'Saved'}).waitFor();
  const saved=await page.evaluate(async()=>(await chrome.storage.local.get('xgoose.settings'))['xgoose.settings']);
  assert.equal(saved.provider,'openai-compat');assert.equal(saved.model,'gpt-6.1-sol');assert.equal(saved.apiKeys['openai-compat'],'synthetic-byok-key');
  await page.locator('#connectionMode').selectOption('hosted');
  assert.equal(await page.locator('#providerRow').isVisible(),false);
+ await page.locator('#serviceAccessStatus').filter({hasText:'api.xgoose.org'}).waitFor();
  await page.locator('#connectionMode').selectOption('byok');
  assert.equal(await page.locator('#provider').inputValue(),'openai-compat');
  assert.equal(await page.locator('#apiKey').inputValue(),'synthetic-byok-key');
  assert.equal(await page.locator('#baseUrl').inputValue(),'https://proxy.fixture.test:9443/v1');
+ await page.locator('#serviceAccessStatus').filter({hasText:'proxy.fixture.test:9443'}).waitFor();
  console.log(JSON.stringify({passed:true,scopedAccess:true,denialThenGrant:true,byokCatalogue:true,hostedSeparate:true,credentialDraftPreserved:true}));
 }finally{await context.close();await rm(profile,{recursive:true,force:true});}

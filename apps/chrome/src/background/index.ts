@@ -3,6 +3,7 @@ import {notificationStatus,emitNotification,installNotificationEvents} from "./n
 import {readImages,prepareImageParts} from './images';
 import {capturePage} from './pageScreenshot';
 import {peerCommand, installPeerEvents} from './peers';
+import {memoryCommand} from './memory';
 import {listHostedModels} from "./hostedModels";
 import {providerFetch} from './providerFetch';
 import {isSafari} from "@/shared/host";
@@ -84,6 +85,7 @@ registerRouter({
   "sw:notification_status": notificationStatus,
   "sw:notification_emit": emitNotification,
   "sw:peer": peerCommand,
+  "sw:memory": memoryCommand,
   "sw:public_read": async (payload,sender)=>{
     if(!isSafari)throw new Error("Public native transport is unavailable");
     await assertLiveDocument(sender);

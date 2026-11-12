@@ -1,0 +1,1 @@
+Fix chats that remain queued when a page or local storage stops responding. Improve Stop and New behavior, email sign-in recovery, cross-tab memory, AI service access status and Markdown link rendering. Completed model requests are not replayed.

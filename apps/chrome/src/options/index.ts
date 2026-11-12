@@ -272,7 +272,6 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
   updateProviderDependent(settings.provider);
   const refreshServiceAccess=mountServiceAccess(()=>({provider:providerEl.value as Provider,baseUrl:baseUrlEl.value}));
   baseUrlEl.addEventListener("change", refreshServiceAccess);
-  providerEl.addEventListener("change", refreshServiceAccess);
 
   setAnalyticsActive(true);
   track("options_page_opened", { provider: settings.provider });
@@ -328,6 +327,7 @@ function $<T extends HTMLElement = HTMLElement>(sel: string): T {
     const nextThinking = carryEntry?.thinking ?? false;
     populateModelDropdown(p, nextModel, nextThinking);
     updateProviderDependent(p);
+    refreshServiceAccess();
   });
 
   /** Read the model/thinking currently chosen in the dropdown or custom

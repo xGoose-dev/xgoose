@@ -1,0 +1,1 @@
+Improved chat recovery when a page or local storage stops responding. Stop and New now reliably clear pending prompts. Fixed email sign-in races, cross-tab memory updates, AI service access status and Markdown links.

@@ -7,6 +7,7 @@ import {receivePeerResult} from "../packages/core/src/peerAgents.ts";
 import {setResultBudget,storedResult} from "../packages/core/src/resultStore.ts";
 import { createAgent } from "../packages/core/src/createAgent.ts";
 import { defineTool } from "../packages/core/src/tools/buildTool.ts";
+import {createRememberTool,createForgetTool} from '../packages/core/src/tools/memory.ts';
 const settings={provider:"openai-compat" as const,model:"luna",baseUrl:"https://example.test/ai",apiKey:"synthetic",thinking:false};
 function answer(content:any[],reason:"stop"|"toolUse"|"length"="stop"):AssistantMessage {return {role:"assistant",content,api:"openai-completions",provider:"xgoose",model:"luna",timestamp:Date.now(),stopReason:reason,usage:{input:10,output:5,cacheRead:2,cacheWrite:0,totalTokens:17,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}};}
 function stream(message:AssistantMessage){const s=new AssistantMessageEventStream();s.push({type:"start",partial:message});s.push({type:"done",reason:message.stopReason as "stop",message});return s;}
@@ -36,6 +37,32 @@ test("maxSteps caps an otherwise unbounded tool loop",async()=>{
 test("pre-aborted turns cannot call the provider",async()=>{
   const bundle=createAgent({settings,fetchImpl:fetch,tools:[],streamFn:()=>{throw new Error("must not run");}});
   await assert.rejects(bundle.agent.stream({messages:[{role:"user",content:"hi"}],abortSignal:AbortSignal.abort()}));
+});
+
+test('Stop prevents queued tools from clearing memory after an earlier tool finishes',async()=>{
+  let entered!:()=>void, release!:()=>void, writes=0, requests=0;
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  const ac=new AbortController();
+  const deps={origin:{getCurrentOrigin:()=> 'https://fixture.test'},memory:{
+    getMemoryForOrigin:async()=> 'Saved preference',
+    appendMemoryForOrigin:async()=>{entered();await gate;return 'Saved preference';},
+    clearMemoryForOrigin:async()=>{writes++;},
+  }};
+  const bundle=createAgent({settings,fetchImpl:fetch,tools:[createRememberTool(deps),createForgetTool(deps)],streamFn:(_m,_ctx,options)=>{
+    if(++requests===1)return stream(answer([
+      {type:'toolCall',id:'remember-first',name:'remember',arguments:{note:'New note'}},
+      {type:'toolCall',id:'forget-second',name:'forget',arguments:{}},
+    ],'toolUse'));
+    assert.ok(options?.signal?.aborted);
+    const events=new AssistantMessageEventStream();
+    events.push({type:'error',reason:'aborted',error:{...answer([]),stopReason:'aborted',errorMessage:'Stopped'}});
+    return events;
+  }});
+  const run=await bundle.agent.stream({messages:[{role:'user',content:'Update memory'}],abortSignal:ac.signal});
+  const completed=(async()=>{for await(const _ of run.fullStream){}})();
+  await started;await new Promise(resolve=>setImmediate(resolve));ac.abort();release();await completed;
+  assert.equal(writes,0,'a queued forget must never execute after Stop');
 });
 test("tool failures retain their text in live events and persisted history",async()=>{
   let requests=0;

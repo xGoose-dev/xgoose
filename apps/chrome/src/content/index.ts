@@ -724,32 +724,6 @@ async function bootstrap(): Promise<void> {
     } else {
       conversationMessages.push(visibleUserMessage);
     }
-    // For brand-new conversations we MUST flush the "last conversation"
-    // pointer + the initial save to storage BEFORE any tool can navigate
-    // the tab — otherwise the new page's bootstrap can't restore the
-    // conversation that the resume marker points at (resume.convoId !==
-    // currentConvoId on reload → resume silently skipped). For continuing
-    // conversations these are already in storage from prior turns, so we
-    // fall back to the fast fire-and-forget path.
-    if (isFreshConversation && currentConvoId) {
-      try {
-        await setLastConvoIdGlobal(currentConvoId);
-        await saveConversation({
-          id: currentConvoId,
-          origin: origin ?? "",
-          title: currentConvoTitle || prompt.slice(0, 80) || "Untitled",
-          messages: conversationMessages,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          usage: conversationUsage,
-        });
-      } catch (e) {
-        console.warn("[xgoose] initial conversation persist failed", e);
-      }
-    } else {
-      persistCurrentConvo();
-    }
-
     if ((!opts.peerMessage || opts.peerMessage.kind === "task") && (!opts.hidden || opts.peerMessage)) panel.addUserMessage(prompt,images);
     panel.setSending(true);
     panel.setStatus("");
@@ -809,7 +783,17 @@ async function bootstrap(): Promise<void> {
     };
 
     try {
+      // Show the submitted message and Stop control before waiting on storage.
+      // Flush the first snapshot before any tool can navigate away from it.
+      if (isFreshConversation) {
+        await setLastConvoIdGlobal(currentConvoId!);
+        await persistCurrentConvo();
+      } else {
+        void persistCurrentConvo().catch(error => console.warn("[xgoose] conversation save failed", error));
+      }
+      abortController.signal.throwIfAborted();
       await peers.begin(journalRunId);
+      abortController.signal.throwIfAborted();
       // Refresh consent before queuing the first message of a Hosted session.
       if (journalProvider === "hosted") await send("sw:consent_get", undefined);
       if (opts.peerMessage) await record({type:"peer-receive",kind:opts.peerMessage.kind,content:opts.peerMessage.text,
@@ -1171,29 +1155,25 @@ async function bootstrap(): Promise<void> {
       }
     } finally {
       if (abortController?.signal.aborted) peerOutcome = "cancelled";
-      await record({type:abortController?.signal.aborted?"run-interrupted":"run-end",
-        outcome:turnErrorDisplay ? "failed" : peers.waiting && peerOutcome === "completed" ? "waiting" : peerOutcome,
-        durationMs:Date.now()-turnStarted,sourceTabId:peers.agent?.tabId});
-      assistantBubble?.finalize();
-
-      abortController = null;
-      running = false;
-      // Always clear the in-flight slot — any data we wanted to keep has
-      // already been snapshotted into `conversationMessages` by one of the
-      // branches above (or by the eager navigation path inside `tool-result`).
-      inFlight = null;
-
-      // Persist conversation. If we navigated, the eager branch above
-      // already did this — but a second write is harmless (idempotent
-      // overwrite) and covers the non-nav success / abort / error paths.
-      await persistCurrentConvo().catch(() => {});
-      await peers.finish(turnErrorDisplay ? "failed" : peerOutcome,
-        turnErrorDisplay ?? peerResult).catch(error => panel.setStatus(`Peer: ${error.message}`));
-
-      panel.setSending(peers.waiting);
-      panel.setLoadingStatus(peers.waiting ? peers.waitingLabel : null);
-      resolveRunSettled?.();
-      resolveRunSettled = undefined;
+      try {
+        await Promise.all([
+          record({type:abortController?.signal.aborted?"run-interrupted":"run-end",
+            outcome:turnErrorDisplay ? "failed" : peers.waiting && peerOutcome === "completed" ? "waiting" : peerOutcome,
+            durationMs:Date.now()-turnStarted,sourceTabId:peers.agent?.tabId}),
+          persistCurrentConvo().catch(error => console.warn("[xgoose] final conversation save failed", error)),
+          peers.finish(turnErrorDisplay ? "failed" : peerOutcome,
+            turnErrorDisplay ?? peerResult).catch(error => panel.setStatus(`Peer: ${error.message}`)),
+        ]);
+      } finally {
+        assistantBubble?.finalize();
+        abortController = null;
+        running = false;
+        inFlight = null;
+        panel.setSending(peers.waiting);
+        panel.setLoadingStatus(peers.waiting ? peers.waitingLabel : null);
+        resolveRunSettled?.();
+        resolveRunSettled = undefined;
+      }
     }
   }
 
@@ -1267,14 +1247,12 @@ async function bootstrap(): Promise<void> {
       if (initial && initial.trim()) {
         await runAgentTurn(initial, { hidden: false,images });
       }
-      // Drain anything the user queued while we were running. Joining
-      // multiple queued items with a blank line keeps them as a single
-      // follow-up turn so the agent can reason about them together
-      // (most users queue "and also check X" / "do Y next" style adds).
+      // Keep waiting prompts in the shared queue so Stop and conversation
+      // switches can discard every item that has not started yet.
       while (queuedMessages.length > 0) {
-        const batch = queuedMessages.splice(0, queuedMessages.length);
-        panel.setQueuedMessages([]);
-        for(const item of batch) await runAgentTurn(item.text, { hidden: false,images:item.images });
+        const item = queuedMessages.shift()!;
+        panel.setQueuedMessages(queuedMessages.map(queueLabel));
+        await runAgentTurn(item.text, { hidden: false,images:item.images });
       }
     } finally {
       agentLoopActive = false;
@@ -1283,7 +1261,10 @@ async function bootstrap(): Promise<void> {
   }
 
   panel.onSend((prompt,images) => {
-    void processQueue(prompt,images);
+    void processQueue(prompt,images).catch(error => {
+      console.error("[xgoose] prompt queue failed", error);
+      panel.addErrorMessage(`Error: ${describeTurnError(error)}`);
+    });
   });
 
   panel.onSkillActionRun(async (action) => {

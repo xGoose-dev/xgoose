@@ -54,6 +54,9 @@ interface DevicePending {
 let pending: DevicePending | null = null;
 let lastPhase: LoginPhase = "idle";
 let lastError: string | null = null;
+let loginGeneration = 0;
+let pendingWrites: Promise<unknown> = Promise.resolve();
+let requesting: {email?:string; result:Promise<LoginState>} | undefined;
 
 const CLIENT_ID = "xgoose-extension-chrome";
 
@@ -94,19 +97,33 @@ function buildVerificationUri(userCode: string): string {
  */
 export async function startLogin(email?:string): Promise<LoginState> {
   await restored;
+  const normalized = email?.trim().toLowerCase();
+  if (pending && (!normalized || pending.email === normalized)) return getLoginState();
+  if (requesting && requesting.email === normalized) return requesting.result;
+  const request = {email:normalized, result:requestLogin(normalized)};
+  requesting = request;
+  try {return await request.result;}
+  finally {if (requesting === request) requesting = undefined;}
+}
+
+async function requestLogin(email?:string): Promise<LoginState> {
+  const cleared = cancelPending(), generation = loginGeneration;
+  lastPhase = "idle"; lastError = null;
+  await cleared;
+  if (generation !== loginGeneration) return getLoginState();
   if(email){
-    const normalized=email.trim().toLowerCase();
-    if(pending?.email===normalized)return getLoginState();
-    cancelPending();
     recordEvent("email_login_requested",{method:"extension_email"});
-    const response=await apiFetch<{poll_token:string;expires_in:number;interval:number}>("/auth/extension/request",{method:"POST",body:JSON.stringify({email:normalized})})
+    const response=await apiFetch<{poll_token:string;expires_in:number;interval:number}>("/auth/extension/request",{method:"POST",body:JSON.stringify({email})})
       .catch(error => ({ok:false as const,status:0,error:error instanceof Error ? error.message : String(error)}));
+    if (generation !== loginGeneration) return getLoginState();
     if(!response.ok){recordEvent("email_login_failed",{reason:failureReason(response.error),http_status:response.status});lastPhase="error";lastError=response.error;return getLoginState();}
     recordEvent("email_login_sent");
-    pending={mode:"email",email:normalized,deviceCode:response.data.poll_token,userCode:"",clientId:CLIENT_ID,expiresAt:Date.now()+response.data.expires_in*1000,intervalMs:Math.max(5000,response.data.interval*1000),pollTimer:null};
-    await chrome.storage.local.set({[PENDING_KEY]:pending});lastPhase="pending";lastError=null;schedulePoll();return getLoginState();
+    pending={mode:"email",email,deviceCode:response.data.poll_token,userCode:"",clientId:CLIENT_ID,expiresAt:Date.now()+response.data.expires_in*1000,intervalMs:Math.max(5000,response.data.interval*1000),pollTimer:null};
+    lastPhase="pending";lastError=null;
+    await persistPending(pending);
+    if (generation === loginGeneration) schedulePoll();
+    return getLoginState();
   }
-  if (pending) return getLoginState();
 
   const res = await apiFetch<{
     device_code: string;
@@ -119,6 +136,7 @@ export async function startLogin(email?:string): Promise<LoginState> {
     method: "POST",
     body: JSON.stringify({ client_id: CLIENT_ID, scope: "plugin" }),
   });
+  if (generation !== loginGeneration) return getLoginState();
   if (!res.ok) {
     lastPhase = "error";
     lastError = res.error;
@@ -149,7 +167,7 @@ export async function startLogin(email?:string): Promise<LoginState> {
 }
 
 export async function cancelLogin():Promise<LoginState>{
- await restored;if(pending)recordEvent("email_login_cancelled");cancelPending();lastPhase="idle";lastError=null;return getLoginState();
+ await restored;if(pending)recordEvent("email_login_cancelled");const cleared=cancelPending();lastPhase="idle";lastError=null;await cleared;return getLoginState();
 }
 
 /** Immediate one-shot poll. Returns the current state after the call. */
@@ -161,10 +179,12 @@ export async function pollOnce(): Promise<LoginState> {
 }
 
 export async function logout(): Promise<void> {
+  await restored;
+  const cleared = cancelPending(); lastPhase="idle";lastError=null;
+  await cleared;
   if(isSafari){await nativeCommand("logout");return;}
   const account=await getAccount();
   await accountSession.replace(null);
-  cancelPending();lastPhase="idle";lastError=null;
   if(account)await apiFetch("/auth/logout",{method:"POST",body:JSON.stringify({refresh_token:account.refreshToken}),bearer:account.accessToken}).catch(()=>undefined);
 }
 
@@ -193,17 +213,26 @@ function schedulePoll(): void {
   pending.pollTimer = setTimeout(() => void runPoll(), pending.intervalMs);
 }
 
-function cancelPending(): void {
+function persistPending(flow: DevicePending | null): Promise<void> {
+  const snapshot = flow ? {...flow, pollTimer:null} : null;
+  const write = () => snapshot ? chrome.storage.local.set({[PENDING_KEY]:snapshot}) : chrome.storage.local.remove(PENDING_KEY);
+  const job = pendingWrites.then(write, write);
+  pendingWrites = job;
+  return job;
+}
+function cancelPending(): Promise<void> {
+  loginGeneration++; requesting = undefined;
   if (pending?.pollTimer) clearTimeout(pending.pollTimer);
   pending = null;
-  void chrome.storage.local.remove(PENDING_KEY);
+  return persistPending(null);
 }
 
 let polling=false;
 async function runPoll(): Promise<void> {
   if(polling)return;polling=true;
+  const flow = pending;
   try { await pollCurrent(); }
-  catch { if (pending) { lastError="Connection interrupted; waiting to retry confirmation."; schedulePoll(); } }
+  catch { if (pending && pending === flow) { lastError="Connection interrupted; waiting to retry confirmation."; schedulePoll(); } }
   finally { polling=false; }
 }
 async function pollCurrent():Promise<void>{
@@ -211,9 +240,9 @@ async function pollCurrent():Promise<void>{
   const flow=pending;
   if (Date.now() > pending.expiresAt) {
     recordEvent("email_login_expired",{reason:"confirmation_timeout"});
-    cancelPending();
     lastPhase = "expired";
     lastError = "device code expired — try signing in again";
+    await cancelPending();
     return;
   }
 
@@ -241,7 +270,7 @@ async function pollCurrent():Promise<void>{
     if (!me.ok) {
       lastPhase = "error";
       lastError = `signed in but /me failed: ${me.error}`;
-      cancelPending();
+      await cancelPending();
       return;
     }
     const account: Account = {
@@ -252,10 +281,11 @@ async function pollCurrent():Promise<void>{
       lastSeenAt: Date.now(),
     };
     await accountSession.replace(account);
+    if (pending !== flow) return;
     recordEvent("email_login_succeeded",{method:flow.mode==="email"?"extension_email":"device",duration_ms:Math.max(0,Date.now()-(flow.expiresAt-600000))});
-    cancelPending();
     lastPhase = "idle";
     lastError = null;
+    await cancelPending();
     return;
   }
 
@@ -272,15 +302,15 @@ async function pollCurrent():Promise<void>{
   }
   // expired / denied / fatal
   if (res.status === 400 && /expired/i.test(res.error)) {
-    cancelPending();
     lastPhase = "expired";
     lastError = res.error;
+    await cancelPending();
     return;
   }
   if (res.status === 401 || res.status === 403) {
-    cancelPending();
     lastPhase = "denied";
     lastError = res.error;
+    await cancelPending();
     return;
   }
   // Transient — try one more time then bail.
