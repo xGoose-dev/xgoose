@@ -1,4 +1,4 @@
-import {chromium} from '@playwright/test';
+import {chromium,expect} from '@playwright/test';
 import {mkdtemp, rm, mkdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {resolve} from 'node:path';
@@ -51,7 +51,7 @@ try {
   await video.locator('#xgoose-root').waitFor({state: 'attached'});
   assert.equal(await video.locator('.toggle').isVisible(), false, 'hidden preference survives reload on a skill site');
   await settings.reload();
-  assert.equal(await settings.locator('#launcherVisibility').inputValue(), 'never');
+  await expect(settings.locator('#launcherVisibility')).toHaveValue('never');
   await settings.locator('#launcherVisibility').selectOption('skill-sites');
   await settings.locator('#saveBtn').click();
   await video.locator('.toggle').waitFor();
