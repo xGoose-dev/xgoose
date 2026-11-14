@@ -49,7 +49,7 @@ export function peerCommand(request: PeerRequest, sender: chrome.runtime.Message
         // A reserved peer may bind only its first loaded document. A new document
         // never inherits a previous document's tasks, even at the same URL.
         let reserved = op.requestedId ? state.agents[op.requestedId] : old?.documentKey === null ? old : undefined;
-        if (reserved && (reserved.documentKey !== null || (reserved.tabId !== null && reserved.tabId !== tab.id))) reserved = undefined;
+        if (reserved && (reserved.status === 'unavailable' || reserved.documentKey !== null || (reserved.tabId !== null && reserved.tabId !== tab.id))) reserved = undefined;
         if (old && old !== reserved) invalidatePeer(state, old.id, "The peer navigated, reloaded, or changed conversation");
         const agent: PeerAgent = reserved ?? {id: crypto.randomUUID(), sessionId: op.sessionId, tabId: tab.id!,
           documentKey: request.nonce, url: tab.url!, title: tab.title ?? "", status: "idle", model: op.model};
@@ -145,6 +145,25 @@ export function peerCommand(request: PeerRequest, sender: chrome.runtime.Message
   });
 }
 export function installPeerEvents(): void {
+  // A page without extension access may never register or send a completion.
+  // Persisted task timestamps also let this recover after a worker restart.
+  void chrome.alarms.get('xgoose-peer-startup').then(alarm => {
+    if(!alarm) return chrome.alarms.create('xgoose-peer-startup',{periodInMinutes:1});
+  });
+  chrome.alarms.onAlarm.addListener(alarm => {
+    if(alarm.name!=='xgoose-peer-startup') return;
+    void serial(async () => {
+      await peerTransaction(state => {
+        for(const agent of Object.values(state.agents)) {
+          if(agent.documentKey || agent.status==='unavailable') continue;
+          const expired = state.messages.some(message => message.to===agent.id && message.kind==='task' && message.state==='pending' &&
+            message.sentAt!==undefined && message.sentAt<=Date.now()-60000);
+          if(expired) invalidatePeer(state,agent.id,'The peer page did not start xgoose within one minute. Check extension site access or use another page.');
+        }
+      });
+      await notifyPending();
+    }).catch(console.warn);
+  });
   chrome.tabs.onRemoved.addListener(tabId => {
     navigatingTabs.delete(tabId);
     void serial(async () => {
@@ -166,6 +185,8 @@ export function installPeerEvents(): void {
         if (error instanceof DOMException && error.name === "TimeoutError") {console.warn("[xgoose:peer]", error); return;}
         identity = null;
       }
+      // document_idle injection can follow complete. Unbound reservations keep
+      // their startup grace period; only a previously bound document is replaced.
       await peerTransaction(state => {for (const agent of Object.values(state.agents)) if (agent.tabId === tabId && agent.documentKey && agent.documentKey !== identity?.nonce) invalidatePeer(state, agent.id, "The peer page navigated or reloaded");});
       await notifyPending();
     }).catch(console.warn);

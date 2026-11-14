@@ -1,7 +1,7 @@
 import {searchWeb,abortSearch} from "./search";
 import {notificationStatus,emitNotification,installNotificationEvents} from "./notifications";
 import {readImages,prepareImageParts} from './images';
-import {capturePage} from './pageScreenshot';
+import {capturePage,abortCapture} from './pageScreenshot';
 import {peerCommand, installPeerEvents} from './peers';
 import {memoryCommand} from './memory';
 import {listHostedModels} from "./hostedModels";
@@ -102,6 +102,7 @@ registerRouter({
     await nativeCommand("progress",{...payload,hostname:new URL(sender.url!).hostname,allWebsites});
   },
   'sw:capture_page': (args,sender)=>capturePage(args,sender),
+  'sw:capture_abort': (args,sender)=>abortCapture(args,sender),
   'sw:read_images': request=>readImages(request.urls,fetch,prepareImageParts,request.maxParts),
   'sw:nga_images': (request,sender)=>readNgaImages(request.urls,sender.url??''),
   "sw:user_scripts_status": async () => {try{await chrome.userScripts.getScripts();return {enabled:true};}catch{return {enabled:false};}},
