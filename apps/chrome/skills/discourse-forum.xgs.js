@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discourse-forum
 // @namespace    discourse
-// @version      0.2.16
+// @version      0.2.17
 // @description  Search Discourse forums, read topics and replies, and research community insights.
 // @match        *://meta.discourse.org/*
 // @match        *://*.discourse.org/*
@@ -367,18 +367,23 @@ function rememberTopicPosts(state, raw) {
     if (Number.isSafeInteger(post.id) && Number.isSafeInteger(post.post_number) && (!post.topic_id || post.topic_id === state.topic.id)) state.posts.set(post.id, post);
   }
 }
-async function loadTopicReadState(topicId, fromPostNumber) {
+async function loadTopicReadState(topicId) {
   const cached = topicReadStates.get(topicId);
   if (cached && cached.expires > Date.now()) return cached;
   if (topicReadLoads.has(topicId)) return topicReadLoads.get(topicId);
   const pending = (async () => {
-    const topic = await getJson(`/t/${topicId}.json${fromPostNumber > 1 ? `?post_number=${fromPostNumber}` : ''}`);
+    // Anchored topic responses may omit the stream. Load the directory from
+    // the topic root, then locate the requested floor in its own window.
+    const topic = await getJson(`/t/${topicId}.json`);
     if (topic.httpStatus) return {failure:topic};
     let ids = topic.post_stream?.stream;
+    if(Array.isArray(ids)) ids=[...new Set(ids)];
     if (!Array.isArray(ids) || ids.length < (topic.posts_count || 0)) {
-      const stream = await getJson(`/t/${topicId}/post_ids.json`);
+      // Without post_number this endpoint returns only its default 20-post page.
+      // An ascending range after floor 1 supplies the remaining visible IDs.
+      const stream = await getJson(`/t/${topicId}/post_ids.json?post_number=1`);
       if (stream.httpStatus) return {failure:stream};
-      ids = stream.post_ids;
+      ids = Array.isArray(stream.post_ids) ? [...(topic.post_stream?.posts || []).slice(0,1).map(post=>post.id),...stream.post_ids] : stream.post_ids;
     }
     if (!Array.isArray(ids) || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error('Forum did not provide a visible post-ID stream.');
     const state = {topic, ids:[...new Set(ids)], posts:new Map(), expires:Date.now()+600000, revision:++topicReadRevision};
@@ -410,7 +415,7 @@ async function readTopicRange(rawArgs) {
     if (!state || state.expires<=Date.now() || cursor.topicId!==args.topicId || cursor.origin!==location.origin || cursor.revision!==state.revision || !Number.isSafeInteger(cursor.offset) || cursor.offset<0 || cursor.offset>state.ids.length) throw new Error('Topic cursor expired or belongs to another topic. Restart from the last returned post number.');
     offset=cursor.offset;
   } else {
-    state=await loadTopicReadState(args.topicId,args.fromPostNumber || 1);
+    state=await loadTopicReadState(args.topicId);
     if (state.failure) return {...state.failure,origin:location.origin,posts:[],complete:false,next_cursor:null};
     if ((args.fromPostNumber || 1)>1) {
       let candidates=[...state.posts.values()].filter(post=>post?.post_number===args.fromPostNumber);

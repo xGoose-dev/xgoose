@@ -28,6 +28,7 @@ import {
 import { boundedModelText, detachResultImages, getTodos, resultImageParts, websiteEvidence, type TodoItem } from "@xgoose/core";
 import { buildPageControllerTools as buildPageControllerCoreTools } from "@xgoose/page-controller";
 import { attachHostImages } from "../hostImages";
+import {capturePageImages} from '../../hostPorts/capturePort';
 
 // ---------- list_skills / read_skill / search_skills / help / edit_skill / create_skill / skill_help ----------
 //
@@ -537,7 +538,7 @@ const screenshotPageTool = defineTool({
   isReadOnly: true,
   isConcurrencySafe: () => false,
   label: () => "See webpage screenshot",
-  execute: async args => detachResultImages({imageContext: {requested: true, delivery: 'image_parts', images: await send('sw:capture_page', args)}}),
+  execute: async (args,opts) => detachResultImages({imageContext: {requested: true, delivery: 'image_parts', images: await capturePageImages(args,opts.abortSignal)}}),
   toModelOutput: result => [{type: "text", text: safeJson(result)}, ...resultImageParts(result)],
 });
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {build} from 'esbuild';
 import {fileURLToPath} from 'node:url';
-import {emptyPeerState,invalidatePeer,settlePeer} from '../packages/core/src/peerAgents';
+import {emptyPeerState,invalidatePeer,settlePeer,queuePeerTask} from '../packages/core/src/peerAgents';
 import type {PeerAgent} from '../packages/core/src/peerAgents';
 
 const path=(p:string)=>fileURLToPath(new URL(p,import.meta.url));
@@ -17,21 +17,22 @@ const [background,content]=await Promise.all([compile('../apps/chrome/src/backgr
 const model={provider:'xgoose-hosted',model:'deepseek-flash',thinking:false};
 const agent=(id='page',nonce='document-a'):PeerAgent=>({id,sessionId:'conversation',tabId:1,documentKey:nonce,url:'https://example.test/',title:'Page',status:'running',model,runId:'run-1'});
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
-function broker(incognito: boolean | ((id:number)=>boolean)=false) {
-  const peerState=emptyPeerState();peerState.agents.page=agent();
-  let liveNonce:string|null='document-a',updated:(id:number,change:any)=>void,removed:(id:number)=>void;
+function broker(incognito: boolean | ((id:number)=>boolean)=false, alarms=new Map<string,any>(),peerState=emptyPeerState()) {
+  peerState.agents.page??=agent();
+  let liveNonce:string|null='document-a',updated:(id:number,change:any)=>void,removed:(id:number)=>void,alarm:(value:{name:string})=>void;
   const sender={id:'extension',frameId:0,tab:{id:1},url:'https://example.test/'};
-  const chrome={runtime:{id:'extension',getURL:(p:string)=>'chrome-extension://extension/'+p},tabs:{
+  const chrome={runtime:{id:'extension',getURL:(p:string)=>'chrome-extension://extension/'+p},alarms:{get:async(name:string)=>alarms.get(name),create:(name:string,{periodInMinutes}:any)=>{alarms.set(name,{name,scheduledTime:Date.now()+periodInMinutes*60000});},onAlarm:{addListener:(f:any)=>alarm=f}},tabs:{
     get:async(id:number)=>({id,url:'https://example.test/',title:'Page',incognito:typeof incognito==='function'?incognito(id):incognito}),
     query:async()=>[1,2].map(id=>({id,url:'https://example.test/',title:'Page',incognito:typeof incognito==='function'?incognito(id):incognito})),
     sendMessage:async(id:number)=>id===2?{nonce:'document-b'}:liveNonce?{nonce:liveNonce}:null,
     onRemoved:{addListener:(f:any)=>removed=f},onUpdated:{addListener:(f:any)=>updated=f},
   }};
-  const context:any={chrome,peerState,crypto,console,DOMException,setTimeout,clearTimeout};vm.runInNewContext(background.outputFiles[0].text,context);
+  const context:any={chrome,peerState,crypto,console,DOMException,Date,setTimeout,clearTimeout};vm.runInNewContext(background.outputFiles[0].text,context);
   context.module.installPeerEvents();
   return {peerState,setNonce:(v:string|null)=>liveNonce=v,
     probe:(fn:typeof chrome.tabs.sendMessage)=>{chrome.tabs.sendMessage=fn;},
     updated:async(status:string)=>{updated!(1,{status});await tick();},closed:async()=>{removed!(1);await tick();},
+    startupAlarm:async()=>{alarm!({name:'xgoose-peer-startup'});await tick();},
     call:(operation:any,nonce='document-a',agentId='page')=>context.module.peerCommand({nonce,agentId,operation},{...sender,tab:{id:peerState.agents[agentId]?.tabId??1}})};
 }
 
@@ -66,6 +67,62 @@ test('a replaced document or closed tab still invalidates the old peer',async()=
   assert.equal(f.peerState.agents.page.status,'unavailable');
   await assert.rejects(f.call({op:'list'}),/Peer page is no longer available/);
   const closed=broker();await closed.closed();assert.equal(closed.peerState.agents.page.status,'unavailable');
+});
+test('a first complete probe can miss document_idle injection without losing the pending task',async()=>{
+  const f=broker();f.peerState.agents.page.documentKey=null;f.peerState.agents.page.status='idle';
+  f.peerState.agents.other={...agent('other','document-b'),tabId:2};
+  queuePeerTask(f.peerState,'startup-task','other','page','Read the new page');
+  f.setNonce(null);await f.updated('loading');await f.updated('complete');
+  assert.equal(f.peerState.tasks['startup-task'].status,'queued');
+  f.setNonce('document-a');const registered=await f.call({op:'register',sessionId:'conversation',model});
+  assert.equal(registered.agent.id,'page');
+  assert.equal((await f.call({op:'take'})).message.taskId,'startup-task');
+});
+test('startup expiry wakes the requester once, including after a missed page load event',async()=>{
+  const f=broker();f.peerState.agents.page.documentKey=null;f.peerState.agents.page.status='idle';
+  f.peerState.agents.other={...agent('other','document-b'),tabId:2};
+  queuePeerTask(f.peerState,'startup-task','other','page','Read the new page');
+  f.peerState.messages[0].sentAt=Date.now()-60001;
+  await f.startupAlarm();await f.startupAlarm();
+  assert.equal(f.peerState.tasks['startup-task'].status,'unavailable');
+  assert.equal(f.peerState.messages.filter(m=>m.kind==='result').length,1);
+  const result=await f.call({op:'wait',agentIds:['page']},'document-b','other');
+  assert.equal(result.waiting,false);assert.match(result.messages[0].text,/did not start xgoose/);
+});
+test('worker restarts retain the scheduled startup alarm and expired tasks can still settle',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:1000000});
+  const alarms=new Map<string,any>();let f=broker(false,alarms);
+  f.peerState.agents.page.documentKey=null;f.peerState.agents.page.status='idle';
+  f.peerState.agents.other={...agent('other','document-b'),tabId:2};
+  queuePeerTask(f.peerState,'startup-task','other','page','Read the new page');await tick();
+  const due=alarms.get('xgoose-peer-startup').scheduledTime;
+  for(let i=0;i<6;i++){
+    t.mock.timers.tick(45000);f=broker(false,alarms,f.peerState);await tick();
+    assert.equal(alarms.get('xgoose-peer-startup').scheduledTime,due);
+  }
+  await f.startupAlarm();assert.equal(f.peerState.tasks['startup-task'].status,'unavailable');
+});
+test('startup checks preserve a page still registering and a registered long-running task',async()=>{
+  const f=broker();f.peerState.agents.page.documentKey=null;f.peerState.agents.page.status='idle';
+  f.peerState.agents.other={...agent('other','document-b'),tabId:2};
+  queuePeerTask(f.peerState,'startup-task','other','page','Read the new page');
+  await f.updated('loading');await f.updated('complete');await f.startupAlarm();
+  assert.equal(f.peerState.tasks['startup-task'].status,'queued');
+  await f.call({op:'register',sessionId:'conversation',model});
+  f.peerState.messages[0].sentAt=Date.now()-60001;
+  await f.startupAlarm();assert.equal(f.peerState.tasks['startup-task'].status,'queued');
+});
+test('a page registering after startup expiry gets a fresh identity and can begin a new chat',async()=>{
+  const f=broker();f.peerState.agents.page.documentKey=null;f.peerState.agents.page.status='idle';
+  f.peerState.agents.other={...agent('other','document-b'),tabId:2};
+  queuePeerTask(f.peerState,'expired-task','other','page','Read the new page');
+  f.peerState.messages[0].sentAt=Date.now()-60001;await f.startupAlarm();
+  const result=await f.call({op:'register',requestedId:'page',sessionId:'fresh-chat',model});
+  assert.notEqual(result.agent.id,'page');assert.equal(result.agent.status,'idle');
+  await f.call({op:'begin',runId:'fresh-run',model},'document-a',result.agent.id);
+  assert.equal(f.peerState.agents[result.agent.id].status,'running');
+  assert.equal(f.peerState.tasks['expired-task'].status,'unavailable');
+  assert.equal(f.peerState.messages.filter(m=>m.kind==='result').length,1);
 });
 test('late stop and settle acknowledge invalidation without reviving the peer or accepting another document',async()=>{
   const f=broker();await f.closed();

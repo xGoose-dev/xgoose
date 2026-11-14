@@ -31,5 +31,7 @@ export async function executePage(sender: chrome.runtime.MessageSender, payload:
     } catch (error) { return { ok: false, error: String(error?.message ?? error) }; }
     finally { clearTimeout(timer); jobs.delete(id); }
   })()`;
-  return executeUserScript(sender, code);
+  const result = await executeUserScript(sender, code);
+  if(!result || typeof result.ok!=="boolean") throw new Error("Page execution returned no result. The code may have a syntax error or the page may have changed. Inspect the page before retrying actions; their execution was not confirmed.");
+  return result;
 }

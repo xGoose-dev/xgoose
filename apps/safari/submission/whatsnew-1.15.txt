@@ -1,0 +1,7 @@
+修复网页截图停止后无法继续的问题，并恢复页面与标签页状态。
+修复协作页面未启动时任务一直等待的问题。
+改进网页执行错误反馈，以及论坛楼层读取和知乎文章跳转。
+
+Fix screenshot cancellation and recovery on stalled pages.
+Resolve waiting tasks when a peer page cannot start xgoose.
+Improve page-execution errors, forum post ranges, and Zhihu article handoff.

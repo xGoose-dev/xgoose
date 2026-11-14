@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        zhihu
 // @namespace   zhihu
-// @version     0.2.1
+// @version     0.2.2
 // @description 知乎 (zhihu.com) Q&A + article reader. Browser-session API and loaded-page reader — search, questions/answers/articles/comments, hot searches, users and images. Reply to the user in Chinese (中文).
 // @match       *://www.zhihu.com/*
 // @match       *://zhuanlan.zhihu.com/*
@@ -357,14 +357,10 @@ async function getAnswer(params) {
 }
 __name(getAnswer, "getAnswer");
 async function getArticle(params) {
-  if (!params || params.articleId == null) {
-    throw new Error("zhihu.getArticle: pass { articleId }");
-  }
   const id = String(params.articleId);
   if (typeof location !== "undefined" && location.hostname !== "zhuanlan.zhihu.com") {
-    throw new Error(
-      `zhihu.getArticle: article HTML lives at ${articleUrl(id)}, which is CORS-blocked from ${location.origin}. Three ways to recover without losing the user's context: (1) call js_exec with \`tab_id: <a zhuanlan tab id>\` \u2014 list_tabs() will show them; (2) accept the search excerpt as the answer (search returns a 100\u2013500 char preview per article); (3) navigate THIS tab: \`location.href = ` + JSON.stringify(articleUrl(id)) + '` then call getArticle again. See SKILL.md \xA7"Reading articles without navigating".'
-    );
+    return {status:'navigation_required',url:articleUrl(id),requiredOrigin:'https://zhuanlan.zhihu.com',
+      next:{skill:'zhihu',function:'getArticle',args:{articleId:id}}};
   }
   const html = await fetchHtml(`https://zhuanlan.zhihu.com/p/${id}`);
   const data = extractInitialData(html);
@@ -516,8 +512,8 @@ export default defineSkill({
     handler: async (params) => getAnswers(params),
   }),
   getArticle: fn({
-    summary: "full 专栏 article body — caller must be on zhuanlan.zhihu.com (CORS).",
-    input: z.any().optional(),
+    summary: "Read a full 专栏 article on zhuanlan.zhihu.com; other Zhihu pages return its URL and next call.",
+    input: z.object({articleId:z.union([z.string().min(1),z.number().int().positive()])}),
     handler: async (params) => getArticle(params),
   }),
   getComments: fn({

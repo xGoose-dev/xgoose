@@ -65,5 +65,28 @@ try {
   results.push({mode,modelReceivedPixels:true,urlDownloads:downloads.length,hostedRequestCaptured:true,mockedModel:true});
   if(other)await other.close();await page.close();
  }
+ // A suspended animation-frame wait must leave Stop reachable and must not
+ // poison the global screenshot queue after cancellation.
+ const recovery=await context.newPage();await recovery.goto('https://example.com/recovery');
+ await recovery.locator('#xgoose-root').waitFor({state:'attached'});await recovery.bringToFront();
+ if(await recovery.locator('.toggle').isVisible())await recovery.locator('.toggle').click();
+ await sw.evaluate(()=>{globalThis.pixelRequests=[];globalThis.pixelTool='screenshot_page';globalThis.screenshotArgs={};});
+ const recoveryTabId=await settings.evaluate(async()=> (await chrome.tabs.query({url:'https://example.com/recovery'}))[0].id);
+ await settings.evaluate(tabId=>chrome.scripting.executeScript({target:{tabId},func:()=>{window.savedFrame=requestAnimationFrame;window.requestAnimationFrame=()=>0;}}),recoveryTabId);
+ await recovery.locator('.in-text').fill('Capture this frozen page.');await recovery.locator('.btn-send').click();
+ await recovery.waitForFunction(()=>document.documentElement.style.scrollBehavior==='auto',{},{polling:50});
+ await recovery.locator('.btn-stop').click();
+ await recovery.waitForFunction(()=>document.querySelector('#xgoose-root')?.shadowRoot?.querySelector('.btn-stop')?.classList.contains('active')===false,{},{polling:50});
+ await recovery.waitForFunction(()=>document.documentElement.style.scrollBehavior!=='auto',{},{polling:50});
+ assert.equal(await recovery.locator('#xgoose-root').evaluate(root=>root.style.visibility),'');
+ assert.equal(await sw.evaluate(()=>globalThis.pixelRequests.length),1,'Stop must not continue the model with late pixels');
+ await settings.evaluate(tabId=>chrome.scripting.executeScript({target:{tabId},func:()=>{window.requestAnimationFrame=window.savedFrame;}}),recoveryTabId);
+ await sw.evaluate(()=>{globalThis.pixelRequests=[];});
+ await recovery.locator('.in-text').fill('Capture the page again.');await recovery.locator('.btn-send').click();
+ await recovery.locator('.msg-ai').filter({hasText:'Pixel attachment received.'}).waitFor();
+ const recovered=await sw.evaluate(()=>globalThis.pixelRequests);
+ assert.equal(recovered.length,2);assert.ok(recovered[1].messages.some(m=>Array.isArray(m.content)&&m.content.some(p=>p.type==='image_url')));
+ results.push({mode:'stop-and-recover',stopReachable:true,queueRecovered:true,latePixelsDiscarded:true,mockedModel:true});
+ await recovery.close();
  await writeFile('artifacts/page-image-pixels/result.json',JSON.stringify(results,null,2));console.log(JSON.stringify(results));
 } finally {await context.close();await rm(profile,{recursive:true,force:true});}
