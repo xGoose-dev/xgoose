@@ -7,7 +7,7 @@ const deferred=<T>()=>{let resolve!:(v:T)=>void;const promise=new Promise<T>(r=>
 function fixture(initial:Account|null=token('A')){
  let account=initial, renewals=0, cleared=0;
  const gate=deferred<any>();
- const session=createAccountSession({read:async()=>account,save:async a=>{account=a;},clear:async()=>{cleared++;account=null;},renew:async()=>{renewals++;return gate.promise;}});
+ const session=createAccountSession({read:async()=>account,save:async a=>{account=a;},clear:async()=>{cleared++;account=null;},wait:async()=>{},renew:async()=>{renewals++;return gate.promise;}});
  return {session,gate,read:()=>account,renewals:()=>renewals,cleared:()=>cleared,external:(a:Account|null)=>{account=a;}};
 }
 const started=async(f:ReturnType<typeof fixture>)=>{while(!f.renewals())await new Promise(r=>setTimeout(r,0));};
@@ -22,7 +22,7 @@ test('revoked refresh clears the account and never falls back to unexpired rejec
  assert.equal(await fresh,null);assert.equal(f.read(),null);assert.equal(f.cleared(),1);
 });
 test('temporary refresh failure keeps valid storage, expired storage is not used',async()=>{
- for(const ms of [30000,-1000]){const f=fixture(token('A','user',ms));const fresh=f.session.fresh();await started(f);f.gate.resolve({ok:false,status:503});assert.equal((await fresh)?.accessToken,ms>0?'A':undefined);assert.equal(f.read()?.accessToken,'A');}
+ for(const ms of [30000,-1000]){const f=fixture(token('A','user',ms));const fresh=f.session.fresh();await started(f);f.gate.resolve({ok:false,status:503});if(ms>0)assert.equal((await fresh)?.accessToken,'A');else await assert.rejects(fresh,/still saved/);assert.equal(f.read()?.accessToken,'A');}
 });
 test('logout while refresh is in flight cannot resurrect the session',async()=>{
  const f=fixture();const old=f.session.refresh('A');await started(f);await f.session.replace(null);f.gate.resolve({ok:true,account:token('B')});assert.equal(await old,null);assert.equal(f.read(),null);
@@ -37,5 +37,30 @@ test('storage changed by another context is not overwritten or cleared by a stal
  const f=fixture();const old=f.session.refresh('A');await started(f);f.external(token('C'));f.gate.resolve({ok:false,status:401});assert.equal((await old)?.accessToken,'C');assert.equal(f.cleared(),0);
 });
 test('fresh readers retain a still-valid stored token when an in-flight proactive refresh has a transient failure',async()=>{
- const f=fixture();const refresh=f.session.refresh('A');await started(f);const fresh=f.session.fresh();f.gate.resolve({ok:false,status:503});assert.equal(await refresh,null);assert.equal((await fresh)?.accessToken,'A');
+ const f=fixture();const refresh=f.session.refresh('A');await started(f);const fresh=f.session.fresh();f.gate.resolve({ok:false,status:503});await assert.rejects(refresh,/still saved/);assert.equal((await fresh)?.accessToken,'A');
+});
+
+test('a timed-out rotation retries with one durable request id and succeeds without signing in',async()=>{
+ let account:Account|null=token('A','user',-1000),attempts=0;
+ const ids:string[]=[];
+ const session=createAccountSession({read:async()=>account,save:async a=>{account=a;},clear:async()=>{account=null;},wait:async()=>{},renew:async a=>{
+  assert.equal(account?.refreshRequestId,a.refreshRequestId);ids.push(a.refreshRequestId!);
+  if(++attempts===1)throw new DOMException('lost response','TimeoutError');
+  return {ok:true,account:{...a,...token('B')}};
+ }});
+ assert.equal((await session.fresh())?.accessToken,'B');assert.equal(attempts,2);
+ assert.equal(new Set(ids).size,1);assert.ok(ids[0]);assert.equal(account?.refreshRequestId,undefined);
+});
+test('an offline worker restart reuses its pending rotation and retains the visible account',async()=>{
+ let account:Account|null=token('A','user',-1000);const ids:string[]=[];
+ const io={read:async()=>account,save:async(a:Account)=>{account=a;},clear:async()=>{account=null;},wait:async()=>{},renew:async(a:Account):Promise<any>=>{ids.push(a.refreshRequestId!);throw new Error('offline');}};
+ const first=createAccountSession(io);await assert.rejects(first.fresh(),/still saved/);
+ assert.equal((await first.snapshot())?.user.id,'user');const pending=account?.refreshRequestId;
+ const restarted=createAccountSession({...io,renew:async(a:Account)=>{ids.push(a.refreshRequestId!);return {ok:true as const,account:{...a,...token('B')}};}});
+ assert.equal((await restarted.fresh())?.accessToken,'B');assert.ok(pending);assert.ok(ids.every(id=>id===pending));
+});
+test('logout during a transient retry prevents further renewal and preserves signed-out state',async()=>{
+ let account:Account|null=token('A');let attempts=0;let session:ReturnType<typeof createAccountSession>;
+ session=createAccountSession({read:async()=>account,save:async a=>{account=a;},clear:async()=>{account=null;},wait:async()=>session.replace(null),renew:async()=>{attempts++;return {ok:false,status:503};}});
+ assert.equal(await session.refresh(),null);assert.equal(attempts,1);assert.equal(await session.snapshot(),null);
 });

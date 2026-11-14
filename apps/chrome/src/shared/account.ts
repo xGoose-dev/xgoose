@@ -34,6 +34,8 @@ export const AccountSchema = z.object({
   user: AccountUserSchema,
   accessToken: z.string(),
   refreshToken: z.string(),
+  /** Durable secret for retrying a refresh whose response may have been lost. */
+  refreshRequestId: z.string().uuid().optional(),
   /** ISO-8601 string of access-token expiry. */
   accessTokenExpiresAt: z.string(),
   /** Unix-ms of last successful API call; for diagnostics only. */

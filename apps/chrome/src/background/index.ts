@@ -51,7 +51,7 @@ import {
   setSkillDisabled,
 } from "./skillRegistry";
 import {
-  getFreshAccount,
+  getAccountSnapshot,
   getLoginState,
   logout as accountLogout,
   pollOnce,
@@ -363,7 +363,7 @@ registerRouter({
   },
 
   // ── xgoose cloud account (device-flow login) ────────────────────────
-  "sw:account_get": async () => getFreshAccount(),
+  "sw:account_get": async () => getAccountSnapshot(),
   "sw:account_login_state": async () => getLoginState(),
   "sw:account_cancel_login": async () => cancelLogin(),
   "sw:account_start_login": async (payload) => startLogin(payload?.email),
