@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import vm from 'node:vm';
+import OpenAI from 'openai';
 import {fileURLToPath} from 'node:url';
 import {createAccountSession} from '../apps/chrome/src/background/accountSession.ts';
 import type {Account} from '../apps/chrome/src/shared/account.ts';
@@ -16,7 +17,7 @@ const token=(accessToken:string,user='owner'):Account=>({user:{id:user,email:'fi
 function fixture(handler:(r:{url:string;init:RequestInit})=>Promise<Response>){
  let account:Account|null=token('A'),refreshes=0;
  const f:any={renew:async()=>({ok:true,account:token('B')})};
- f.session=createAccountSession({read:async()=>account,save:async a=>{account=a;},clear:async()=>{account=null;},renew:async()=>{refreshes++;return f.renew();}});
+ f.session=createAccountSession({read:async()=>account,save:async a=>{account=a;},clear:async()=>{account=null;},wait:async()=>{},renew:async()=>{refreshes++;return f.renew();}});
  const calls:any[]=[];
  const sandbox:any={fixture:f,Headers,URL,Response,AbortSignal,Error,fetch:async(url:string,init:RequestInit)=>{calls.push({url,init});return handler({url,init});}};
  vm.runInNewContext(compiled.outputFiles[0].text,sandbox);
@@ -66,4 +67,23 @@ for(const hosted of [false,true])test(`transport failure identifies the service 
  assert.match(data.error.message,hosted?/https:\/\/api.xgoose.org/:/https:\/\/provider.test/);
  assert.match(data.error.message,/Site access/);assert.doesNotMatch(data.error.message,/never-print|Bearer/);
  assert.equal(f.calls.length,1);assert.equal(f.refreshes(),0);
+});
+
+test('the model SDK preserves retryable renewal errors and the saved account',async()=>{
+ const f=fixture(async()=>{throw new Error('model must not be called before renewal');});
+ await f.session.replace({...token('A'),accessTokenExpiresAt:'2000-01-01T00:00:00Z'});
+ f.f.renew=async()=>({ok:false,status:503});
+ const sdk=new OpenAI({apiKey:'synthetic-key',baseURL:'https://api.xgoose.org/ai/v1',maxRetries:0,fetch:()=>f.fetch(req)});
+ await assert.rejects(sdk.chat.completions.create({model:'luna',messages:[{role:'user',content:'synthetic fixture'}]}),error=>{
+  assert.equal((error as any).status,503);assert.match((error as Error).message,/account is still saved/);
+  assert.doesNotMatch((error as Error).message,/Sign in again/);return true;
+ });
+ assert.equal(f.calls.length,0);assert.equal(f.refreshes(),3);assert.equal(f.read()?.user.id,'owner');
+});
+
+test('cancellation during unavailable renewal remains cancellation rather than a retry prompt',async()=>{
+ const f=fixture(async()=>new Response('revoked',{status:401}));const controller=new AbortController();
+ f.f.renew=async()=>{controller.abort();return {ok:false,status:503};};
+ await assert.rejects(f.fetch(req,controller.signal),error=>(error as Error).name==='AbortError');
+ assert.equal(f.read()?.user.id,'owner');
 });

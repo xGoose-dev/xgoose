@@ -28,6 +28,8 @@ export async function providerFetch(req:ProviderRequest,signal?:AbortSignal):Pro
   return connect({...options,headers});
  },{accountId:req.hostedAccountId,signal,dispose:async(response)=>{await response.body?.cancel();}});
  }catch(error){
+  signal?.throwIfAborted();
+  if(error instanceof Error&&error.name==='SessionRefreshUnavailable')return Response.json({error:{message:error.message,code:"session_refresh_unavailable",type:"connection_error"}},{status:503});
   if(error instanceof Error&&isHostedAuthStopped(error.message))return Response.json({error:{message:HOSTED_AUTH_STOPPED,code:"hosted_auth_expired",type:"authentication_error"}},{status:401});
   throw error;
  }
