@@ -133,4 +133,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: gh workflow run store-publish.yml --ref main -f tag="v$VERSION" -f store=both
+        run: gh workflow run store-publish.yml --ref main -f tag="v$VERSION" -f store=chrome
