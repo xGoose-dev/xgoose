@@ -33,10 +33,10 @@ try {
  const send=(kind,payload)=>page.evaluate(({kind,payload})=>chrome.runtime.sendMessage({kind,payload}),{kind,payload});
  await send('sw:install_catalog_skill',{slug:'update-test',version:'1.0.0'});
  await page.evaluate(()=>chrome.storage.local.set({'xgoose.skills.disabled':['update-test']}));
- await sw.evaluate(()=>globalThis.updateFixture.version='1.1.0');
+ await sw.evaluate(async()=>{globalThis.updateFixture.version='1.1.0';await chrome.action.setBadgeText({text:'7'});});
  await page.getByRole('button',{name:'Check for updates',exact:true}).click();
  await page.locator('#skillUpdateList').getByText('1.0.0 → 1.1.0',{exact:true}).waitFor();
- assert.equal(await sw.evaluate(()=>chrome.action.getBadgeText({})),'1');
+ assert.equal(await sw.evaluate(()=>chrome.action.getBadgeText({})),'');
  await page.getByText('Review update',{exact:true}).click();
  await mkdir('artifacts/skill-updates',{recursive:true});await page.locator('#skillUpdates').screenshot({path:'artifacts/skill-updates/available.png'});
  page.once('dialog',d=>d.dismiss());await page.getByRole('button',{name:'Update update-test',exact:true}).click();
@@ -53,8 +53,9 @@ try {
  page.once('dialog',async d=>{assert.match(d.message(),/replaces your local edits/);await d.accept();});await page.getByRole('button',{name:'Update update-test',exact:true}).click();
  await page.locator('#skillUpdateStatus').filter({hasText:'digest mismatch'}).waitFor();
  assert.match((await send('sw:get_user_skill',{name:'update-test'})).source,/local edit/);
- await sw.evaluate(()=>globalThis.updateFixture.offline=true);
+ await sw.evaluate(async()=>{globalThis.updateFixture.offline=true;await chrome.action.setBadgeText({text:'7'});});
  await page.getByRole('button',{name:'Check for updates',exact:true}).click();await page.locator('#skillUpdateStatus').filter({hasText:'Could not check'}).waitFor();
+ assert.equal(await sw.evaluate(()=>chrome.action.getBadgeText({})), '', 'offline checks also clear the old badge');
  await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
  await sw.evaluate(pinned=>{globalThis.updateFixture.offline=false;globalThis.updateFixture.changedAuthor=true;globalThis.updateFixture.builtin={id:pinned.skillId,authorId:pinned.authorId,slug:'hacker-news',name:'hacker-news',namespace:'hn',description:'Built in update',version:'99.0.0',matches:['https://news.ycombinator.com/*'],include:[],exclude:[],dependencies:[]};},pinned);
  const verified=await send('sw:skill_updates',{check:true});
@@ -80,5 +81,5 @@ try {
  // Keep the diagnostic bounded; the restore/identity assertions above cover correctness.
  await page.locator('#installedSkillSummary').scrollIntoViewIfNeeded();
  await mkdir('artifacts/skill-updates',{recursive:true});await page.screenshot({path:'artifacts/skill-updates/uninstalled-restored-builtin.png'});
- console.log(JSON.stringify({passed:true,legacyAmexLink:true,uninstallCancel:true,uninstallRestoresBuiltin:true,detect:true,badge:true,decline:true,update:true,preserveDisabled:true,localEditWarning:true,digestProtection:true,offline:true,mobile:true}));
+ console.log(JSON.stringify({passed:true,legacyAmexLink:true,uninstallCancel:true,uninstallRestoresBuiltin:true,detect:true,noBadge:true,decline:true,update:true,preserveDisabled:true,localEditWarning:true,digestProtection:true,offline:true,mobile:true}));
 } finally {await context.close();await rm(profile,{recursive:true,force:true});}

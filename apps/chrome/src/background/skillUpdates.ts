@@ -13,6 +13,8 @@ export interface UpdateState { checkedAt:number; updates:SkillUpdate[] }
 async function hash(s:string) { return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))),b=>b.toString(16).padStart(2,'0')).join(''); }
 let checking:Promise<UpdateState>|undefined;
 async function scan():Promise<UpdateState> {
+  // Clear badges left by older versions even when the catalog is offline.
+  await chrome.action.setBadgeText({text:''});
   const catalog=await skillCatalog(true), installed=await listSkillsWithEnabled(), updates:SkillUpdate[]=[];
   for(const skill of installed) {
     const user=await getUserSkillCode(skill.name);
@@ -28,8 +30,6 @@ async function scan():Promise<UpdateState> {
   }
   const state={checkedAt:Date.now(),updates};
   await chrome.storage.local.set({[UPDATE_KEY]:state});
-  await chrome.action.setBadgeBackgroundColor({color:'#2563eb'});
-  await chrome.action.setBadgeText({text:updates.length?String(updates.length):''});
   await chrome.action.setTitle({title:updates.length?`xgoose · ${updates.length} skill updates available`:'xgoose'});
   return state;
 }
@@ -57,7 +57,6 @@ export async function updateSkill(request:SkillUpdate):Promise<void> {
     // A refresh failure after a successful install must not report installation failure.
     const remaining=state.updates.filter(i=>i.name!==current.name);
     await chrome.storage.local.set({[UPDATE_KEY]:{...state,updates:remaining}});
-    await chrome.action.setBadgeText({text:remaining.length?String(remaining.length):""});
     await checkSkillUpdates().catch(()=>{});
   } finally {updating=false;}
 }

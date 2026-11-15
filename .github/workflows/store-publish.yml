@@ -11,7 +11,7 @@ on:
         description: Destination
         type: choice
         options: [both, chrome, edge]
-        default: both
+        default: chrome
 permissions:
   contents: read
 concurrency:
@@ -28,7 +28,7 @@ jobs:
         store: [chrome, edge]
     env:
       RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
-      SELECTED_STORE: ${{ inputs.store || 'both' }}
+      SELECTED_STORE: ${{ inputs.store || 'chrome' }}
       TARGET_STORE: ${{ matrix.store }}
       GH_TOKEN: ${{ github.token }}
       CWS_SERVICE_ACCOUNT_JSON: ${{ secrets.CWS_SERVICE_ACCOUNT_JSON }}
