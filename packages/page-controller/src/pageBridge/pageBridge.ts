@@ -79,6 +79,7 @@ type NetworkEntry = {
     } as const;
     const ASYNC_LEVELS = new Set<keyof typeof orig>(["warn", "error"]);
     (["log", "info", "warn", "error", "debug"] as const).forEach((level) => {
+      if (!canReplaceMethod(console, level)) return;
       console[level] = function (...args: unknown[]) {
         try {
           push({
@@ -104,7 +105,7 @@ type NetworkEntry = {
   }
 
   function patchFetch() {
-    if (!w.fetch) return;
+    if (!canReplaceMethod(w, "fetch")) return;
     const origFetch = w.fetch.bind(w);
     w.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
       const id = randId();
@@ -204,67 +205,97 @@ type NetworkEntry = {
     })();
   }
 
+  // Respect site-owned locks and accessors. Observation must never require
+  // making a read-only API writable or replacing a site's setter/getter.
+  function canReplaceMethod(owner: object, key: PropertyKey): boolean {
+    const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+    return !!descriptor?.writable && typeof descriptor.value === "function";
+  }
+
   function patchXHR() {
-    const Orig = XMLHttpRequest;
-    function PatchedXHR(this: XMLHttpRequest) {
-      const xhr = new Orig();
-      const meta: NetworkEntry = {
-        id: randId(),
-        ts: Date.now(),
-        method: "GET",
-        url: "",
-      };
-      const reqHeaders: Record<string, string> = {};
-      const origOpen = xhr.open;
-      xhr.open = function (method: string, url: string, ...rest: any[]) {
-        meta.method = method.toUpperCase();
-        meta.url = String(url);
-        return (origOpen as any).call(xhr, method, url, ...rest);
-      } as any;
-      const origSetReq = xhr.setRequestHeader;
-      xhr.setRequestHeader = function (k: string, v: string) {
-        reqHeaders[k] = v;
-        return origSetReq.call(xhr, k, v);
-      };
-      const origSend = xhr.send;
-      const t0 = performance.now();
-      xhr.send = function (body?: any) {
-        meta.reqHeaders = reqHeaders;
-        meta.reqBody =
-          typeof body === "string"
-            ? body.slice(0, MAX_BODY_PREVIEW)
-            : undefined;
-        xhr.addEventListener("loadend", () => {
-          meta.status = xhr.status;
-          meta.durationMs = Math.round(performance.now() - t0);
-          try {
-            const text =
-              typeof xhr.responseText === "string" ? xhr.responseText : "";
-            meta.resSizeBytes = text.length;
-            meta.resBody = text.slice(0, MAX_BODY_PREVIEW);
-          } catch {}
-          pushNet(meta);
-        });
-        return origSend.call(xhr, body);
-      };
-      return xhr;
-    }
-    (PatchedXHR as any).prototype = Orig.prototype;
-    // Preserve the static props the page may read off the constructor — most
-    // importantly the readyState constants (XMLHttpRequest.UNSENT/OPENED/
-    // HEADERS_RECEIVED/LOADING/DONE). Without these, common code paths like
-    // `xhr.readyState === XMLHttpRequest.DONE` compare against `undefined` and
-    // silently never fire — another way page features "don't load". (#2)
-    try {
-      for (const k of Object.getOwnPropertyNames(Orig)) {
-        if (k === "prototype" || k === "name" || k === "length") continue;
-        if (k in (PatchedXHR as any)) continue;
-        try {
-          (PatchedXHR as any)[k] = (Orig as any)[k];
-        } catch {}
+    const prototype = w.XMLHttpRequest?.prototype as XMLHttpRequest | undefined;
+    if (!prototype || !["open", "setRequestHeader", "send"].every(key => canReplaceMethod(prototype, key))) return;
+    const origOpen = prototype.open;
+    const origSetReq = prototype.setRequestHeader;
+    const origSend = prototype.send;
+    const urlHref = Object.getOwnPropertyDescriptor(URL.prototype, "href")!.get!;
+    const requests = new WeakMap<XMLHttpRequest, {entry: NetworkEntry; sent: boolean; finish?: () => void}>();
+
+    // Keep the native constructor, prototype identity, constants and subclass
+    // semantics. Never assign methods on an instance: MEGA seals prototype.open
+    // after document_start, and that makes per-instance assignment throw.
+    prototype.open = function (this: XMLHttpRequest, method: string, url: string | URL, ...rest: any[]) {
+      // A page's onload handler may run before our listener and reopen this
+      // instance. Preserve the completed response before native open resets it.
+      if (this.readyState === 4) requests.get(this)?.finish?.();
+      const previous = requests.get(this);
+      let address = typeof url === "string" ? url : "";
+      // Native URL objects need their address even when a failed request has no
+      // responseURL. The native getter does not invoke page-defined toString.
+      if (typeof url === "object" && url !== null) {
+        try {address = urlHref.call(url);} catch { /* Other WebIDL-coercible objects stay opaque. */ }
       }
-    } catch {}
-    (w as any).XMLHttpRequest = PatchedXHR as any;
+      const state = {sent:false, entry:{
+        id:randId(), ts:Date.now(),
+        // Observe string methods without invoking page-defined conversions.
+        method:typeof method === "string" ? method.toUpperCase() : "",
+        url:address, reqHeaders:{},
+      }};
+      // open() synchronously dispatches OPENED. Its handlers may set headers,
+      // send this request, or open a different one before native open returns.
+      requests.set(this, state);
+      try {return (origOpen as any).call(this, method, url, ...rest);}
+      catch (error) {
+        if (requests.get(this) === state) {
+          if (previous) requests.set(this, previous);
+          else requests.delete(this);
+        }
+        throw error;
+      }
+    } as XMLHttpRequest["open"];
+    prototype.setRequestHeader = function (name: string, value: string) {
+      const result = origSetReq.call(this, name, value);
+      const headers = requests.get(this)?.entry.reqHeaders;
+      if (headers && typeof name === "string" && typeof value === "string") {
+        const key = name.toLowerCase();
+        headers[key] = headers[key] === undefined ? value : `${headers[key]}, ${value}`;
+      }
+      return result;
+    };
+    prototype.send = function (body?: Document | XMLHttpRequestBodyInit | null) {
+      const state = requests.get(this);
+      if (!state || state.sent) return origSend.call(this, body);
+      const {entry} = state, xhr = this, started = performance.now();
+      entry.reqBody = typeof body === "string" ? body.slice(0, MAX_BODY_PREVIEW) : undefined;
+      const events = ["load", "error", "abort", "timeout"] as const;
+      const cleanup = () => {for (const event of events) xhr.removeEventListener(event, completed, true);};
+      const completed = () => {
+        if (!state.finish) return;
+        state.finish = undefined;
+        cleanup();
+        entry.status = xhr.status;
+        entry.durationMs = Math.round(performance.now() - started);
+        if (!entry.url) entry.url = xhr.responseURL;
+        try {
+          const text = xhr.responseText;
+          entry.resSizeBytes = text.length;
+          entry.resBody = text.slice(0, MAX_BODY_PREVIEW);
+        } catch { /* responseText is unavailable for binary/JSON responses. */ }
+        pushNet(entry);
+      };
+      state.sent = true;
+      state.finish = completed;
+      // A terminal event belongs to this send, not a subsequent loadend after
+      // a page has reopened the XHR. open() also snapshots reentrant completion.
+      for (const event of events) xhr.addEventListener(event, completed, {capture:true});
+      try {return origSend.call(xhr, body);}
+      catch (error) {
+        cleanup();
+        state.finish = undefined;
+        state.sent = false;
+        throw error;
+      }
+    };
   }
 
   function pushNet(entry: NetworkEntry) {
