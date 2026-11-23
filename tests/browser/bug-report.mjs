@@ -66,8 +66,10 @@ try {
   await expect(sendReport).toBeDisabled();
   const screenshotPath = resolve(profile, "fixture.png");
   await page.screenshot({ path: screenshotPath });
-  await page.locator(".bug-file").setInputFiles(screenshotPath);
-  await expect(page.getByAltText("Screenshot preview")).toBeVisible();
+  const chooseFile = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Add screenshot" }).click();
+  await (await chooseFile).setFiles(screenshotPath);
+  await expect(page.getByRole("img", { name: "Screenshot preview" })).toBeVisible();
   await sendReport.evaluate(button => button.click());
   assert.equal(await worker.evaluate(() => reportFixture.uploads.length), 0, "page-script clicks cannot submit a report");
   await sendReport.click();
@@ -97,8 +99,15 @@ try {
   await sendReport.click();
   await expect(page.getByText("Report sent.", { exact: false })).toBeVisible();
 
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await bugButton.click();
+  await page.getByLabel("What happened?").fill("A report without the conversation.");
+  await page.getByRole("checkbox", { name: "Include this conversation and run details" }).uncheck();
+  await sendReport.click();
+  await expect(page.getByText("Report sent.", { exact: false })).toBeVisible();
+
   const { uploads, modelRequests } = await worker.evaluate(() => reportFixture);
-  assert.equal(uploads.length, 3);
+  assert.equal(uploads.length, 4);
   assert.match(uploads[0].screenshot.data, /^\/9j\//);
   assert.equal(uploads[1].kind, "interrupted");
   assert.equal(uploads[1].diagnostics.state, "interrupted");
@@ -108,6 +117,9 @@ try {
   assert.equal(uploads[2].hostname, "report.fixture.test");
   assert.doesNotMatch(JSON.stringify(uploads[2]), /never-send-query|fixture-key/);
   assert.match(JSON.stringify(uploads[2].diagnostics.messages), /Task continued/);
+  assert.deepEqual(uploads[3].diagnostics.messages, []);
+  assert.deepEqual(uploads[3].diagnostics.events, []);
+  assert.equal(uploads[3].diagnostics.sessionId, undefined);
   assert.equal(modelRequests.length, 2);
   assert.match(JSON.stringify(modelRequests[1].messages), /Continue the interrupted user task/);
   console.log("Bug report UI, screenshot, diagnostics and retry passed.");

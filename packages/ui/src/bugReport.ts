@@ -29,12 +29,11 @@ export function createBugReportView(panel: HTMLElement) {
     <div class="bug-report-body">
       <label for="bug-description">What happened?</label>
       <textarea id="bug-description" rows="3" maxlength="1000"></textarea>
-      <input type="file" class="bug-file" accept="image/png,image/jpeg,image/webp" hidden>
       <div class="bug-attachment">
         <button type="button" class="bug-control bug-attach">Add screenshot</button>
         <span class="bug-paste-hint">You can also paste an image.</span>
         <div class="bug-preview" hidden>
-          <img alt="Screenshot preview">
+          <span class="bug-preview-media" role="img" aria-label="Screenshot preview"></span>
           <button type="button" class="bug-control bug-remove">Remove screenshot</button>
         </div>
       </div>
@@ -50,14 +49,22 @@ export function createBugReportView(panel: HTMLElement) {
   const find = <T extends HTMLElement>(selector: string) => view.querySelector<T>(selector)!;
   const body = find(".bug-report-body");
   const description = find<HTMLTextAreaElement>("textarea");
-  const file = find<HTMLInputElement>(".bug-file");
   const include = find<HTMLInputElement>(".bug-include input");
   const includeLabel = find(".bug-include");
   const closeButton = find<HTMLButtonElement>(".bug-report-close");
   const attachButton = find<HTMLButtonElement>(".bug-attach");
   const sendButton = find<HTMLButtonElement>(".bug-send");
   const preview = find(".bug-preview");
-  const previewImage = find<HTMLImageElement>("img");
+  // Keep the selected file and its image URL out of the page's open shadow tree.
+  const media = find(".bug-preview-media").attachShadow({ mode: "closed" });
+  const file = document.createElement("input");
+  file.type = "file";
+  file.accept = "image/png,image/jpeg,image/webp";
+  file.hidden = true;
+  const previewImage = document.createElement("img");
+  previewImage.alt = "";
+  previewImage.style.cssText = "display:block;width:100%;height:100%;object-fit:cover";
+  media.append(file, previewImage);
   const pasteHint = find(".bug-paste-hint");
   const feedback = find(".bug-feedback");
   let target: BugReportTarget | undefined;
@@ -221,7 +228,7 @@ export const BUG_REPORT_CSS = `
 .bug-attachment,.bug-preview,.bug-include{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .bug-include{flex-wrap:nowrap}
 .bug-include input{accent-color:var(--accent);margin:0}
-.bug-preview img{width:72px;height:45px;object-fit:cover;border-radius:5px;border:1px solid var(--border)}
+.bug-preview-media{width:72px;height:45px;overflow:hidden;border-radius:5px;border:1px solid var(--border)}
 .bug-paste-hint,.bug-privacy,.bug-feedback{margin:0;color:var(--text-muted);font-size:var(--fs-xs)}
 .bug-feedback{margin-right:auto;overflow-wrap:anywhere}
 .bug-feedback code{display:block;margin-top:3px}
