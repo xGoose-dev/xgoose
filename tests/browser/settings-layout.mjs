@@ -16,7 +16,7 @@ try {
   await page.setViewportSize({width,height:1000});
   await page.evaluate(async language=>{const key='xgoose.settings',s=(await chrome.storage.local.get(key))[key];await chrome.storage.local.set({[key]:{...s,language,analyticsEnabled:false}});},language);
   // A reload also exercises the locale's initial rendering and restored maximum font size.
-  for(const preset of ['default','glass','notebook','soft','bold']) {
+  for(const preset of ['default','glass','notebook','soft','bold','aurora','terminal','studio','pop','noir']) {
    await page.evaluate(async preset=>{const key='xgoose.settings',s=(await chrome.storage.local.get(key))[key];await chrome.storage.local.set({[key]:{...s,theme:'light',appearance:{preset,font:'default',fontScale:1.3}}});},preset);
    await page.reload();await expect(page.locator(`[data-preset=${preset}]`)).toHaveAttribute('aria-pressed','true');await expect(page.locator('#saveBtn')).toBeEnabled();
    const layout=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,overflow:[...document.querySelectorAll("body *")].filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&(r.right>innerWidth+0.5||r.left<-.5)&&!el.closest(".settings-nav")}).slice(0,12).map(el=>({tag:el.tagName,id:el.id,cls:el.className,right:el.getBoundingClientRect().right,scroll:el.scrollWidth,client:el.clientWidth})),controls:[...document.querySelectorAll('#appearance button,#appearance select,#appearance input,.footer button')].filter(el=>!el.hidden).map(el=>{const r=el.getBoundingClientRect();return {name:el.textContent.trim()||el.getAttribute('aria-label'),left:r.left,right:r.right,width:r.width,scroll:el.scrollWidth,client:el.clientWidth};})}));

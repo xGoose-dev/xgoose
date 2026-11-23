@@ -6,11 +6,11 @@ const state=(preset='default',fontScale=1)=>normalizeState({theme:'system',appea
 test('old settings retain mode, unknown appearance values normalize without discarding other preferences',()=>{
  assert.deepEqual(normalizeState({theme:'dark'}),{theme:'dark',appearance:{preset:'default',font:'default',fontScale:1}});
  assert.deepEqual(normalizeAppearance({preset:'__proto__',font:'constructor',fontScale:Infinity,accentColor:'url(secret)'}),state().appearance);
- assert.equal(normalizeAppearance({fontScale:10}).fontScale,1.3);
+ assert.equal(normalizeAppearance({fontScale:10}).fontScale,1.3);assert.equal(normalizeAppearance({fontScale:.1}).fontScale,.8);
 
 });
 test('presets differ in real materials and shapes, and their filled controls retain readable contrast',()=>{
- assert.equal(Object.keys(PRESETS).length,5);assert.equal(Object.keys(FONTS).length,4);
+ assert.equal(Object.keys(PRESETS).length,10);assert.equal(Object.keys(FONTS).length,4);
  for(const preset of Object.keys(PRESETS))for(const dark of [false,true]){
   const a=normalizeAppearance({preset}),colors=appearanceColors(a,dark);
   assert.ok(contrast(colors.accent,colors.onAccent)>=4.5);

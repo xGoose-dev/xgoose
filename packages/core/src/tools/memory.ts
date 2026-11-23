@@ -28,8 +28,7 @@ export function createRememberTool({
     label: (i) => `Remembered "${truncate(String(i?.note ?? ""), 40)}"`,
     execute: async ({ note }) => {
       const o = origin.getCurrentOrigin();
-      if (!o)
-        return { ok: false, error: "No recognizable origin for this page." };
+      if (!o) throw new Error("No recognizable origin for this page.");
       const updated = await memory.appendMemoryForOrigin(o, note);
       return { ok: true, origin: o, memory: updated };
     },
@@ -50,8 +49,7 @@ export function createForgetTool({
     label: () => "Forgot site memory",
     execute: async () => {
       const o = origin.getCurrentOrigin();
-      if (!o)
-        return { ok: false, error: "No recognizable origin for this page." };
+      if (!o) throw new Error("No recognizable origin for this page.");
       await memory.clearMemoryForOrigin(o);
       return { ok: true, origin: o };
     },

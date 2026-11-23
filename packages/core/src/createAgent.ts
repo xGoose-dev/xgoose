@@ -12,7 +12,7 @@ import {AssistantMessageEventStream} from "@earendil-works/pi-ai/utils/event-str
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { CoreSettings } from "./types";
 import type { HostFetcher } from "./ports";
-import { buildSystemPrompt } from "./systemPrompt";
+import { buildSystemPrompt, type PromptCapabilities } from "./systemPrompt";
 import { createModel } from "./model";
 import type { XgooseBuiltTool } from "./tools/buildTool";
 
@@ -25,7 +25,7 @@ export interface CreateAgentOpts {
   fetchImpl: HostFetcher;
   tools: XgooseBuiltTool[];
   reminder?: string | null;
-  capabilities?: {dynamicJavaScript:boolean;customSkills:boolean};
+  capabilities?: PromptCapabilities;
   maxSteps?: number;
   contextBudgetChars?: number;
   requestBudgetBytes?: number;

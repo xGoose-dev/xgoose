@@ -38,7 +38,7 @@ test('permanent authentication rejection stops after one replay and clearly repo
  const f=fixture(async()=>new Response('revoked',{status:401}));const response=await f.fetch(req);assert.equal(response.status,401);assert.match(await response.text(),/stopped listening and taking actions/);assert.equal(f.refreshes(),1);assert.equal(f.calls.length,2);
 });
 test('revoked refresh token does not send another model request',async()=>{
- const f=fixture(async()=>new Response('revoked',{status:401}));f.f.renew=async()=>({ok:false,status:401});const response=await f.fetch(req);assert.equal(response.status,401);assert.match(await response.text(),/Sign in again/);assert.equal(f.calls.length,1);assert.equal(f.read(),null);
+ const f=fixture(async()=>new Response('revoked',{status:401}));f.f.renew=async()=>({ok:false,status:401,rejected:true});const response=await f.fetch(req);assert.equal(response.status,401);assert.match(await response.text(),/Sign in again/);assert.equal(f.calls.length,1);assert.equal(f.read(),null);
 });
 test('BYOK 401s never read or refresh the Hosted account or replace its key',async()=>{
  const f=fixture(async()=>new Response('BYOK unauthorized',{status:401}));const result=await f.fetch({...req,hostedAccountId:undefined});assert.equal(result.status,401);assert.equal(f.refreshes(),0);assert.equal(new Headers(f.calls[0].init.headers).get('authorization'),'Bearer stale-sdk-placeholder');

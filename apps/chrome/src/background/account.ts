@@ -190,16 +190,17 @@ export async function logout(): Promise<void> {
 
 /**
  * Try to mint a new access token from the refresh token. Returns the updated
- * Account on success. Only a definitive rejection clears the account;
- * temporary connection failures remain retryable without another email login.
+ * Account on success. Only a rejection issued by the xgoose API clears the
+ * account; connection failures and 401/403 pages from proxies or captive
+ * portals remain retryable without another email login.
  */
 const accountSession=createAccountSession({read:getAccount,save:async(a)=>{if(!isSafari)await setAccount(a);},clear:clearAccount,renew:async(account)=>{
  if(isSafari){
   const next=await nativeCommand("account",{refresh:true});
-  return next?{ok:true,account:next}:{ok:false,status:401};
+  return next?{ok:true,account:next}:{ok:false,status:401,rejected:true};
  }
  const res=await apiFetch<{access_token:string;refresh_token:string;access_token_expires_at:string}>("/auth/refresh",{method:"POST",body:JSON.stringify({refresh_token:account.refreshToken,refresh_request_id:account.refreshRequestId}),signal:AbortSignal.timeout(8000)});
- if(!res.ok)return {ok:false,status:res.status};
+ if(!res.ok)return {ok:false,status:res.status,rejected:(res.status===401||res.status===403)&&(res.code==="unauthorized"||res.code==="forbidden")};
  return {ok:true,account:{...account,accessToken:res.data.access_token,refreshToken:res.data.refresh_token,accessTokenExpiresAt:res.data.access_token_expires_at,lastSeenAt:Date.now()}};
 }});
 export const refreshTokens=(rejectedToken?:string)=>accountSession.refresh(rejectedToken);

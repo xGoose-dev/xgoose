@@ -8,8 +8,8 @@
 // `registerToolLabels(...)` once at bootstrap to register matching
 // describers + summarizers.
 //
-// `describeToolCall(name, input)`  → { icon, iconClass, title, subtitle }
-//   Drives the tool-card header. For `js_exec` we surface the user-supplied
+// `describeToolCall(name, input)`  → { title, subtitle }
+//   Drives the tool row. For `js_exec` we surface the user-supplied
 //   `purpose` as the title — that's the "summary of code" the user sees
 //   while the tool is running.
 //
@@ -18,21 +18,16 @@
 //   resolves. Falls back to a generic "done" / count.
 
 export type ToolDescription = {
-  icon: string;
-  /** maps to .tool-ico.<iconClass> for color-coded backgrounds */
-  iconClass: "search" | "browse" | "user" | "list" | "code" | "mem";
   title: string;
   subtitle: string;
 };
 
 export type ToolLabelEntry = {
-  icon: string;
-  iconClass: ToolDescription["iconClass"];
   label: string;
   /** If set, use the value of `input[argKey]` as the default subtitle. */
   argKey?: string;
-  /** Custom call describer (overrides the default icon+label+argKey path). */
-  describe?: (input: any, meta: ToolLabelEntry) => ToolDescription;
+  /** Custom call describer (overrides the default label+argKey path). */
+  describe?: (input: any) => ToolDescription;
   /** Custom result summarizer (overrides the default "done" path). */
   summarize?: (output: any) => string;
 };
@@ -41,16 +36,14 @@ export type ToolLabelEntry = {
 
 const BASE_META: Record<string, ToolLabelEntry> = {
   search_web: {
-    icon: "🌐", iconClass: "search", label: "Public web search · Exa", argKey: "query",
+    label: "Public web search · Exa", argKey: "query",
     summarize: output => `${output?.results?.length ?? 0} sources · $${((output?.charged_micros ?? 0)/1e6).toFixed(3)}`,
   },
   emit_notification: {
-    icon:"🔔",iconClass:"user",label:"Notify user",argKey:"title",
+    label:"Notify user",argKey:"title",
     summarize:output=>output?.sent?"Notification sent":String(output?.reason??"unavailable"),
   },
   page_info: {
-    icon: "🛈",
-    iconClass: "browse",
     label: "Read page info",
     summarize: (output: any) => {
       const u = output?.url;
@@ -58,13 +51,9 @@ const BASE_META: Record<string, ToolLabelEntry> = {
     },
   },
   read_page: {
-    icon: "📄",
-    iconClass: "browse",
     label: "Read page",
     argKey: "format",
-    describe: (input, m) => ({
-      icon: m.icon,
-      iconClass: m.iconClass,
+    describe: (input) => ({
       title: `Read page ${String(input?.format ?? "text")}`,
       subtitle: input?.selector ? String(input.selector) : "body",
     }),
@@ -91,10 +80,8 @@ const BASE_META: Record<string, ToolLabelEntry> = {
     },
   },
   js_exec: {
-    icon: "⚡",
-    iconClass: "code",
     label: "Run JavaScript",
-    describe: (input, m) => {
+    describe: (input) => {
       const purpose = String(input?.purpose ?? "").trim();
       const parallel = input?.parallel_safe ? "parallel" : "serial";
       const sub: string[] = [parallel];
@@ -105,8 +92,6 @@ const BASE_META: Record<string, ToolLabelEntry> = {
         );
       }
       return {
-        icon: m.icon,
-        iconClass: m.iconClass,
         title: purpose || "Ran JavaScript",
         subtitle: sub.join(" · "),
       };
@@ -126,16 +111,12 @@ const BASE_META: Record<string, ToolLabelEntry> = {
     },
   },
   console_logs: {
-    icon: "🖥",
-    iconClass: "list",
     label: "Read console logs",
-    describe: (input, m) => {
+    describe: (input) => {
       const parts: string[] = [];
       if (input?.levels?.length) parts.push(input.levels.join(","));
       if (input?.limit) parts.push(`limit ${input.limit}`);
       return {
-        icon: m.icon,
-        iconClass: m.iconClass,
         title: "Read console logs",
         subtitle: parts.join(" · ") || "recent entries",
       };
@@ -144,16 +125,12 @@ const BASE_META: Record<string, ToolLabelEntry> = {
       Array.isArray(output) ? `${output.length} entries` : "ok",
   },
   network_requests: {
-    icon: "🌐",
-    iconClass: "list",
     label: "List network requests",
-    describe: (input, m) => {
+    describe: (input) => {
       const parts: string[] = [];
       if (input?.filter) parts.push(`filter:${input.filter}`);
       if (input?.limit) parts.push(`limit ${input.limit}`);
       return {
-        icon: m.icon,
-        iconClass: m.iconClass,
         title: "List network requests",
         subtitle: parts.join(" · ") || "recent requests",
       };
@@ -162,29 +139,21 @@ const BASE_META: Record<string, ToolLabelEntry> = {
       Array.isArray(output) ? `${output.length} requests` : "ok",
   },
   network_request: {
-    icon: "🔎",
-    iconClass: "list",
     label: "Read network request detail",
     argKey: "id",
-    describe: (input, m) => ({
-      icon: m.icon,
-      iconClass: m.iconClass,
+    describe: (input) => ({
       title: `Read network ${input?.part ?? "detail"}`,
       subtitle: input?.id ? `id ${input.id}` : "",
     }),
   },
   todo_write: {
-    icon: "✓",
-    iconClass: "list",
     label: "Update todo list",
-    describe: (input, m) => {
+    describe: (input) => {
       const n = Array.isArray(input?.todos) ? input.todos.length : 0;
       const inProg = (input?.todos as any[] | undefined)?.find(
         (t) => t?.status === "in_progress",
       );
       return {
-        icon: m.icon,
-        iconClass: m.iconClass,
         title: `Updated ${n}-item todo list`,
         subtitle: inProg
           ? `now: ${truncate(String(inProg.activeForm ?? inProg.content), 60)}`
@@ -194,12 +163,8 @@ const BASE_META: Record<string, ToolLabelEntry> = {
     summarize: (output: any) => `${output?.count ?? 0} items`,
   },
   remember: {
-    icon: "💾",
-    iconClass: "mem",
     label: "Remember",
-    describe: (input, m) => ({
-      icon: m.icon,
-      iconClass: m.iconClass,
+    describe: (input) => ({
       title: "Remember",
       subtitle: input?.note ? truncate(String(input.note), 70) : "",
     }),
@@ -207,8 +172,6 @@ const BASE_META: Record<string, ToolLabelEntry> = {
       output?.origin ? `saved to ${output.origin}` : "ok",
   },
   forget: {
-    icon: "🗑",
-    iconClass: "mem",
     label: "Forget site memory",
     summarize: (output: any) =>
       output?.origin ? `saved to ${output.origin}` : "ok",
@@ -239,24 +202,19 @@ function metaFor(name: string): ToolLabelEntry | undefined {
 
 export function describeToolCall(name: string, input: any): ToolDescription {
   const meta = metaFor(name);
-  if (meta?.describe) return meta.describe(input, meta);
+  if (meta?.describe) return meta.describe(input);
   if (meta) {
     const argVal = meta.argKey ? input?.[meta.argKey] : undefined;
     return {
-      icon: meta.icon,
-      iconClass: meta.iconClass,
       title: meta.label,
       subtitle: argVal !== undefined && argVal !== null ? String(argVal) : "",
     };
   }
-  return { icon: "⚙", iconClass: "list", title: name, subtitle: "" };
+  return { title: name, subtitle: "" };
 }
 
 export function summarizeToolResult(name: string, output: any): string {
   if (output == null) return "no data";
-  if (typeof output === "object" && output?.ok === false) {
-    return `error: ${truncate(String(output.error ?? "unknown"), 60)}`;
-  }
   const meta = metaFor(name);
   if (meta?.summarize) return meta.summarize(output);
   return "done";

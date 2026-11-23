@@ -10,22 +10,17 @@ import {userScriptsReminder} from "@/shared/userScriptsSetup";
 // SW for the skill registry and structured skill_call invocations.
 
 import { z } from "zod";
-import { parseSkillFile, SkillHeaderError } from "@xgoose/skill-runtime";
+import { parseSkillFile } from "@xgoose/skill-runtime";
 import { send } from "@/shared/messages";
 import { getSettings } from "@/shared/storage";
-import { originForUrl } from "@/shared/patterns";
 import { callBridge } from "@/content/pageRpc";
 import { getActiveSkills } from "@/content/state";
 import {
   detectActiveSkills,
   invalidateInjectedSkills,
 } from "@/content/skillInjector";
-import {
-  defineTool,
-  type XgooseBuiltTool,
-  type XgooseToolMeta,
-} from "./buildTool";
-import { boundedModelText, detachResultImages, getTodos, resultImageParts, websiteEvidence, type TodoItem } from "@xgoose/core";
+import { defineTool, type XgooseBuiltTool } from "./buildTool";
+import { boundedModelText, detachResultImages, resultImageParts, websiteEvidence } from "@xgoose/core";
 import { buildPageControllerTools as buildPageControllerCoreTools } from "@xgoose/page-controller";
 import { attachHostImages } from "../hostImages";
 import {capturePageImages} from '../../hostPorts/capturePort';
@@ -117,7 +112,7 @@ const readSkillTool = defineTool({
   label: (i) => `Read skill ${i?.name ?? ""}`.trim(),
   execute: async ({ name }) => {
     const res = await send("sw:get_skill_source", { name });
-    if (!res.ok) return res;
+    if (!res.ok) throw new Error(res.error);
     return { ok: true, name, origin: res.origin, source: res.source };
   },
 });
@@ -229,23 +224,17 @@ const helpTool = defineTool({
   execute: async ({ skill, function: fnName }) => {
     const all = await send("sw:list_skills", undefined);
     const meta = findSkillSummary(all, skill);
-    if (!meta) return { ok: false, error: `Unknown skill: ${skill}` };
+    if (!meta) throw new Error(`Unknown skill: ${skill}`);
     const ns = meta.namespace;
 
     // First try the live bundle: `__describe__` carries the full Zod-derived
     // JSON Schema and examples authored in the `.xgs.js` file. This is the
     // gold path — same answer the agent would get from a hand-rolled
     // `js_exec` against `xgoose.skills.<ns>.__describe__(fn?)`.
-    try {
-      const snapshot = await send("sw:skill_snapshot", undefined);
-      const info = snapshot[ns];
-      const result = fnName ? info?.functions?.[fnName] : info?.functions;
-      if (result) {
-        return {ok:true, skill:meta.name, namespace:ns, function:fnName ?? null, source:"live", help:result};
-      }
-    } catch {
-      /* fall through to static fallback below */
-    }
+    const snapshot = await send("sw:skill_snapshot", undefined).catch(() => undefined);
+    const live = snapshot?.[ns]?.functions;
+    const result = fnName ? live?.[fnName] : live;
+    if (result) return {ok:true, skill:meta.name, namespace:ns, function:fnName ?? null, source:"live", help:result};
 
     // Static fallback: the registry-recorded function summaries the build
     // pipeline emits via `__describe__()` at build time. Has signature +
@@ -255,14 +244,7 @@ const helpTool = defineTool({
     const fns = meta.functions ?? [];
     if (fnName) {
       const f = fns.find((x) => x.name === fnName);
-      if (!f) {
-        return {
-          ok: false,
-          error: `Function not found: ${ns}.${fnName} (available: ${fns
-            .map((x) => x.name)
-            .join(", ")})`,
-        };
-      }
+      if (!f) throw new Error(`Function not found: ${ns}.${fnName} (available: ${fns.map((x) => x.name).join(", ")})`);
       return {
         ok: true,
         skill: meta.name,
@@ -351,14 +333,8 @@ async function hotReloadCurrentTab(
   const match = active.find((s) => s.name === name);
   if (!match) return { active: false };
   invalidateInjectedSkills([name]);
-  try {
-    const detected = await detectActiveSkills(active);
-    if (!detected.some(s => s.name === name)) return { active:false, namespace:match.namespace };
-  } catch (err) {
-    console.warn(`[xgoose] hot-reload failed for ${name}:`, err);
-    return { active: false, namespace: match.namespace };
-  }
-  return { active: true, namespace: match.namespace };
+  const detected = await detectActiveSkills(active);
+  return { active: detected.some(s => s.name === name), namespace: match.namespace };
 }
 
 const editSkillTool = defineTool({
@@ -379,7 +355,7 @@ const editSkillTool = defineTool({
   label: (i) => `Edited skill ${i?.name ?? ""}`.trim(),
   execute: async ({ name, source }) => {
     const res = await send("sw:edit_skill", { name, source });
-    if (!res.ok) return res;
+    if (!res.ok) throw new Error(res.error);
     const reload = await hotReloadCurrentTab(name);
     return {
       ...res,
@@ -408,20 +384,9 @@ const skillHelpTool = defineTool({
   isConcurrencySafe: () => true,
   label: () => "Read skill authoring spec",
   execute: async () => {
-    try {
-      const url = chrome.runtime.getURL("skills/SKILL_AUTHORING.md");
-      const res = await fetch(url);
-      if (!res.ok) {
-        return {
-          ok: false,
-          error: `Failed to load authoring spec (HTTP ${res.status}). Skill creation may still work; see the README or xgoose.org/docs/skills for reference.`,
-        };
-      }
-      const text = await res.text();
-      return { ok: true, url, length: text.length, doc: text };
-    } catch (e: any) {
-      return { ok: false, error: e?.message ?? String(e) };
-    }
+    const url = chrome.runtime.getURL("skills/SKILL_AUTHORING.md");
+    const text = await (await fetch(url)).text();
+    return { ok: true, url, length: text.length, doc: text };
   },
 });
 
@@ -456,28 +421,11 @@ const createSkillTool = defineTool({
     return "Created skill";
   },
   execute: async ({ source }) => {
-    let parsed;
-    try {
-      parsed = parseSkillFile(source);
-    } catch (err) {
-      if (err instanceof SkillHeaderError) {
-        return {
-          ok: false,
-          error: `Header parse failed: ${err.message}. Call \`skill_help()\` to see the required directive set.`,
-        };
-      }
-      return { ok: false, error: String((err as Error)?.message ?? err) };
-    }
-    const name = parsed.header.name;
+    const name = parseSkillFile(source).header.name;
     const existing = await send("sw:list_skills", undefined);
-    if (existing.some((s) => s.name === name)) {
-      return {
-        ok: false,
-        error: `A skill named "${name}" already exists. Use \`edit_skill({ name: "${name}", source })\` to modify it, or pick a different \`@name\` in the header.`,
-      };
-    }
+    if (existing.some((s) => s.name === name)) throw new Error(`A skill named "${name}" already exists. Use \`edit_skill({ name: "${name}", source })\` to modify it, or pick a different \`@name\` in the header.`);
     const res = await send("sw:edit_skill", { name, source });
-    if (!res.ok) return res;
+    if (!res.ok) throw new Error(res.error);
     const reload = await hotReloadCurrentTab(name);
     return {
       ok: true,
@@ -574,14 +522,6 @@ export function buildLegacyTools(): XgooseBuiltTool[] {
   }), ...buildSkillTools()];
 }
 
-export const TOOL_META: Record<string, XgooseToolMeta> = Object.fromEntries(
-  buildLegacyTools().map((t) => [t.name, t.meta]),
-);
-
-export function getCurrentTodos(): TodoItem[] {
-  return getTodos();
-}
-
 // ---------- helpers ----------
 
 function truncate(s: string, n: number): string {
@@ -589,21 +529,7 @@ function truncate(s: string, n: number): string {
   return s.slice(0, n - 1) + "…";
 }
 
+/** JSON text for the model; a missing return value (`undefined`) becomes "null". */
 function safeJson(value: unknown): string {
-  try {
-    // `JSON.stringify(undefined)` returns `undefined` (NOT the string
-    // "undefined"), and the same is true for raw functions or symbols at
-    // the top level. Coalesce to "null" so callers can always safely read
-    // `.length` / `.slice()` on the result — this was the root cause of
-    // the "undefined is not an object (evaluating 'json3.length')" crash
-    // that `js_exec` was hitting for any user code that didn't explicitly
-    // `return` something (e.g. `window.location.href = "…"`).
-    const s = JSON.stringify(value);
-    return typeof s === "string" ? s : "null";
-  } catch {
-    return String(value);
-  }
+  return JSON.stringify(value) ?? "null";
 }
-
-// Re-export for the orchestrator.
-export { originForUrl };

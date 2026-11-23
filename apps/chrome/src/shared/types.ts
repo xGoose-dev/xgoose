@@ -86,7 +86,7 @@ export const SettingsSchema = z.object({
    * On by default; flipping this off in the options page stops all event
    * collection. No ad identifiers are ever collected. See `shared/analytics.ts`.
    */
-  analyticsEnabled: z.boolean().default(!isSafari),
+  analyticsEnabled: z.boolean().default(true),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});
@@ -243,10 +243,3 @@ export type StoredConversation = {
   usage?: any;
 };
 
-export type ResumePayload = {
-  convoId: string;
-  note: string;
-  at: number;
-  fromUrl?: string;
-  fromOrigin?: string;
-};

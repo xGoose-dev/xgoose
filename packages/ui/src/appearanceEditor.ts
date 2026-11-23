@@ -2,11 +2,12 @@ import {APPEARANCE_STYLE_CSS} from "./appearanceStyles";
 import {PRESETS,FONTS,applyAppearance,normalizeState,type AppearanceState} from "./appearance";
 import {AppearanceController,type AppearanceTrack} from "./appearanceController";
 export const APPEARANCE_EDITOR_CSS=APPEARANCE_STYLE_CSS+`
-.xg-appearance{display:grid;gap:24px;min-width:0;container:appearance-editor / inline-size;font-family:var(--xg-font,inherit);color:inherit;line-height:1.5}
+.xg-appearance{display:grid;grid-template-columns:minmax(0,1fr);grid-auto-columns:minmax(0,260px);gap:24px;min-width:0;container:appearance-editor / inline-size;font-family:var(--xg-font,inherit);color:inherit;line-height:1.5}
 .xg-appearance,.xg-appearance *{box-sizing:border-box}
 .xg-appearance fieldset{padding:0;margin:0;border:0;min-width:0}
 .xg-appearance legend{width:100%;font-weight:600;margin-bottom:10px;padding:0;font-size:1em}
-.xg-preset-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.xg-preset-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:12px 10px}
+.xg-preset-desc{padding:0 2px;font-size:.8em;font-weight:400;line-height:1.35;color:var(--text-muted,inherit);overflow-wrap:anywhere}
 .xg-preset-choice{display:grid;align-content:start;gap:8px;min-width:0;background:transparent;color:inherit;border:2px solid transparent!important;border-radius:12px!important;padding:5px!important;min-height:44px;cursor:pointer;font:inherit;text-align:left}
 .xg-preset-choice[aria-pressed=true]{border-color:var(--xg-accent,#7352e4)!important}
 .xg-preset-label{font-weight:600;padding:0 2px;overflow-wrap:anywhere}
@@ -19,7 +20,7 @@ export const APPEARANCE_EDITOR_CSS=APPEARANCE_STYLE_CSS+`
 .xg-appearance button:not(.xg-preset-choice){min-height:44px;border:var(--xg-border-width,1px) solid var(--border-input,#9296a0);border-radius:var(--xg-control-radius,8px);padding:8px 12px;background:transparent;color:inherit;font:inherit;cursor:pointer;overflow-wrap:anywhere}
 .xg-appearance :is(button,input,select):focus-visible{outline:2px solid var(--xg-accent,#7352e4);outline-offset:3px}
 .xg-size-heading output{float:right;font-weight:400;color:var(--text-muted,inherit);font-variant-numeric:tabular-nums}
-.xg-size-presets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.xg-size-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .xg-size-presets button[aria-pressed=true]{border-color:var(--xg-accent,#7352e4);box-shadow:inset 0 0 0 1px var(--xg-accent,#7352e4);background:var(--bg-input,transparent)}
 .xg-preview{display:grid;gap:16px;padding:18px;border:1px solid var(--border-input,#9296a0);border-radius:var(--xg-radius,12px);overflow-wrap:anywhere;background:var(--bg-input,transparent)}
 .xg-preview-copy{display:grid;align-content:center;gap:10px;min-width:0}.xg-preview p{margin:0;line-height:1.6}.xg-preview code{font-family:ui-monospace,monospace;font-size:.85em}.xg-preview-controls{display:grid;align-content:center;gap:10px;min-width:0}
@@ -27,8 +28,8 @@ export const APPEARANCE_EDITOR_CSS=APPEARANCE_STYLE_CSS+`
 .xg-editor-footer{display:flex;gap:12px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--border-input,#9296a0);padding-top:16px}
 .xg-appearance .xg-editor-footer [data-action=reset]{border-color:transparent;padding-inline:0;font-size:.875em;text-align:left}
 .xg-save-status{margin-inline-start:auto;font-size:.875em;color:var(--text-muted,inherit)}.xg-save-status:empty{display:none}.xg-retry[hidden]{display:none}
-@container appearance-editor (min-width:400px){.xg-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.xg-size-presets{grid-template-columns:repeat(4,minmax(0,1fr))}}
-@container appearance-editor (min-width:520px){.xg-preset-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.xg-preview{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}}
+@container appearance-editor (min-width:400px){.xg-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.xg-size-presets{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@container appearance-editor (min-width:620px){.xg-appearance>*{grid-column:1}.xg-appearance>.xg-preview{grid-column:2;grid-row:1 / span 3;align-self:start;position:sticky;top:24px}.xg-appearance>.xg-editor-footer{grid-column:1 / -1}}
 `;
 export function mountAppearanceEditor(root:HTMLElement,options:{initial:AppearanceState;save:(state:AppearanceState)=>Promise<void>;apply:(state:AppearanceState)=>void;track:AppearanceTrack;entry:string;t?:(value:string)=>string}) {
   const t=options.t??((s:string)=>s),dark=()=>matchMedia("(prefers-color-scheme: dark)").matches;
@@ -60,10 +61,10 @@ export function mountAppearanceEditor(root:HTMLElement,options:{initial:Appearan
     const b=document.createElement("button");b.type="button";b.dataset.preset=id;b.className="xg-preset-choice";b.title=t(preset.description);
     const sample=document.createElement("span");sample.className="xg-sample";sample.dataset.xgPreset=id;sample.setAttribute("aria-hidden","true");
     sample.innerHTML='<span class="xg-sample-title">xgoose</span><span class="xg-sample-line"></span><span class="xg-sample-bubble"></span><span class="xg-sample-input"></span>';
-    const label=document.createElement("span");label.className="xg-preset-label";label.textContent=t(preset.label);b.append(sample,label);
+    const label=document.createElement("span");label.className="xg-preset-label";label.textContent=t(preset.label);const desc=document.createElement("span");desc.className="xg-preset-desc";desc.textContent=t(preset.description);b.append(sample,label,desc);
     b.onclick=()=>controller.change({...controller.draft,appearance:{...controller.draft.appearance,preset:id as keyof typeof PRESETS}});root.querySelector(".xg-preset-grid")!.append(b);
   }
-  for(const [scale,label] of [[.9,"Small"],[1,"Standard"],[1.15,"Large"],[1.3,"Extra large"]] as const){const b=document.createElement("button");b.type="button";b.dataset.scale=String(scale);b.textContent=t(label);b.onclick=()=>controller.change({...controller.draft,appearance:{...controller.draft.appearance,fontScale:scale}});root.querySelector(".xg-size-presets")!.append(b);}
+  for(const [scale,label] of [[.8,"Extra small"],[.9,"Small"],[1,"Standard"],[1.15,"Large"],[1.3,"Extra large"]] as const){const b=document.createElement("button");b.type="button";b.dataset.scale=String(scale);b.textContent=t(label);b.onclick=()=>controller.change({...controller.draft,appearance:{...controller.draft.appearance,fontScale:scale}});root.querySelector(".xg-size-presets")!.append(b);}
   select("theme").onchange=()=>controller.change({...controller.draft,theme:select("theme").value as AppearanceState["theme"]});
   select("font").onchange=()=>controller.change({...controller.draft,appearance:{...controller.draft.appearance,font:select("font").value as AppearanceState["appearance"]["font"]}});
   const reset=root.querySelector<HTMLButtonElement>('[data-action=reset]')!;reset.textContent=t("Restore appearance defaults");reset.onclick=()=>{void controller.reset();};

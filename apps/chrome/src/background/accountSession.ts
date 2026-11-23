@@ -1,5 +1,7 @@
 import type {Account} from '@/shared/account';
-type Renewal = {ok:true;account:Account}|{ok:false;status:number};
+/** `rejected` is set only when the xgoose API itself refused the session. A bare
+ * 401/403 can come from a captive portal, proxy or firewall and keeps the account. */
+type Renewal = {ok:true;account:Account}|{ok:false;status:number;rejected?:boolean};
 export class SessionRefreshUnavailable extends Error {
  readonly status = 503;
  constructor(){super('Connection interrupted while renewing your session. Your account is still saved. Please retry.');this.name='SessionRefreshUnavailable';}
@@ -32,14 +34,14 @@ export function createAccountSession(io:{read:()=>Promise<Account|null>;save:(a:
    for(let attempt=0;attempt<3;attempt++){
     const current=await snapshot();if(epoch!==generation||!same(current,prepared))return current;
     try{result=await io.renew(prepared);}catch{result={ok:false,status:0};}
-    if(result.ok||![0,408,425,429].includes(result.status)&&result.status<500)break;
+    if(result.ok||result.rejected||![0,408,425,429].includes(result.status)&&result.status<500)break;
     if(attempt<2)await wait(250*(attempt+1));
    }
    return serialize(async()=>{
     const current=await io.read();
     if(epoch!==generation||!same(current,prepared))return current;
     if(!result.ok){
-     if(result.status===401||result.status===403){await io.clear();return null;}
+     if(result.rejected){await io.clear();return null;}
      throw new SessionRefreshUnavailable();
     }
     const {refreshRequestId:completed,...renewed}=result.account;

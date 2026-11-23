@@ -25,6 +25,7 @@ import { ensurePageBridge } from "./pageRpc";
 
 const USER_SKILL_PREFIX = "user-skill:";
 const SKILL_RUNTIME_FILE = "skillRuntime.js";
+const SKILL_RUNTIME_WANTED = "xgoose:skill-runtime-wanted";
 
 // Per-skill injection cache keyed by name → content fingerprint. The
 // fingerprint changes when the skill's underlying bundle changes:
@@ -43,8 +44,8 @@ const SKILL_RUNTIME_FILE = "skillRuntime.js";
 // injection — see `editSkillTool`/`createSkillTool` in tools/index.ts).
 const injectedSkills = new Map<string, string>();
 // One-shot per content-script lifetime: lazy-injects `skillRuntime.js`
-// into the page MAIN world right before the first user-skill IIFE runs.
-// Built-in skills bundle their own runtime, so they don't trigger this.
+// into the page MAIN world right before the first user-skill IIFE runs, or
+// when a built-in bundle that passed its `@detect` gate asks for it.
 let skillRuntimeReady: Promise<void> | null = null;
 
 export { ensurePageBridge };
@@ -111,8 +112,15 @@ export async function injectSkills(skills: RegistrySkill[]): Promise<void> {
 
   if (builtinFiles.length) {
     try {
-      const res = await send("sw:inject_skill_files", { files: builtinFiles });
+      // A bundle that passes its @detect gate asks for the shared runtime;
+      // pages where none does never receive it.
+      let runtimeWanted = false;
+      const want = () => { runtimeWanted = true; };
+      window.addEventListener(SKILL_RUNTIME_WANTED, want);
+      const res = await send("sw:inject_skill_files", { files: builtinFiles })
+        .finally(() => window.removeEventListener(SKILL_RUNTIME_WANTED, want));
       if (res.ok) {
+        if (runtimeWanted) await ensureSkillRuntime();
         for (let i = 0; i < builtinNames.length; i++) {
           injectedSkills.set(builtinNames[i], builtinFps[i]);
         }

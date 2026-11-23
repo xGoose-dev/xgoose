@@ -37,10 +37,8 @@ import { installSubstackReadContentBridge } from "@/shared/substackReadBridge";
 import { registerRouter, send } from "@/shared/messages";
 import { track,failureReason,setAnalyticsActive } from "@/shared/analytics";
 import {
-  clearResumeGlobal,
   deleteConversation,
   getConversation,
-  getLastConvoIdGlobal,
   getLayout,
   getMemoryForOrigin,
   getSettings,
@@ -50,7 +48,6 @@ import {
   newConversationId,
   saveConversation,
   saveLayout,
-  setLastConvoIdGlobal,
   setPanelOpenForOrigin,
 } from "@/shared/storage";
 import { getProviderApiKey, type RegistrySkill } from "@/shared/types";
@@ -167,7 +164,7 @@ async function bootstrap(): Promise<void> {
     await send("sw:open_options", undefined);
   });
 
-  // Skill chip menu actions: read / edit / disable / enable / publish.
+  // Skill chip menu actions: read / edit / disable / enable.
   panel.onSkillAction(async (action, name) => {
     switch (action) {
       case "read": {
@@ -203,15 +200,6 @@ async function bootstrap(): Promise<void> {
         await send("sw:set_skill_disabled", { name, disabled: false });
         panel.setStatus(`Enabled ${name}.`);
         await refreshSkills();
-        return;
-      }
-      case "publish": {
-        // xgoose-extension-chrome does not ship the xgoose-web publish
-        // backend yet. Edit + Save in the options page already produces a
-        // usable user skill; publishing is a follow-up feature.
-        panel.setStatus(
-          `Publishing is not yet supported in xgoose-extension-chrome.`,
-        );
         return;
       }
     }
@@ -517,15 +505,6 @@ async function bootstrap(): Promise<void> {
     panel.clear();
     panel.setStatus("");
     panel.setUsage(conversationUsage);
-    await setLastConvoIdGlobal("");
-    // Clear the pre-written resume marker too — otherwise a navigation
-    // shortly after "New" would auto-resume the OLD conversation.
-    try {
-      await clearResumeGlobal();
-      console.info("[xgoose:resume] cleared on new conversation");
-    } catch (e) {
-      console.warn("[xgoose:resume] clear on new failed", e);
-    }
   });
 
   panel.onStop(() => {
@@ -539,12 +518,6 @@ async function bootstrap(): Promise<void> {
       queuedMessages.length = 0;
       panel.setQueuedMessages([]);
     }
-    // Stop also clears the pre-written resume marker so the agent does
-    // NOT auto-continue if the page happens to navigate shortly after.
-    void clearResumeGlobal().then(
-      () => console.info("[xgoose:resume] cleared on user stop"),
-      (e) => console.warn("[xgoose:resume] clear on stop failed", e),
-    );
   });
 
   panel.onCancelQueued((index) => {
@@ -619,7 +592,6 @@ async function bootstrap(): Promise<void> {
     replayTodosFromMessages(conversationMessages);
     panel.setStatus(`Loaded: ${convo.title}`);
     panel.setUsage(conversationUsage);
-    void setLastConvoIdGlobal(convo.id);
   });
   panel.onDeleteConversation(async (id) => {
     if (id === currentConvoId) {
@@ -639,7 +611,6 @@ async function bootstrap(): Promise<void> {
       panel.clear();
       panel.setStatus("");
       panel.setUsage(conversationUsage);
-      await setLastConvoIdGlobal("");
     }
     await refreshHistory();
   });
@@ -786,7 +757,6 @@ async function bootstrap(): Promise<void> {
       // Show the submitted message and Stop control before waiting on storage.
       // Flush the first snapshot before any tool can navigate away from it.
       if (isFreshConversation) {
-        await setLastConvoIdGlobal(currentConvoId!);
         await persistCurrentConvo();
       } else {
         void persistCurrentConvo().catch(error => console.warn("[xgoose] conversation save failed", error));
@@ -969,10 +939,7 @@ async function bootstrap(): Promise<void> {
           }
           case "tool-result": {
             const card = toolCards.get(part.toolCallId);
-            if (card) {
-              if(part.output?.ok===false)card.setResult(undefined,String(part.output.error??"Tool failed"));
-              else card.setResult(part.output);
-            }
+            toolCards.get(part.toolCallId)?.setResult(part.output);
             if (inFlight) {
               inFlight.toolOutputs.set(part.toolCallId, {
                 output: part.output,
@@ -988,51 +955,19 @@ async function bootstrap(): Promise<void> {
               snapshotInFlightToMessages();
               snapshotted = true;
               navigated = true;
-              if (currentConvoId) {
-                try {
-                  await saveConversation({
-                    id: currentConvoId,
-                    origin: origin ?? "",
-                    title:
-                      currentConvoTitle ||
-                      (typeof conversationMessages[0]?.content === "string"
-                        ? String(conversationMessages[0].content).slice(0, 80)
-                        : "Untitled"),
-                    messages: conversationMessages,
-                    modelContext: modelContext ?? undefined,
-                    modelContextCovers: modelContext ? modelContextCovers : undefined,
-                    createdAt: Date.now(),
-                    updatedAt: Date.now(),
-                    usage: conversationUsage,
-                  });
-                } catch (e) {
-                  console.warn("[xgoose] nav persist failed", e);
-                }
-              }
+              await persistCurrentConvo().catch(error => console.warn("[xgoose] nav persist failed", error));
               // Stop the stream — any further fetch from the AI SDK will fail
               // once the page unloads anyway, so end it cleanly here.
               abortController?.abort(new Error("xgoose_navigation"));
             } else {
-              panel.setLoadingStatus(`Streaming response…`);
+              panel.setLoadingStatus("Thinking…");
             }
             break;
           }
           case "tool-error": {
-            const card = toolCards.get(part.toolCallId);
-            if (card) {
-              const msg =
-                part.error?.message ??
-                (typeof part.error === "string" ? part.error : "tool error");
-              card.setResult(undefined, String(msg));
-            }
-            const msg2 =
-              part.error?.message ??
-              (typeof part.error === "string" ? part.error : "tool error");
-            if (inFlight) {
-              inFlight.toolOutputs.set(part.toolCallId, {
-                error: String(msg2),
-              });
-            }
+            const message = String(part.error?.message ?? part.error);
+            toolCards.get(part.toolCallId)?.setResult(undefined, message);
+            inFlight?.toolOutputs.set(part.toolCallId, { error: message });
             break;
           }
           case "error": {
@@ -1100,10 +1035,6 @@ async function bootstrap(): Promise<void> {
         model: getSettings().model,
       });
       }
-
-      void clearResumeGlobal().catch((e) =>
-        console.warn("[xgoose:resume] stale clear failed", e),
-      );
     } catch (err: any) {
       peerOutcome = abortController?.signal.aborted ? "cancelled" : "failed";
       peerResult = describeTurnError(err);
@@ -1200,13 +1131,7 @@ async function bootstrap(): Promise<void> {
         if (part?.type !== "tool-result") continue;
         const callId = String(part.toolCallId ?? "");
         const card = liveCards.get(callId);
-        if (!card) continue;
-        const output = denormalizeToolOutput(part.output);
-        if (part.output?.type === "error-text" || part.output?.type === "error-json") {
-          card.setResult(undefined, String(output ?? "tool error"));
-        } else {
-          card.setResult(output);
-        }
+        if (card) applyStoredResult(card, part);
       }
     }
   }
@@ -1295,14 +1220,6 @@ async function bootstrap(): Promise<void> {
       `<action-result label=${JSON.stringify(action.label)}>\n${resultText}\n</action-result>`;
     void runAgentTurn(composed, { hidden: true });
   });
-
-  // Cross-page auto-resume is disabled. Drop any marker left by older builds so
-  // a navigation never restarts work on the next page.
-  try {
-    await clearResumeGlobal();
-  } catch (e) {
-    console.warn("[xgoose:resume] stale clear failed", e);
-  }
 
   void showRecommendations();
 
@@ -1421,6 +1338,14 @@ function denormalizeToolOutput(raw: unknown): unknown {
   if (typeof obj.type !== "string") return raw;
   if ("value" in obj) return obj.value;
   return raw;
+}
+
+/** Show a persisted tool-result part on its card, keeping failures as failures. */
+function applyStoredResult(card: ReturnType<Panel["addToolCard"]>, part: any): void {
+  const value = denormalizeToolOutput(part.output ?? part.result);
+  if (part.type === "tool-error" || part.error) card.setResult(undefined, String(part.error?.message ?? part.error));
+  else if (part.output?.type === "error-text" || part.output?.type === "error-json") card.setResult(undefined, typeof value === "string" ? value : JSON.stringify(value));
+  else card.setResult(value);
 }
 
 function cleanAssistantText(text: string): string {
@@ -1721,15 +1646,7 @@ function replayConversation(panel: Panel, messages: any[]): Map<string, ReturnTy
         const callId = String(p?.toolCallId ?? p?.id ?? "");
         if (!callId) continue;
         const card = cardsByCallId.get(callId);
-        if (!card) continue;
-        if (p?.type === "tool-error" || p?.error) {
-          const errMsg =
-            (typeof p.error === "string" ? p.error : p?.error?.message) ??
-            "tool error";
-          card.setResult(undefined, String(errMsg));
-        } else {
-          card.setResult(denormalizeToolOutput(p?.output ?? p?.result));
-        }
+        if (card) applyStoredResult(card, p);
       }
     } else if (msg.role === "xgoose-error") {
       panel.addErrorMessage(
@@ -1909,11 +1826,6 @@ async function deliverExport(
     panel.setStatus(`Export failed — see console`);
   }
 }
-
-// (The per-origin last-convo helpers that used to live here have moved to
-//  `src/shared/storage.ts` as `getLastConvoIdGlobal` / `setLastConvoIdGlobal`
-//  — the pointer is now a single global key so conversations follow the
-//  user across origins, which is what the unified-history feature requires.)
 
 // avoid "unused" stripping; keep the export shape stable for popup
 export {};

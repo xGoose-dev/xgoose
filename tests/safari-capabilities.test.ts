@@ -8,7 +8,7 @@ test('Safari prompt only describes supported tools while Chrome retains dynamic 
  assert.doesNotMatch(safari,/js_exec|edit_skill/);assert.match(safari,/skill_call/);
  assert.match(buildSystemPrompt(),/js_exec/);
 });
-test('Safari capability bundle removes dynamic tools and defaults analytics off',async()=>{
+test('Safari capability bundle removes dynamic tools',async()=>{
  const result=await build({stdin:{contents:'import {hostCapabilities} from "./apps/chrome/src/shared/host"; export {hostCapabilities};',resolveDir:process.cwd(),sourcefile:'capabilities.ts'},bundle:true,write:false,format:'iife',globalName:'SafariHost',define:{__XGOOSE_PLATFORM__:'"safari"'}});
  const vm=await import('node:vm');const context=vm.createContext({});vm.runInContext(result.outputFiles![0].text,context);
  assert.equal(context.SafariHost.hostCapabilities.dynamicJavaScript,false);assert.equal(context.SafariHost.hostCapabilities.customSkills,false);assert.equal(context.SafariHost.hostCapabilities.remoteSkillUpdates,false);

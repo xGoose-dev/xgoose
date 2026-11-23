@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { z as zodExports } from 'zod';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, '..');
@@ -28,6 +29,33 @@ const xgooseSkillAlias = {
   name: 'xgoose-skill-alias',
   setup(b) {
     b.onResolve({ filter: /^@xgoose\/skill$/ }, () => ({ path: RUNTIME }));
+  },
+};
+
+// Packaged bundles read zod and the skill runtime from the page global that
+// skillRuntime.js installs, so the 59 bundles share one copy instead of each
+// carrying its own. The build-time ESM bundle still resolves the real modules.
+// Every name zod exports is available, so `import { z }`, `import * as z` and
+// `import { ZodError }` all resolve; names a skill does not use are dropped.
+const ZOD_SHIM = [
+  'const z = globalThis.__xgooseSkillRuntime.z;',
+  'const pick = (name) => z[name];',
+  'export { z };',
+  'export default z;',
+  ...Object.keys(zodExports).map(
+    (name, i) => `const _${i} = /* @__PURE__ */ pick(${JSON.stringify(name)}); export { _${i} as ${name} };`,
+  ),
+].join('\n');
+const sharedRuntime = {
+  name: 'xgoose-shared-runtime',
+  setup(b) {
+    b.onResolve({ filter: /^(zod|@xgoose\/skill)$/ }, (args) => ({ path: args.path, namespace: 'xgoose-shared' }));
+    b.onLoad({ filter: /.*/, namespace: 'xgoose-shared' }, (args) => ({
+      contents: args.path === 'zod'
+        ? ZOD_SHIM
+        : 'const r = globalThis.__xgooseSkillRuntime; export const defineSkill = r.defineSkill, fn = r.fn;',
+      loader: 'js',
+    }));
   },
 };
 
@@ -68,7 +96,7 @@ async function main() {
 
   fs.writeFileSync(
     path.join(OUT, 'registry.json'),
-    JSON.stringify(registry, null, 2),
+    JSON.stringify(registry),
   );
   console.log(
     `[build-skills] wrote registry.json with ${registry.length} skill${
@@ -269,10 +297,12 @@ async function bundleBody({ body, entryHint, format, globalName }) {
     format,
     target: 'es2022',
     platform: 'browser',
-    minify: false,
+    minify: format === 'iife',
     legalComments: 'none',
     logLevel: 'warning',
-    plugins: [xgooseSkillAlias],
+    // An import the shared runtime cannot supply would be `undefined` in the page.
+    logOverride: { 'import-is-undefined': 'error' },
+    plugins: [format === 'iife' ? sharedRuntime : xgooseSkillAlias],
   };
   if (globalName) opts.globalName = globalName;
   const result = await build(opts);
@@ -353,13 +383,15 @@ function wrapForBrowser({ header, iifeBody }) {
   return [
     ';(function () {',
     `  try { if (!(${detectExpr})) return; } catch (_) { return; }`,
+    '  var w = window;',
+    '  var install = function () {',
     `  globalThis.__XGOOSE_SKILL_META__ = ${JSON.stringify({
       name: header.name,
       namespace: header.namespace,
       primary: header.primary,
     })};`,
-    `  ${iifeBody.replace(/\n/g, '\n  ')}`,
-    '  var w = window;',
+    // Inserted verbatim: minified strings can contain real newlines.
+    iifeBody,
     '  w.xgoose = w.xgoose || { skills: {} };',
     '  w.xgoose.skills = w.xgoose.skills || {};',
     `  var __skill__ = (typeof __xgoose_skill_module__ !== 'undefined' && __xgoose_skill_module__ && __xgoose_skill_module__.default)`,
@@ -367,6 +399,12 @@ function wrapForBrowser({ header, iifeBody }) {
     `  if (__skill__ && typeof __skill__ === 'object') {`,
     `    w.xgoose.skills[${JSON.stringify(header.namespace)}] = __skill__;`,
     `  }`,
+    '  };',
+    // The shared runtime loads only on pages where a bundle passed its @detect
+    // gate: the bundle asks for it here and skillRuntime.js runs the install.
+    '  if (w.__xgooseSkillRuntime) { install(); return; }',
+    '  (w.__xgooseSkillPending = w.__xgooseSkillPending || []).push(install);',
+    "  w.dispatchEvent(new Event('xgoose:skill-runtime-wanted'));",
     '})();',
     '',
   ].join('\n');

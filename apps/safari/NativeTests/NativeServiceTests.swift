@@ -9,7 +9,8 @@ final class NativeServiceTests:XCTestCase {
         let path=try NativeService.directory.appendingPathComponent("state-v2.json")
         original=try? Data(contentsOf:path);secrets=try Vault.read()
         let defaults=UserDefaults(suiteName:appGroup)!
-        for key in ["xgoose.settings","xgoose.account"] {if let value=defaults.object(forKey:key){legacyDefaults[key]=value}}
+        // Every test starts as a new install; the previous contents return in tearDown.
+        for key in ["xgoose.settings","xgoose.account"] {if let value=defaults.object(forKey:key){legacyDefaults[key]=value};defaults.removeObject(forKey:key)}
         try? FileManager.default.removeItem(at:path);try Vault.write([:])
     }
     override func tearDownWithError() throws {
@@ -29,6 +30,10 @@ final class NativeServiceTests:XCTestCase {
         XCTAssertEqual((settings?["appearance"] as? JSONObject)?["preset"] as? String,"notebook")
     }
     func testAppearanceTelemetryConsentAndPersistentQueue() async throws {
+        // Analytics is on for a new install; turning it off stops and clears collection.
+        _ = await NativeQueue.shared.run("analytics-track",["name":"appearance_opened","params":["preset":"notebook"]])
+        XCTAssertEqual((try NativeService.load()["appearanceEvents"] as? [JSONObject] ?? []).count,1)
+        _ = await NativeQueue.shared.run("patch",["settings":["analyticsEnabled":false]])
         _ = await NativeQueue.shared.run("analytics-track",["name":"appearance_opened","params":["preset":"notebook"]])
         XCTAssertTrue((try NativeService.load()["appearanceEvents"] as? [JSONObject] ?? []).isEmpty)
         _ = await NativeQueue.shared.run("patch",["settings":["analyticsEnabled":true]])
@@ -112,15 +117,73 @@ final class NativeServiceTests:XCTestCase {
         XCTAssertEqual(RefreshProtocol.next,2)
         XCTAssertEqual((try Vault.read()["account"] as? JSONObject)?["refreshToken"] as? String,"refresh-2")
     }
+    func testSigningInTurnsOnHostedWithTheCatalogueDefaultModel() async throws {
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[HostedProtocol.self]
+        NativeService.requestSession=URLSession(configuration:config)
+        HostedProtocol.consents=0
+        let fresh=((await NativeQueue.shared.run("view"))["value"] as? JSONObject)?["settings"] as? JSONObject
+        XCTAssertEqual(fresh?["model"] as? String,"deepseek-flash");XCTAssertEqual(fresh?["analyticsEnabled"] as? Bool,true)
+        let blocked=await NativeQueue.shared.run("hosted-ready")
+        XCTAssertEqual(blocked["ok"] as? Bool,false,"Hosted needs an account")
+        try Vault.write(["pending":["email":"new@example.com","token":"poll-token","expiresAt":Date().timeIntervalSince1970*1000+600000]])
+        _ = await NativeQueue.shared.run("patch",["settings":["model":"retired-model"]])
+        let view=(await NativeQueue.shared.run("view"))["value"] as? JSONObject
+        XCTAssertEqual((view?["user"] as? JSONObject)?["email"] as? String,"new@example.com")
+        XCTAssertEqual(view?["hostedAccepted"] as? Bool,true,"signing in is the agreement")
+        XCTAssertEqual((view?["settings"] as? JSONObject)?["model"] as? String,"deepseek-flash")
+        XCTAssertEqual(HostedProtocol.consents,1)
+        let ready=await NativeQueue.shared.run("hosted-ready")
+        XCTAssertEqual(ready["ok"] as? Bool,true);XCTAssertEqual(HostedProtocol.consents,1)
+    }
+    func testOnlyAnApiRejectionSignsTheUserOut() async throws {
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[RefreshProtocol.self]
+        NativeService.requestSession=URLSession(configuration:config)
+        defer {RefreshProtocol.rejection=nil}
+        let stored:JSONObject=["user":["id":"test-user"],"refreshToken":"refresh-9","accessToken":"expired","accessTokenExpiresAt":"2000-01-01T00:00:00Z"]
+        // A captive portal or proxy answers 403 without the API's error code.
+        try Vault.write(["account":stored]);RefreshProtocol.rejection=(403,["message":"Sign in to the network"])
+        let blocked=await NativeQueue.shared.run("account",["refresh":true])
+        XCTAssertNotEqual(blocked["ok"] as? Bool,true)
+        let kept=try Vault.read()["account"] as? JSONObject
+        XCTAssertEqual(kept?["refreshToken"] as? String,"refresh-9")
+        XCTAssertNotNil(kept?["refreshRequestId"],"the rotation stays retryable")
+        RefreshProtocol.rejection=(401,["error":"unauthorized","message":"revoked"])
+        _ = await NativeQueue.shared.run("account",["refresh":true])
+        XCTAssertNil(try Vault.read()["account"])
+    }
+}
+
+/// The sign-in, consent and catalogue endpoints of a Hosted account.
+final class HostedProtocol:URLProtocol {
+    static var consents=0
+    override class func canInit(with request:URLRequest)->Bool {true}
+    override class func canonicalRequest(for request:URLRequest)->URLRequest {request}
+    override func startLoading() {
+        let value:JSONObject
+        switch request.url!.path {
+        case "/auth/extension/poll":value=["status":"ok","user":["id":"new-user","email":"new@example.com"],"access_token":"access","refresh_token":"refresh","access_token_expires_at":"2999-01-01T00:00:00Z"]
+        case "/me/transcript-consent":Self.consents+=1;value=["hosted":true,"byok":false]
+        case "/ai/v1/models":value=["default_model":"deepseek-flash","data":[["id":"claude-haiku-5-5"],["id":"deepseek-flash"]]]
+        default:value=[:]
+        }
+        client?.urlProtocol(self,didReceive:HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["content-type":"application/json"])!,cacheStoragePolicy:.notAllowed)
+        client?.urlProtocol(self,didLoad:try! JSONSerialization.data(withJSONObject:value));client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }
 
 final class RefreshProtocol:URLProtocol {
     static var next=0
+    static var rejection:(status:Int,body:JSONObject)?
     override class func canInit(with request:URLRequest)->Bool {true}
     override class func canonicalRequest(for request:URLRequest)->URLRequest {request}
     override func startLoading() {
         var data=request.httpBody ?? Data()
         if data.isEmpty,let stream=request.httpBodyStream {stream.open();defer{stream.close()};var bytes=[UInt8](repeating:0,count:4096);while stream.hasBytesAvailable {let count=stream.read(&bytes,maxLength:bytes.count);if count<=0 {break};data.append(contentsOf:bytes.prefix(count))}}
+        if let rejection=Self.rejection {
+            client?.urlProtocol(self,didReceive:HTTPURLResponse(url:request.url!,statusCode:rejection.status,httpVersion:nil,headerFields:["content-type":"application/json"])!,cacheStoragePolicy:.notAllowed)
+            client?.urlProtocol(self,didLoad:try! JSONSerialization.data(withJSONObject:rejection.body));client?.urlProtocolDidFinishLoading(self);return
+        }
         let body=(try? JSONSerialization.jsonObject(with:data)) as? JSONObject
         let valid=body?["refresh_token"] as? String == "refresh-\(Self.next)"
         if valid {Self.next+=1}

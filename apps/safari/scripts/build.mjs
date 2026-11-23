@@ -28,7 +28,7 @@ for(const file of ['skillRuntime.js',...registry.map(s=>s.filePath)]){
  writeFileSync(path,wrapped);
  const entry=registry.find(s=>s.filePath===file);if(entry)entry.sha=createHash('sha256').update(wrapped).digest('hex');
 }
-writeFileSync(resolve(out,'skills/registry.json'),JSON.stringify(registry,null,2));
+writeFileSync(resolve(out,'skills/registry.json'),JSON.stringify(registry));
 cpSync(resolve(chrome,'static/images'),resolve(out,'images'),{recursive:true});
 cpSync(resolve(root,'../../packages/ui/src/theme-presets/fonts'),resolve(out,'fonts'),{recursive:true});
 for(const file of ['agent.html','agent.css'])cpSync(resolve(chrome,'static',file),resolve(out,file));

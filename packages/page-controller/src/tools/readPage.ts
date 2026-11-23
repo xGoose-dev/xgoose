@@ -8,12 +8,7 @@ function truncate(s: string, n: number): string {
 }
 
 function safeJson(value: unknown): string {
-  try {
-    const s = JSON.stringify(value);
-    return typeof s === "string" ? s : "null";
-  } catch {
-    return String(value);
-  }
+  return JSON.stringify(value) ?? "null";
 }
 
 // Truncate large array results by counting bytes prefix-wise so the agent
@@ -95,18 +90,8 @@ export function createReadPageTool(): XgooseBuiltTool {
     execute: async ({ format, selector, maxBytes }) => {
       const max = maxBytes ?? resultBudgetBytes();
       const sel = selector ?? "body";
-      let root: Element | null = null;
-      try {
-        root = document.querySelector(sel);
-      } catch (err: any) {
-        return {
-          ok: false,
-          error: `Invalid selector: ${err?.message ?? String(err)}`,
-        };
-      }
-      if (!root) {
-        return { ok: false, error: `No element matched selector: ${sel}` };
-      }
+      const root = document.querySelector(sel);
+      if (!root) throw new Error(`No element matched selector: ${sel}`);
 
       if (format === "text") {
         const text = (root as HTMLElement).innerText ?? root.textContent ?? "";
@@ -188,8 +173,6 @@ export function createReadPageTool(): XgooseBuiltTool {
         }
         return paginateArray("outline", outline, max);
       }
-
-      return { ok: false, error: `Unknown format: ${format}` };
     },
   });
 }

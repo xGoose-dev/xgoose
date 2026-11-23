@@ -25,6 +25,8 @@ import SafariServices
     var user: JSONObject? { state["user"] as? JSONObject }
     var language: String { settings["language"] as? String ?? "auto" }
     var hosted: Bool { settings["provider"] as? String ?? "xgoose-hosted" == "xgoose-hosted" }
+    var connectionVerified: Bool { connectionReady && state["connectionTested"] as? Bool == true }
+    var providerName: String { ["xgoose-hosted":"xgoose Hosted","gemini":"Gemini","gemini-litellm":"Gemini via LiteLLM","openai-compat":"OpenAI-compatible"][settings["provider"] as? String ?? "xgoose-hosted"] ?? "" }
     var connectionReady: Bool { hosted ? user != nil && state["hostedAccepted"] as? Bool == true : state["providerAccepted"] as? Bool == true && (state["configuredProviders"] as? [String] ?? []).contains(settings["provider"] as? String ?? "") }
     func t(_ en:String,_ zh:String,_ es:String? = nil) -> String {
         let selected = language == "auto" ? Locale.preferredLanguages.first ?? "en" : language
@@ -115,15 +117,22 @@ struct RootView: View {
                         VStack(alignment:.leading,spacing:5) { Text("xgoose").font(.largeTitle.bold()); Text(model.t("Your AI, on the page.","你的 AI，就在当前网页。","Tu IA, en la página.")).foregroundStyle(.secondary) }
                     }.padding(.vertical,12)
                 }
-                Section(model.t("Get ready in Safari","在 Safari 开始使用","Empieza en Safari")) {
-                    if model.state["firstAnswerAt"] == nil {Button(model.t("Continue setup","继续首次配置","Continuar configuración")){setupPresented=true}}
-                    NavigationLink { LanguageView() } label: { checklist("1",model.t("Choose your language","选择语言","Elige tu idioma"),model.state["languageChosen"] as? Bool == true) }
-                    NavigationLink { ConnectionView() } label: { checklist("2",model.t("Connect your AI","连接 AI","Conecta tu IA"),model.connectionReady && model.state["connectionTested"] as? Bool == true) }
-                    NavigationLink { EnableView() } label: { checklist("3",model.t("Enable Safari extension","启用 Safari 扩展","Activa la extensión"),model.enabled == true) }
-                    NavigationLink { TryView() } label: { checklist("4",model.t("Allow a website & try a chat","授权网站并开始聊天","Autoriza un sitio y prueba el chat"),model.state["firstAnswerAt"] != nil) }
-                    if model.state["firstAnswerAt"] != nil { Label(model.t("Your first answer is ready. You're set!","首次回答已完成，可以开始使用了！","Tu primera respuesta está lista."),systemImage:"checkmark.seal.fill").foregroundStyle(.green) }
+                if model.state["firstAnswerAt"] == nil {
+                    Section {
+                        NavigationLink { LanguageView() } label: { checklist("1",model.t("Choose your language","选择语言","Elige tu idioma"),model.state["languageChosen"] as? Bool == true) }
+                        NavigationLink { ConnectionView() } label: { checklist("2",model.t("Connect your AI","连接 AI","Conecta tu IA"),model.connectionVerified) }
+                        NavigationLink { EnableView() } label: { checklist("3",model.t("Enable Safari extension","启用 Safari 扩展","Activa la extensión"),model.enabled == true) }
+                        NavigationLink { TryView() } label: { checklist("4",model.t("Allow a website & try a chat","授权网站并开始聊天","Autoriza un sitio y prueba el chat"),false) }
+                        Button {setupPresented=true} label: {Text(model.t("Continue setup","继续首次配置","Continuar configuración")).fontWeight(.semibold).frame(maxWidth:.infinity)}
+                    } header: {Text(model.t("Get ready in Safari","在 Safari 开始使用","Empieza en Safari"))}
+                } else {
+                    Section {
+                        Label(model.t("Your first answer is ready. You're set!","首次回答已完成，可以开始使用了！","Tu primera respuesta está lista."),systemImage:"checkmark.seal.fill").foregroundStyle(.green)
+                        NavigationLink(model.t("Try it on a website","去网站试用","Pruébalo en un sitio")) { TryView() }
+                    }
                 }
                 Section(model.t("Settings","设置","Ajustes")) {
+                    NavigationLink { ConnectionView() } label: { LabeledContent(model.t("AI provider","AI 服务","Proveedor de IA"),value:model.providerName) }
                     NavigationLink(model.t("Account & Hosted AI","账号与 Hosted AI","Cuenta e IA Hosted")) { AccountView() }
                     NavigationLink(model.t("Built-in website skills","内置网站技能","Habilidades integradas")) { SkillsView() }
                     NavigationLink(model.t("Personalization","个性化","Personalización")) { PersonalizationView() }
@@ -149,12 +158,12 @@ struct GuidedSetupView:View {
     @EnvironmentObject var model:AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var step=0
+    private let last=3
     var canContinue:Bool {
         switch step {
         case 0:return model.state["languageChosen"] as? Bool == true
-        case 1:return model.hosted ? model.user != nil : (model.state["configuredProviders"] as? [String] ?? []).contains(model.settings["provider"] as? String ?? "")
-        case 2:return model.connectionReady && model.state["connectionTested"] as? Bool == true
-        case 3:return true // Moving to website verification does not mark the extension enabled.
+        case 1:return model.connectionVerified
+        case 2:return true // Moving to website verification does not mark the extension enabled.
         default:return model.state["firstAnswerAt"] != nil
         }
     }
@@ -164,25 +173,29 @@ struct GuidedSetupView:View {
                 switch step {
                 case 0:LanguageView()
                 case 1:ConnectionView()
-                case 2:ConnectionView()
-                case 3:EnableView()
+                case 2:EnableView()
                 default:TryView()
                 }
             }
+            .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge:.top) {
+                HStack(spacing:6) {ForEach(0...last,id:\.self) {index in Capsule().fill(index<=step ? Color.accentColor:Color.secondary.opacity(0.25)).frame(height:4)}}
+                    .padding(.horizontal).padding(.vertical,8).background(.bar)
+                    .accessibilityElement().accessibilityLabel(model.t("Step \(step+1) of \(last+1)","第 \(step+1) 步，共 \(last+1) 步","Paso \(step+1) de \(last+1)"))
+            }
             .safeAreaInset(edge:.bottom) {
                 VStack(spacing:10) {
-                    Text(model.t("Step \(step+1) of 5","第 \(step+1) 步，共 5 步","Paso \(step+1) de 5")).font(.footnote).foregroundStyle(.secondary)
-                    if step==2 {Text(model.t("Review the model and data use, then test your connection.","确认模型与数据使用说明，然后测试连接。","Revisa el modelo y el uso de datos y prueba la conexión.")).font(.footnote)}
-                    Button(step==4 ? model.t("Finish","完成","Finalizar") : model.t("Continue","继续","Continuar")) {
-                        if step==4 {dismiss()} else {step+=1}
-                    }.buttonStyle(.borderedProminent).disabled(!canContinue)
-                    Button(model.t("Set up later","稍后配置","Configurar más tarde")) {Task {await model.patch(["dismissed":true]);dismiss()}}
-                }.frame(maxWidth:.infinity).padding().background(.regularMaterial)
+                    if step==1 && !canContinue {Text(model.t("Review the model and data use, then test your connection.","确认模型与数据使用说明，然后测试连接。","Revisa el modelo y el uso de datos y prueba la conexión.")).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)}
+                    HStack(spacing:12) {
+                        if step>0 {Button(model.t("Back","返回","Atrás")) {step-=1}.buttonStyle(.bordered)}
+                        Button {if step==last {dismiss()} else {step+=1}} label: {Text(step==last ? model.t("Finish","完成","Finalizar") : model.t("Continue","继续","Continuar")).frame(maxWidth:.infinity)}.buttonStyle(.borderedProminent).disabled(!canContinue)
+                    }.controlSize(.large)
+                }.padding().background(.bar)
             }
-            .toolbar {ToolbarItem(placement:.topBarTrailing){Button(model.t("Close","关闭","Cerrar")){Task {await model.patch(["dismissed":true]);dismiss()}}}}
+            .toolbar {ToolbarItem(placement:.topBarTrailing){Button(model.t("Set up later","稍后配置","Configurar más tarde")){Task {await model.patch(["dismissed":true]);dismiss()}}}}
         }
         .onAppear {
-            if model.state["languageChosen"] as? Bool == true {step=model.connectionReady && model.state["connectionTested"] as? Bool == true ? 3 : 1}
+            if model.state["languageChosen"] as? Bool == true {step=model.connectionVerified ? 2 : 1}
         }
     }
 }
@@ -208,7 +221,7 @@ struct ConnectionView:View {
     var provider:String {model.settings["provider"] as? String ?? "xgoose-hosted"}
     var body:some View {Form {
         Section(model.t("AI provider","AI 服务","Proveedor de IA")) {
-            Picker(model.t("Provider","服务商","Proveedor"),selection:Binding(get:{provider},set:{value in Task {await model.settingsPatch(["provider":value,"model":value == "xgoose-hosted" ? "claude-haiku-5-5":value == "openai-compat" ? "gpt-4o-mini":"gemini-2.5-flash"]); key="";selectedModel=model.settings["model"] as? String ?? "";base=(model.settings["baseUrls"] as? [String:String])?[value] ?? ""}})) {
+            Picker(model.t("Provider","服务商","Proveedor"),selection:Binding(get:{provider},set:{value in Task {await model.settingsPatch(["provider":value,"model":value == "xgoose-hosted" ? hostedDefaultModel:value == "openai-compat" ? "gpt-4o-mini":"gemini-2.5-flash"]); key="";selectedModel=model.settings["model"] as? String ?? "";base=(model.settings["baseUrls"] as? [String:String])?[value] ?? ""}})) {
                 Text("xgoose Hosted").tag("xgoose-hosted"); Text("Gemini").tag("gemini"); Text("Gemini via LiteLLM").tag("gemini-litellm"); Text("OpenAI-compatible").tag("openai-compat")
             }
         }
@@ -250,7 +263,7 @@ struct AccountView:View {
                 if let quota=model.cloud["quota"] as? JSONObject {Text(model.t("Available credit","可用额度","Crédito disponible")+": "+String(format:"$%.2f",(quota["remaining_micros"] as? Double ?? 0)/1_000_000))}
                 if (model.cloud["quota"] as? JSONObject)?["claimable"] as? Bool == true {Button(model.t("Claim trial credit","领取试用额度","Obtener crédito de prueba")) {Task {_ = await model.call("claim-trial");await model.loadCloud()}}}
                 let models=model.cloud["models"] as? [JSONObject] ?? []
-                if !models.isEmpty {Picker(model.t("Model","模型","Modelo"),selection:Binding(get:{model.hosted ? model.settings["model"] as? String ?? "claude-haiku-5-5" : hostedModel.isEmpty ? (models.first?["id"] as? String ?? "") : hostedModel},set:{id in hostedModel=id;if model.hosted {Task {await model.settingsPatch(["model":id])}}})) {ForEach(models.compactMap{$0["id"] as? String},id:\.self) {Text($0).tag($0)}}}
+                if !models.isEmpty {Picker(model.t("Model","模型","Modelo"),selection:Binding(get:{model.hosted ? model.settings["model"] as? String ?? hostedDefaultModel : hostedModel.isEmpty ? (models.first?["id"] as? String ?? "") : hostedModel},set:{id in hostedModel=id;if model.hosted {Task {await model.settingsPatch(["model":id])}}})) {ForEach(models.compactMap{$0["id"] as? String},id:\.self) {Text($0).tag($0)}}}
                 Text(model.t("Hosted sends your messages, relevant page content and images to xgoose and its AI providers. Conversations are stored in the cloud and may be accessed by authorized administrators. Use BYOK if you prefer your own provider.","Hosted 会将消息、相关网页内容和图片发送给 xgoose 及其 AI 服务商。会话保存在云端，授权管理员可访问。也可以选择自带 API key。","Hosted envía mensajes, contenido e imágenes a xgoose y sus proveedores. Las conversaciones se guardan en la nube y administradores autorizados pueden acceder."))
                 Button(model.state["hostedAccepted"] as? Bool == true ? model.t("Hosted enabled","Hosted 已启用","Hosted activado") : model.t("Agree & use Hosted","同意并使用 Hosted","Aceptar y usar Hosted")) {Task {_ = await model.call("consent",["model":hostedModel]);await model.reload()}}
                 Button(model.t("Refresh models & credit","刷新模型与额度","Actualizar modelos y crédito")) {Task {await model.loadCloud()}}
@@ -269,7 +282,7 @@ struct AccountView:View {
                     Button(model.t("Send sign-in email","发送登录邮件","Enviar correo de acceso")) {Task {_ = await model.call("login-start",["email":email]);await model.reload()}}.disabled(!email.contains("@"))
                 }
                 if let error=model.state["loginError"] as? String {Text(error).foregroundStyle(.red)}
-            } header: {Text(model.t("Email confirmation sign-in","邮箱确认登录","Acceso por correo"))} footer: {Text(model.t("New accounts are created when you confirm. No password required. You can also use BYOK without an xgoose account.","确认邮箱时会创建新账号，无需密码。也可以无需 xgoose 账号使用自带 API key。","La cuenta se crea al confirmar. No necesitas contraseña. BYOK no requiere cuenta."))}
+            } header: {Text(model.t("Email confirmation sign-in","邮箱确认登录","Acceso por correo"))} footer: {Text(model.t("Signing in turns on Hosted AI: your messages, relevant page content and images are sent to xgoose and its AI providers, and conversations are stored in the cloud, where authorized administrators may access them. New accounts are created when you confirm. No password required. You can also use BYOK without an xgoose account.","登录即启用 Hosted AI：消息、相关网页内容和图片会发送给 xgoose 及其 AI 服务商，会话保存在云端，授权管理员可访问。确认邮箱时会创建新账号，无需密码。也可以无需 xgoose 账号使用自带 API key。","Al iniciar sesión se activa la IA Hosted: tus mensajes, el contenido relevante de la página y las imágenes se envían a xgoose y sus proveedores de IA, y las conversaciones se guardan en la nube, donde administradores autorizados pueden acceder. La cuenta se crea al confirmar. No necesitas contraseña. BYOK no requiere cuenta."))}
         }
     }.navigationTitle(model.t("Account","账号","Cuenta"))
      .task(id:model.user?["id"] as? String) {if model.user != nil {await model.loadCloud()}}
@@ -281,8 +294,8 @@ struct AccountView:View {
 struct EnableView:View {
     @EnvironmentObject var model:AppModel
     var body:some View {List {
-        Section {Image(systemName:"puzzlepiece.extension.fill").font(.system(size:48)).foregroundStyle(.purple).accessibilityHidden(true);Text(model.t("Turn on xgoose in Safari","在 Safari 中启用 xgoose","Activa xgoose en Safari")).font(.title2.bold())}
-        if #available(iOS 26.2, *) {Section {Button(model.t("Open extension settings","打开扩展设置","Abrir ajustes de la extensión")) {Task {await model.openSettings()}};Text(model.enabled == true ? model.t("Extension is enabled. Website access is checked separately.","扩展已启用，网站访问权限需要单独验证。","Extensión activada. Comprueba el acceso al sitio.") : model.t("Turn on Allow Extension, then return here.","打开“允许扩展”，然后返回这里。","Activa Permitir extensión y vuelve aquí。"))}}
+        Section {Image(systemName:"puzzlepiece.extension.fill").font(.system(size:48)).foregroundStyle(.tint).accessibilityHidden(true);Text(model.t("Turn on xgoose in Safari","在 Safari 中启用 xgoose","Activa xgoose en Safari")).font(.title2.bold())}
+        if #available(iOS 26.2, *) {Section {Button(model.t("Open extension settings","打开扩展设置","Abrir ajustes de la extensión")) {Task {await model.openSettings()}};Text(model.enabled == true ? model.t("Extension is enabled. Website access is checked separately.","扩展已启用，网站访问权限需要单独验证。","Extensión activada. Comprueba el acceso al sitio.") : model.t("Turn on Allow Extension, then return here.","打开“允许扩展”，然后返回这里。","Activa Permitir extensión y vuelve aquí."))}}
         Section(model.t("Manual setup","手动启用","Configuración manual")) {
             Text(model.t("1. Open Settings → Apps → Safari → Extensions.","1. 打开设置 → App → Safari → 扩展。","1. Abre Ajustes → Apps → Safari → Extensiones."))
             Text(model.t("2. Select xgoose and turn on Allow Extension.","2. 选择 xgoose，打开“允许扩展”。","2. Selecciona xgoose y activa Permitir extensión."))
@@ -337,7 +350,7 @@ struct PersonalizationView:View {
     var body:some View {Form {
         Section(model.t("Language","语言","Idioma")) {
             NavigationLink(model.t("Interface language","界面语言","Idioma")) {LanguageView()}
-            Picker(model.t("Answer language","回答语言","Idioma de respuestas"),selection:Binding(get:{model.settings["answerLanguage"] as? String ?? "auto"},set:{v in Task {await model.settingsPatch(["answerLanguage":v])}})) {ForEach(["auto","zh-CN","en","es"],id:\.self) {Text($0).tag($0)}}
+            Picker(model.t("Answer language","回答语言","Idioma de respuestas"),selection:Binding(get:{model.settings["answerLanguage"] as? String ?? "auto"},set:{v in Task {await model.settingsPatch(["answerLanguage":v])}})) {Text(model.t("Automatic","自动","Automático")).tag("auto");Text("简体中文").tag("zh-CN");Text("English").tag("en");Text("Español").tag("es")}
         }
         Section(model.t("Appearance","外观","Apariencia")) {
             NavigationLink(model.t("Appearance","外观","Apariencia")) {NativeAppearanceView()}
@@ -346,9 +359,9 @@ struct PersonalizationView:View {
             Toggle(model.t("Show launcher on all websites","在所有网站显示悬浮按钮","Mostrar botón en todos los sitios"),isOn:Binding(get:{model.settings["launcherVisibility"] as? String == "always"},set:{v in Task {await model.settingsPatch(["launcherVisibility":v ? "always":"skill-sites"])}}))
         }
         Section {
-            Toggle(model.t("Optional usage analytics","可选使用统计","Análisis de uso opcional"),isOn:Binding(get:{model.settings["analyticsEnabled"] as? Bool ?? false},set:{v in Task {await model.settingsPatch(["analyticsEnabled":v])}}))
+            Toggle(model.t("Optional usage analytics","可选使用统计","Análisis de uso opcional"),isOn:Binding(get:{model.settings["analyticsEnabled"] as? Bool ?? true},set:{v in Task {await model.settingsPatch(["analyticsEnabled":v])}}))
         } footer: {
-            Text(model.t("Usage analytics include feature names and error categories, never your messages, email or API keys.","使用统计仅包含功能名称与错误类别，不包含消息、邮箱或 API key。","Las estadísticas no incluyen mensajes, correo ni claves API。")).font(.footnote).foregroundStyle(.secondary)
+            Text(model.t("Usage analytics include feature names and error categories, never your messages, email or API keys.","使用统计仅包含功能名称与错误类别，不包含消息、邮箱或 API key。","Las estadísticas no incluyen mensajes, correo ni claves API.")).font(.footnote).foregroundStyle(.secondary)
         }
     }.navigationTitle(model.t("Personalization","个性化","Personalización"))}
 }
@@ -366,17 +379,17 @@ struct HelpView:View {
             }
             ShareLink(item:text) {Text(model.t("Export previous conversation archive","导出旧会话存档","Exportar conversaciones anteriores"))}
         }
-        Text("xgoose 1.6 · Core 0.3.4").foregroundStyle(.secondary)
+        Text("xgoose \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""))").foregroundStyle(.secondary)
     }.navigationTitle(model.t("Help & privacy","帮助与隐私","Ayuda y privacidad"))}
 }
 
 
 
 struct NativeAppearance:Equatable {
-    static let presets=["default","glass","notebook","soft","bold"]
+    static let presets=["default","glass","notebook","soft","bold","aurora","terminal","studio","pop","noir"]
     static let fonts=["default","sans","serif","mono"]
     static let defaults:JSONObject=["preset":"default","font":"default","fontScale":1.0]
-    static let imported:[String:[String:[String:String]]]=["notebook":["light":["background":"#F9F9F9","foreground":"#3A3A3A","card":"#FFFFFF","muted":"#E3E3E3","muted-foreground":"#505050","primary":"#606060","border":"#747272","input":"#FFFFFF","accent":"#F3EAC8"],"dark":["background":"#2B2B2B","foreground":"#DCDCDC","card":"#333333","muted":"#454545","muted-foreground":"#A0A0A0","primary":"#B0B0B0","border":"#4F4F4F","input":"#333333","accent":"#E0E0E0"]],"soft":["light":["background":"#E7E5E4","foreground":"#1E293B","card":"#F5F5F4","muted":"#E7E5E4","muted-foreground":"#6B7280","primary":"#6366F1","border":"#D6D3D1","input":"#D6D3D1","accent":"#F3E5F5"],"dark":["background":"#1E1B18","foreground":"#E2E8F0","card":"#2C2825","muted":"#1F1C19","muted-foreground":"#9CA3AF","primary":"#818CF8","border":"#3A3633","input":"#3A3633","accent":"#484441"]],"bold":["light":["background":"#FFFFFF","foreground":"#000000","card":"#FFFFFF","muted":"#F0F0F0","muted-foreground":"#333333","primary":"#FF3333","border":"#000000","input":"#000000","accent":"#0066FF"],"dark":["background":"#000000","foreground":"#FFFFFF","card":"#333333","muted":"#1A1A1A","muted-foreground":"#CCCCCC","primary":"#FF6666","border":"#FFFFFF","input":"#FFFFFF","accent":"#3399FF"]]]
+    static let imported:[String:[String:[String:String]]]=["terminal":["light":["background":"#F2F5EE","foreground":"#10240F","card":"#FAFCF7","muted":"#E1E8DA","muted-foreground":"#4C6349","primary":"#1B6B2C","border":"#9DB596"],"dark":["background":"#050805","foreground":"#B8F5C0","card":"#0A0F0A","muted":"#132013","muted-foreground":"#6FA877","primary":"#3DDC84","border":"#1F4D2B"]],"studio":["light":["background":"#E9E3DA","foreground":"#2B2420","card":"#F4F0E9","muted":"#DED6CA","muted-foreground":"#6B6058","primary":"#6B2D2A","border":"#BDB2A3"],"dark":["background":"#1C1815","foreground":"#EDE6DB","card":"#26211D","muted":"#332C26","muted-foreground":"#A89C8E","primary":"#D9A9A0","border":"#4A4038"]],"pop":["light":["background":"#D9EEF0","foreground":"#0E3B3B","card":"#EAF7F8","muted":"#C6E4E7","muted-foreground":"#3F6B6B","primary":"#D6005A","border":"#9CCBD0"],"dark":["background":"#0B2526","foreground":"#DDF3F4","card":"#113435","muted":"#184546","muted-foreground":"#8DBFC1","primary":"#FF5C9A","border":"#23595B"]],"noir":["light":["background":"#F6F6F6","foreground":"#111111","card":"#FFFFFF","muted":"#E8E8E8","muted-foreground":"#555555","primary":"#111111","border":"#111111"],"dark":["background":"#000000","foreground":"#F6F6F6","card":"#0A0A0A","muted":"#1C1C1C","muted-foreground":"#A0A0A0","primary":"#F6F6F6","border":"#F6F6F6"]],"aurora":["light":["background":"#F4F1FF","foreground":"#24203B","card":"#FBFAFF","muted":"#E9E4FB","muted-foreground":"#6E6A86","primary":"#7357E8","border":"#CFC8EE"],"dark":["background":"#0F0D1F","foreground":"#F1EEFF","card":"#1A1730","muted":"#2A2548","muted-foreground":"#A9A4C8","primary":"#7357E8","border":"#3A3466"]],"notebook":["light":["background":"#F9F9F9","foreground":"#3A3A3A","card":"#FFFFFF","muted":"#E3E3E3","muted-foreground":"#505050","primary":"#606060","border":"#747272","input":"#FFFFFF","accent":"#F3EAC8"],"dark":["background":"#2B2B2B","foreground":"#DCDCDC","card":"#333333","muted":"#454545","muted-foreground":"#A0A0A0","primary":"#B0B0B0","border":"#4F4F4F","input":"#333333","accent":"#E0E0E0"]],"soft":["light":["background":"#E7E5E4","foreground":"#1E293B","card":"#F5F5F4","muted":"#E7E5E4","muted-foreground":"#6B7280","primary":"#6366F1","border":"#D6D3D1","input":"#D6D3D1","accent":"#F3E5F5"],"dark":["background":"#1E1B18","foreground":"#E2E8F0","card":"#2C2825","muted":"#1F1C19","muted-foreground":"#9CA3AF","primary":"#818CF8","border":"#3A3633","input":"#3A3633","accent":"#484441"]],"bold":["light":["background":"#FFFFFF","foreground":"#000000","card":"#FFFFFF","muted":"#F0F0F0","muted-foreground":"#333333","primary":"#FF3333","border":"#000000","input":"#000000","accent":"#0066FF"],"dark":["background":"#000000","foreground":"#FFFFFF","card":"#333333","muted":"#1A1A1A","muted-foreground":"#CCCCCC","primary":"#FF6666","border":"#FFFFFF","input":"#FFFFFF","accent":"#3399FF"]]]
     let theme:String,preset:String,font:String
     let scale:Double
     init(settings:JSONObject) {
@@ -384,11 +397,11 @@ struct NativeAppearance:Equatable {
         theme=settings["theme"] as? String ?? "system"
         let p=a["preset"] as? String ?? "default",f=a["font"] as? String ?? "default"
         preset=Self.presets.contains(p) ? p:"default";font=Self.fonts.contains(f) ? f:"default"
-        scale=min(1.3,max(0.9,a["fontScale"] as? Double ?? 1))
+        scale=min(1.3,max(0.8,a["fontScale"] as? Double ?? 1))
     }
     var dictionary:JSONObject {["preset":preset,"font":font,"fontScale":scale]}
     var params:JSONObject {["preset":preset,"font":font,"font_scale":scale,"theme":theme,"resolved_theme":theme == "system" ? (nativeDark ? "dark":"light"):theme,"is_customized":theme != "system" || preset != "default" || font != "default" || scale != 1]}
-    var radius:CGFloat {preset=="bold" ? 0:preset=="soft" ? 24:preset=="notebook" ? 10:20}
+    var radius:CGFloat {preset=="noir" ? 0:preset=="studio" ? 2:preset=="terminal" ? 4:preset=="pop" ? 24:preset=="bold" ? 0:preset=="soft" ? 24:preset=="notebook" ? 10:preset=="aurora" ? 22:20}
     var border:CGFloat {preset=="bold" ? 3:1}
     func token(_ key:String,dark:Bool)->String {
         if let value=Self.imported[preset]?[dark ? "dark":"light"]?[key] {return value}
@@ -427,13 +440,14 @@ struct NativeAppearanceStyle:ViewModifier {
     #endif
     func body(content:Content)->some View {
         let a=NativeAppearance(settings:settings),dark=mode == .dark
-        let design:Font.Design=a.font=="serif" ? .serif:a.font=="mono" ? .monospaced:a.font=="default"&&a.preset=="soft" ? .rounded:.default
+        let design:Font.Design=a.font=="serif" ? .serif:a.font=="mono" || a.font=="default"&&a.preset=="terminal" ? .monospaced:a.font=="default"&&(a.preset=="soft" || a.preset=="pop") ? .rounded:.default
         let font:Font=a.font=="default"&&a.preset=="notebook" ? .custom("ArchitectsDaughter-Regular",size:size*a.scale,relativeTo:.body):.system(size:size*a.scale,weight:a.font=="default"&&a.preset=="bold" ? .semibold:.regular,design:design)
         let accent=a.preset=="default" ? Color("AccentColor"):nativeColor(a.token("primary",dark:dark))
         content.font(font).tint(accent).accentColor(accent)
             .scrollContentBackground(a.preset=="default" ? .automatic:.hidden)
             .background {
-                if a.preset=="glass" && !reduceTransparency {nativeColor(a.token("background",dark:dark)).opacity(0.25).background(.ultraThinMaterial)}
+                if a.preset=="aurora" {LinearGradient(colors:[nativeColor("#7357E8").opacity(0.22),nativeColor("#4FA8FF").opacity(0.14),nativeColor("#FFAE57").opacity(0.16)],startPoint:.topLeading,endPoint:.bottomTrailing).background(nativeColor(a.token("background",dark:dark))).ignoresSafeArea()}
+                else if a.preset=="glass" && !reduceTransparency {nativeColor(a.token("background",dark:dark)).opacity(0.25).background(.ultraThinMaterial)}
                 else if a.preset != "default" {nativeColor(a.token("background",dark:dark))}
             }
     }
@@ -482,8 +496,8 @@ struct NativeAppearanceView:View {
             ForEach(Array(NativeAppearance.presets.enumerated()),id:\.element) {index,id in
                 Button {update("preset",id)} label: {
                     HStack(spacing:14) {NativePresetThumbnail(preset:id);VStack(alignment:.leading,spacing:4) {
-                        Text(model.t(["Classic","Glass","Notebook","Soft","Bold"][index],["经典","磨砂","手帐","软糖","积木"][index]))
-                        Text(model.t(["The familiar xgoose interface","Frosted glass and light edges","Paper and handwritten type","Soft surfaces and rounded buttons","Square corners and hard shadows"][index],["熟悉的 xgoose 界面","半透明磨砂与细亮边","纸面、细线与手写字体","柔软立体的表面与圆润按钮","直角、粗边框与硬阴影"][index])).font(.caption).foregroundStyle(.secondary)
+                        Text(model.t(["Classic","Glass","Notebook","Soft","Bold","Aurora","Terminal","Studio","Pop","Noir"][index],["经典","磨砂","手帐","软糖","积木","极光","终端","工作室","波普","黑白"][index]))
+                        Text(model.t(["The familiar xgoose interface","Frosted glass and light edges","Paper and handwritten type","Soft surfaces and rounded buttons","Square corners and hard shadows","Liquid glass and drifting light","Green monospace on black with a blinking cursor","Warm stone, square corners and sliding headlines","Bright aqua, hot pink and bouncy motion","Pure black and white with inverting controls"][index],["熟悉的 xgoose 界面","半透明磨砂与细亮边","纸面、细线与手写字体","柔软立体的表面与圆润按钮","直角、粗边框与硬阴影","流动玻璃与漂移光晕","黑底绿色等宽字与闪烁光标","暖石色、直角与滑入式标题","水蓝配亮粉与弹跳动效","纯黑白与反色按钮"][index])).font(.caption).foregroundStyle(.secondary)
                     };Spacer(minLength:4);if a.preset==id {Image(systemName:"checkmark").accessibilityLabel(model.t("Selected","已选择"))}}
                     .padding(.vertical,5).foregroundStyle(.primary)
                 }.buttonStyle(.plain).accessibilityIdentifier("appearance-preset-"+id).accessibilityAddTraits(a.preset==id ? .isSelected:[])
@@ -497,7 +511,7 @@ struct NativeAppearanceView:View {
                 Picker("",selection:Binding(get:{a.font},set:{update("font",$0)})) {ForEach(Array(NativeAppearance.fonts.enumerated()),id:\.element) {index,id in Text(model.t(["Follow preset","Clean sans","Reading serif","Monospace"][index],["跟随预设","简洁黑体","阅读宋体","等宽"][index])).tag(id)}}.labelsHidden()
             }.frame(minHeight:44)
             LabeledContent(model.t("Font size","字号","Tamaño")) {
-                Picker("",selection:Binding(get:{a.scale},set:{update("fontScale",$0)})) {ForEach([0.9,1.0,1.15,1.3],id:\.self) {Text("\(Int(($0*100).rounded()))%").tag($0)}}.labelsHidden()
+                Picker("",selection:Binding(get:{a.scale},set:{update("fontScale",$0)})) {ForEach([0.8,0.9,1.0,1.15,1.3],id:\.self) {Text("\(Int(($0*100).rounded()))%").tag($0)}}.labelsHidden()
             }.frame(minHeight:44)
         }
         NativeAppearanceSection(model.t("Preview","预览","Vista previa"),appearance:a) {

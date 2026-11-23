@@ -13,21 +13,17 @@ import {
   SettingsSchema,
   UserSkillSchema,
   type Layout,
-  type ResumePayload,
   type Settings,
   type StoredConversation,
   type UserSkill,
 } from "./types";
 
 const SETTINGS_KEY = "xgoose.settings";
-const CONVERSATIONS_KEY = "xgoose.conversations";
 const MEMORY_PREFIX = "xgoose.memory:";
 const SKILLS_DISABLED_KEY = "xgoose.skills.disabled";
 const USER_SKILLS_KEY = "xgoose.skills.user";
 const LAYOUT_KEY = "xgoose.layout";
 const PANEL_OPEN_PREFIX = "xgoose.panelOpen:";
-const LAST_CONVO_KEY = "xgoose.lastConvo";
-const RESUME_KEY = "xgoose.resume";
 
 type Mirror = {
   settings: Settings;
@@ -233,9 +229,3 @@ export async function getConversation(id: string): Promise<StoredConversation | 
 export async function saveConversation(value: StoredConversation): Promise<void> { await send("sw:session", { op: "save", value }); }
 export async function deleteConversation(id: string): Promise<void> { await send("sw:session", { op: "delete", id }); }
 export function newConversationId(): string { return crypto.randomUUID(); }
-// Compatibility shims for v1 callers. Navigation never restores or runs a task.
-export async function getLastConvoIdGlobal(): Promise<null> { return null; }
-export async function setLastConvoIdGlobal(_id: string): Promise<void> {}
-export async function getResumeGlobal(): Promise<null> { return null; }
-export async function setResumeGlobal(_payload: ResumePayload): Promise<void> {}
-export async function clearResumeGlobal(): Promise<void> {}

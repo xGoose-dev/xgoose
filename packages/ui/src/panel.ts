@@ -1,1317 +1,25 @@
 import {APPEARANCE_STYLE_CSS} from "./appearanceStyles";
+import {PANEL_CSS,GOOSE_MARK} from "./panelStyles";
+import {mountMotion} from "./motion";
 import {applyAppearance,type AppearanceState} from "./appearance";
-// Shadow-DOM floating chat panel.
-//
-// Ported as closely as practical from uscardforum-qa's src/ui.js so behaviour
-// matches the reference userscript (tool cards with running spinner → done
-// check, reasoning blocks with char-count + arrow, debounced streaming text
-// render, thinking indicator, generation progress bar, gradient toggle, reuse
-// of completed tool cards for repeat calls, scroll-up auto-pause, expand-to-
-// overlay button, reply-block fences). xgoose-specific additions:
-//   • skills chip row showing which skills are active on the current page
-//   • Settings/History buttons open extension-level UI (no inline settings
-//     panel — settings live on the dedicated options page)
-//   • tool-card details know about `js_exec` and render a chip strip
-//     (purpose/parallel_safe/timeout_ms) plus a syntax-highlighted code body
-//     so the user can read what the model is about to run before it runs.
+// Shadow-DOM floating chat panel: launcher, header, skills bar, conversation,
+// history, todos and composer. Styles live in panelStyles.ts. Tool calls and
+// reasoning render as one collapsed activity line per run of consecutive steps;
+// expanding it lists each call with its input and output.
 
 import {prepareImage,imageDataUrl,MAX_ATTACHMENTS,type ImageAttachment} from "./images";
 import { renderMarkdown } from "./markdown";
-import {
-  describeToolCall,
-  summarizeToolResult,
-  type ToolDescription,
-} from "./toolLabels";
+import { describeToolCall, summarizeToolResult } from "./toolLabels";
 import { DEFAULT_LAYOUT, type Corner, type Layout } from "./layout";
 
-const CSS = `
-*,*::before,*::after{box-sizing:border-box}
-/* Keep controls above ordinary site navigation; fullscreen is handled below. */
-:host{
-  all:initial;
-  position:relative;z-index:2147483647;isolation:isolate;
-  font-family:var(--xg-font,'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI Variable','Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif);
-  font-size:calc(13px * var(--xg-font-scale,1));line-height:1.5;
-  font-feature-settings:'cv11','ss01','ss03',normal;
-  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
-  text-rendering:optimizeLegibility;
-  color-scheme:dark light;
-}
-
-:host([data-fullscreen]){visibility:hidden}
-
-/* ── theme tokens ──
- * Aligned with the xgoose.org design system: indigo (252) → violet (280) →
- * pink (326) gradient on near-black ink. The panel exposes the same
- * --gradient-from / via / to as the marketing site so any element can opt
- * into the brand gradient with one declaration.
- */
-.panel{
-  --bg:#08080d;
-  --bg-elevated:rgba(22,22,30,.78);
-  --bg-input:rgba(255,255,255,.04);
-  --bg-hover:rgba(139,92,246,.10);
-  --bg-active:rgba(139,92,246,.18);
-  --border:rgba(255,255,255,.07);
-  --border-strong:rgba(139,92,246,.28);
-  --border-input:rgba(255,255,255,.09);
-  --text:#d4d8e0;
-  --text-strong:#f7f7fb;
-  --text-muted:#888a96;
-  --text-faint:#4a4a52;
-  --text-ai:#c6cad3;
-  --text-ai-head:#ececf2;
-  --code-bg:rgba(6,6,12,.85);
-  --code-text:#c7b8ff;
-  --code-inline:rgba(168,85,247,.14);
-  --tool-bg:rgba(22,22,30,.6);
-  --tool-border:rgba(255,255,255,.08);
-  --reason-bg:rgba(22,22,30,.55);
-  --err-bg:rgba(239,68,68,.10);
-  --err-border:rgba(239,68,68,.30);
-  --err-text:#fda4af;
-  --table-border:rgba(168,85,247,.20);
-  --table-th-bg:rgba(168,85,247,.10);
-  --send-disabled-bg:rgba(255,255,255,.04);
-  --chip-bg:rgba(168,85,247,.12);
-  --chip-key:#c4b5fd;
-  --chip-val:#ede9fe;
-  --select-opt-bg:#13131c;
-  --gradient-from:#6366f1;
-  --gradient-via:#a855f7;
-  --gradient-to:#ec4899;
-  --grad-from-rgb:99,102,241;
-  --grad-via-rgb:168,85,247;
-  --grad-to-rgb:236,72,153;
-  --grad-soft:0deg,rgba(99,102,241,.22),rgba(168,85,247,.20),rgba(236,72,153,.18);
-  --halo-1:rgba(99,102,241,.18);
-  --halo-2:rgba(168,85,247,.16);
-  --halo-3:rgba(236,72,153,.14);
-  --shadow:
-    0 1px 0 rgba(255,255,255,.04) inset,
-    0 0 0 1px rgba(168,85,247,.15),
-    0 24px 60px -12px rgba(0,0,0,.65),
-    0 0 60px -12px rgba(99,102,241,.30);
-}
-.panel.light{
-  --bg:#ffffff;
-  --bg-elevated:rgba(244,244,251,.85);
-  --bg-input:rgba(15,23,42,.04);
-  --bg-hover:rgba(99,102,241,.06);
-  --bg-active:rgba(99,102,241,.12);
-  --border:rgba(15,23,42,.08);
-  --border-strong:rgba(99,102,241,.30);
-  --border-input:rgba(15,23,42,.12);
-  --text:#1c1c25;
-  --text-strong:#0a0a14;
-  --text-muted:#5b5b6c;
-  --text-faint:#a1a1ad;
-  --text-ai:#2a2a36;
-  --text-ai-head:#0a0a14;
-  --code-bg:#f3f2fb;
-  --code-text:#6d28d9;
-  --code-inline:rgba(99,102,241,.10);
-  --tool-bg:rgba(248,248,253,.85);
-  --tool-border:rgba(15,23,42,.08);
-  --reason-bg:rgba(248,248,253,.85);
-  --err-bg:rgba(239,68,68,.06);
-  --err-border:rgba(239,68,68,.25);
-  --err-text:#dc2626;
-  --table-border:rgba(99,102,241,.18);
-  --table-th-bg:rgba(99,102,241,.06);
-  --send-disabled-bg:rgba(15,23,42,.06);
-  --chip-bg:rgba(99,102,241,.08);
-  --chip-key:#5b21b6;
-  --chip-val:#3730a3;
-  --select-opt-bg:#ffffff;
-  --halo-1:rgba(99,102,241,.10);
-  --halo-2:rgba(168,85,247,.10);
-  --halo-3:rgba(236,72,153,.08);
-  --shadow:
-    0 1px 0 rgba(255,255,255,.9) inset,
-    0 0 0 1px rgba(99,102,241,.12),
-    0 18px 48px -16px rgba(15,23,42,.18),
-    0 0 36px -14px rgba(99,102,241,.18);
-}
-
-/* ── floating toggle ──
- * Drag anywhere; double-tap to reset; default bottom-right with safe-area
- * insets baked in. The button is a brand-gradient pebble with an animated
- * conic halo for the "alive" feel.
- */
-.toggle{
-  position:fixed;
-  width:48px;height:48px;border-radius:16px;
-  background:linear-gradient(135deg,#6366f1,#a855f7 55%,#ec4899);
-  background-size:220% 220%;
-  -webkit-animation:gshift 6s ease infinite;animation:gshift 6s ease infinite;
-  color:var(--xg-on-accent,#fff);border:none;cursor:grab;
-  z-index:2147483647;
-  display:flex;align-items:center;justify-content:center;
-  font-size:calc(21px * var(--xg-font-scale,1));font-weight:600;
-  box-shadow:
-    0 0 0 1px rgba(255,255,255,.10) inset,
-    0 6px 18px -2px rgba(99,102,241,.45),
-    0 18px 36px -8px rgba(0,0,0,.55);
-  transition:transform .25s cubic-bezier(.34,1.56,.64,1),box-shadow .25s ease,
-             left .2s ease,top .2s ease,right .2s ease,bottom .2s ease,
-             border-radius .2s ease;
-  -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;
-  -webkit-tap-highlight-color:transparent;touch-action:none;
-  isolation:isolate;
-}
-/* Animated halo ring behind the button — hidden when reduced motion. */
-.toggle::before{
-  content:"";position:absolute;inset:-6px;border-radius:22px;
-  background:conic-gradient(from 0deg,
-    rgba(99,102,241,.55),rgba(168,85,247,.55),
-    rgba(236,72,153,.55),rgba(99,102,241,.55));
-  filter:blur(10px);opacity:.55;
-  z-index:-1;
-  -webkit-animation:halo 8s linear infinite;animation:halo 8s linear infinite;
-  pointer-events:none;
-}
-.toggle:hover{transform:translateY(-2px) scale(1.06)}
-.toggle:hover::before{opacity:.85}
-.toggle.dragging{
-  cursor:grabbing;transform:scale(1.12);
-  transition:box-shadow .12s ease,border-radius .12s ease;
-  box-shadow:
-    0 0 0 1px rgba(255,255,255,.12) inset,
-    0 0 32px rgba(168,85,247,.55),
-    0 20px 48px -6px rgba(0,0,0,.65);
-}
-.toggle.dragging::before{opacity:1;-webkit-animation-duration:3s;animation-duration:3s}
-.toggle.panel-open{display:none}
-.toggle.launcher-hidden{display:none}
-@-webkit-keyframes gshift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
-@keyframes gshift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
-@-webkit-keyframes halo{to{transform:rotate(360deg)}}
-@keyframes halo{to{transform:rotate(360deg)}}
-
-/* ── panel shell ──
- * Glassmorphic shell with an animated brand gradient hairline (rendered as
- * a ::before that uses mask compositing so the gradient only shows on the
- * border). Falls back to a solid border on engines without mask support.
- *
- * Position/size are set inline by JS; defaults below are mobile-first.
- */
-.panel{
-  position:fixed;
-  background:
-    radial-gradient(800px 600px at 0% 0%,var(--halo-1),transparent 55%),
-    radial-gradient(700px 500px at 100% 0%,var(--halo-2),transparent 55%),
-    radial-gradient(900px 600px at 50% 110%,var(--halo-3),transparent 60%),
-    var(--bg);
-  color:var(--text);
-  border-radius:20px;
-  box-shadow:var(--shadow);
-  display:none;flex-direction:column;
-  z-index:2147483646;overflow:clip;
-  min-width:0;min-height:0;
-  -webkit-backdrop-filter:saturate(160%) blur(22px);
-  backdrop-filter:saturate(160%) blur(22px);
-  transition:box-shadow .25s ease,border-radius .25s ease;
-  isolation:isolate;
-}
-/* Static gradient hairline; it must never rotate through panel content. */
-.panel::before{
-  content:"";position:absolute;inset:0;pointer-events:none;
-  border-radius:inherit;padding:1px;
-  background:conic-gradient(from 220deg,
-    rgba(99,102,241,.7),rgba(168,85,247,.55),rgba(236,72,153,.7),
-    rgba(99,102,241,.7));
-  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
-          mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
-  -webkit-mask-composite:xor;mask-composite:exclude;
-  opacity:.55;z-index:2;
-  /* Keep the border fixed: rotating this box creates overflowing diagonal
-     edges and lets browser focus scrolling shift all panel content. */
-  transform:none;
-}
-.panel.light::before{opacity:.40}
-/* Engines without mask compositing get a static gradient border via box-shadow. */
-@supports not ((-webkit-mask-composite:xor) or (mask-composite:exclude)){
-  .panel::before{display:none}
-  .panel{box-shadow:0 0 0 1px rgba(168,85,247,.30),var(--shadow)}
-}
-/* Engines without backdrop-filter get a solid opaque background. */
-@supports not ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){
-  .panel{background:var(--bg)}
-}
-.panel > :not(.resize-handle){min-width:0;max-width:100%}
-.panel.open{display:flex}
-.panel.overlay{
-  /* Overlay = "fill the viewport with breathing room"; ignores user size. */
-  left:12px !important;right:12px !important;
-  top:12px !important;bottom:12px !important;
-  width:auto !important;height:auto !important;
-  max-width:none !important;max-height:none !important;
-}
-
-/* Mobile (<=520px): the panel is a draggable, resizable floating card whose
- * geometry is set by JS (applyPanelPosition) — it defaults to a near-fullscreen
- * card but the user can grab the corner/edge handles to resize it. When the
- * soft keyboard opens, JS pins the panel to the visual viewport so the composer
- * stays above the keyboard (see pinToVisualViewport / onVvChange). */
-@media(max-width:520px), (pointer:coarse) and (max-device-width:520px), (pointer:coarse) and (max-device-height:520px){
-  .panel::before{display:none}
-  .toggle{
-    width:48px;height:48px;font-size:calc(20px * var(--xg-font-scale,1));border-radius:16px;
-  }
-  /* Expand-to-overlay is desktop-only; on mobile the user resizes directly. */
-  .btn-expand{display:none !important}
-  /* Fatter touch targets for the resize grips on touch screens. !important so
-     these win over the base .resize-handle.corner rule declared later in the
-     sheet (equal specificity → source order would otherwise shrink them). */
-  .resize-handle.corner{width:34px !important;height:34px !important}
-  .resize-handle.edge.n,.resize-handle.edge.s{height:16px}
-  .resize-handle.edge.e,.resize-handle.edge.w{width:16px}
-  /* Touch screens have no hover, so edge handles would be invisible and
-     undiscoverable. Give them a faint persistent grip indicator. */
-  .resize-handle.edge.n,.resize-handle.edge.s{
-    background:linear-gradient(90deg,transparent,rgba(168,85,247,.28),transparent);
-  }
-  .resize-handle.edge.e,.resize-handle.edge.w{
-    background:linear-gradient(0deg,transparent,rgba(168,85,247,.28),transparent);
-  }
-  /* Bigger touch targets in the header tool cluster — keep icons square. */
-  .hdr-actions{gap:8px}
-  .hdr-tools{gap:2px;padding:3px;border-radius:13px}
-  .hdr-icon-btn{width:38px;height:38px;border-radius:10px}
-  .hdr-icon-btn .hdr-glyph{width:18px;height:18px}
-  .btn-todos .todo-count{top:-2px;right:-2px;font-size:calc(10px * var(--xg-font-scale,1));min-height:15px;min-width:15px}
-  .hdr-sep{height:24px}
-  .btn-new{height:38px;padding:0 16px;font-size:calc(13px * var(--xg-font-scale,1));border-radius:11px}
-  .btn-new .btn-new-glyph{font-size:calc(16px * var(--xg-font-scale,1))}
-  .skills-bar{padding:9px 14px;font-size:calc(12px * var(--xg-font-scale,1))}
-  .skills-bar .skill-chip{padding:5px 10px;font-size:calc(12px * var(--xg-font-scale,1));min-height:28px}
-  /* iOS auto-zooms inputs whose font-size is < 16px on focus. */
-  .input-area textarea{font-size:calc(16px * var(--xg-font-scale,1));padding:11px 14px;min-height:30px}
-  .btn-send{padding:11px 20px;font-size:calc(14px * var(--xg-font-scale,1));min-height:44px}
-  .btn-stop{padding:11px 18px;font-size:calc(14px * var(--xg-font-scale,1));min-height:44px}
-  .in-text{font-size:calc(16px * var(--xg-font-scale,1))}
-  .tool-hdr{padding:10px 12px}
-  .tool-ico{width:30px;height:30px;flex-basis:30px}
-  .tool-title{font-size:calc(13.5px * var(--xg-font-scale,1))}
-  .tool-sub{font-size:calc(11.5px * var(--xg-font-scale,1))}
-  /* Make message bubbles a bit roomier. */
-  .msg-user{padding:10px 16px;font-size:calc(14px * var(--xg-font-scale,1));max-width:90%}
-  .msg-ai{font-size:calc(14px * var(--xg-font-scale,1));max-width:97%}
-}
-
-/* ── resize handles (desktop/tablet only) ──
- * One corner handle + two adjacent edge handles. Their positions are flipped
- * via the JS-applied corner class so the user always grabs an edge that grows
- * the panel away from the docked corner.
- *
- * Classes set by JS:
- *   .resize-handle.corner.{br,bl,tr,tl}  – diagonal grip
- *   .resize-handle.edge.{n,s,e,w}        – cardinal edge handles
- */
-.resize-handle{
-  position:absolute;z-index:2147483647;
-  touch-action:none;-webkit-user-select:none;user-select:none;
-}
-.resize-handle.corner{
-  width:22px;height:22px;
-  background:
-    linear-gradient(135deg,
-      transparent 38%,
-      rgba(168,85,247,.45) 38%,rgba(168,85,247,.45) 48%,
-      transparent 48%,transparent 58%,
-      rgba(236,72,153,.60) 58%,rgba(236,72,153,.60) 68%,
-      transparent 68%);
-}
-.resize-handle.corner.br{right:0;bottom:0;cursor:nwse-resize;border-bottom-right-radius:18px}
-.resize-handle.corner.bl{left:0;bottom:0;cursor:nesw-resize;-webkit-transform:scaleX(-1);transform:scaleX(-1);border-bottom-left-radius:18px}
-.resize-handle.corner.tr{right:0;top:0;cursor:nesw-resize;-webkit-transform:scaleY(-1);transform:scaleY(-1);border-top-right-radius:18px}
-.resize-handle.corner.tl{left:0;top:0;cursor:nwse-resize;-webkit-transform:scale(-1,-1);transform:scale(-1,-1);border-top-left-radius:18px}
-
-/* Edge handles: thin strip along one side. */
-.resize-handle.edge{background:transparent;transition:background .15s}
-.resize-handle.edge:hover,.resize-handle.edge.dragging{
-  background:linear-gradient(90deg,transparent,rgba(168,85,247,.22),transparent);
-}
-.resize-handle.edge.n{top:0;left:24px;right:24px;height:6px;cursor:ns-resize}
-.resize-handle.edge.s{bottom:0;left:24px;right:24px;height:6px;cursor:ns-resize}
-.resize-handle.edge.w{left:0;top:24px;bottom:24px;width:6px;cursor:ew-resize}
-.resize-handle.edge.e{right:0;top:24px;bottom:24px;width:6px;cursor:ew-resize}
-
-.panel.resizing{transition:none;-webkit-user-select:none;user-select:none}
-
-/* ── header ──
- * Glass strip with a faint gradient sheen on top to read as the chrome of
- * the panel.
- */
-.hdr{
-  position:relative;
-  display:flex;align-items:center;justify-content:space-between;
-  padding:10px 12px;gap:10px;
-  background:linear-gradient(180deg,rgba(168,85,247,.10),rgba(168,85,247,0));
-  border-bottom:1px solid var(--border);
-  flex:0 0 auto;
-  z-index:3;
-}
-.panel.light .hdr{background:linear-gradient(180deg,rgba(99,102,241,.06),rgba(99,102,241,0))}
-.hdr-title{
-  font-weight:650;font-size:calc(13.5px * var(--xg-font-scale,1));letter-spacing:.01em;
-  color:var(--text-strong);
-  display:flex;align-items:center;gap:8px;
-  flex:0 1 auto;min-width:0;overflow:hidden;
-  background-image:linear-gradient(120deg,var(--gradient-from),var(--gradient-via),var(--gradient-to));
-  -webkit-background-clip:text;background-clip:text;
-  -webkit-text-fill-color:transparent;color:transparent;
-}
-.hdr-title > span:not(.hdr-dot){
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
-.hdr-title .hdr-dot{
-  -webkit-background-clip:initial;background-clip:initial;-webkit-text-fill-color:initial;
-}
-.hdr-dot{
-  width:8px;height:8px;border-radius:50%;
-  background:#22c55e;
-  box-shadow:0 0 0 3px rgba(34,197,94,.18),0 0 12px rgba(34,197,94,.45);
-  -webkit-animation:pdot 2.6s ease-in-out infinite;animation:pdot 2.6s ease-in-out infinite;
-  flex:0 0 auto;
-}
-@-webkit-keyframes pdot{
-  0%,100%{box-shadow:0 0 0 3px rgba(34,197,94,.18),0 0 8px rgba(34,197,94,.40)}
-  50%{box-shadow:0 0 0 5px rgba(34,197,94,.10),0 0 16px rgba(34,197,94,.75)}
-}
-@keyframes pdot{
-  0%,100%{box-shadow:0 0 0 3px rgba(34,197,94,.18),0 0 8px rgba(34,197,94,.40)}
-  50%{box-shadow:0 0 0 5px rgba(34,197,94,.10),0 0 16px rgba(34,197,94,.75)}
-}
-
-/* Action cluster on the right side of the header.
-   Layout:
-     [ icon · icon · icon · icon ]  |  [ + New ]  [ × ]
-   The four secondary actions (History / Todos / Settings / Expand) live
-   inside a .hdr-tools chip so they read as a single group; the gradient
-   "+ New" button is the primary CTA, and close gets its own clearly
-   destructive affordance. */
-.hdr-actions{
-  display:flex;align-items:center;gap:6px;flex:0 0 auto;
-}
-.hdr-tools{
-  display:inline-flex;align-items:center;gap:2px;padding:2px;
-  background:rgba(255,255,255,.025);
-  border:1px solid var(--border);
-  border-radius:11px;
-}
-.panel.light .hdr-tools{background:rgba(15,23,42,.03)}
-.hdr-sep{
-  width:1px;height:18px;flex:0 0 auto;
-  background:linear-gradient(180deg,transparent,var(--border-strong),transparent);
-  opacity:.55;
-}
-
-/* Icon-only square buttons used inside the tools cluster + close. */
-.hdr-icon-btn{
-  width:28px;height:28px;padding:0;
-  display:inline-flex;align-items:center;justify-content:center;
-  background:transparent;border:1px solid transparent;color:var(--text-muted);
-  border-radius:8px;cursor:pointer;
-  font-family:inherit;
-  position:relative;
-  transition:background .15s ease,color .15s ease,border-color .15s ease,
-             box-shadow .15s ease,transform .15s ease;
-  -webkit-tap-highlight-color:transparent;
-}
-.hdr-icon-btn:hover{
-  background:var(--bg-hover);color:var(--text-strong);
-  box-shadow:0 0 0 3px rgba(168,85,247,.08);
-}
-.hdr-icon-btn:active{transform:translateY(1px)}
-.hdr-icon-btn:focus-visible{
-  outline:none;
-  box-shadow:0 0 0 2px rgba(168,85,247,.55),0 0 0 4px rgba(168,85,247,.18);
-}
-.hdr-icon-btn .hdr-glyph{
-  width:15px;height:15px;display:block;
-}
-
-/* Minimizing preserves the conversation; use the same neutral hover as tools. */
-.hdr-close:hover{
-  background:var(--bg-hover);color:var(--text-strong);
-  box-shadow:0 0 0 3px var(--bg-hover);
-}
-.panel.light .hdr-close:hover{color:var(--text-strong)}
-
-/* "+ New" primary CTA — gradient pill, drops "New" label on narrow widths. */
-.btn-new{
-  display:inline-flex;align-items:center;gap:6px;
-  height:28px;padding:0 11px;
-  background-image:linear-gradient(120deg,var(--gradient-from),var(--gradient-via),var(--gradient-to));
-  background-size:200% 100%;background-position:0% 50%;
-  color:var(--xg-on-accent,#fff);border:none;border-radius:9px;
-  font-family:inherit;font-size:calc(11.5px * var(--xg-font-scale,1));font-weight:600;letter-spacing:.01em;
-  cursor:pointer;
-  box-shadow:0 1px 0 rgba(255,255,255,.10) inset,0 6px 16px -6px rgba(168,85,247,.55);
-  transition:background-position .35s ease,box-shadow .25s ease,transform .15s ease;
-  -webkit-tap-highlight-color:transparent;white-space:nowrap;
-}
-.btn-new:hover{background-position:100% 50%;transform:translateY(-1px);box-shadow:0 1px 0 rgba(255,255,255,.10) inset,0 10px 22px -6px rgba(168,85,247,.65)}
-.btn-new:active{transform:translateY(0)}
-.btn-new:focus-visible{
-  outline:none;
-  box-shadow:0 0 0 2px var(--gradient-via),0 0 0 5px rgba(168,85,247,.22),0 6px 16px -6px rgba(168,85,247,.55);
-}
-.btn-new .btn-new-glyph{
-  font-weight:700;font-size:calc(14px * var(--xg-font-scale,1));line-height:1;display:inline-block;
-}
-.btn-new .btn-new-label{line-height:1}
-
-/* ── skills bar ──
- * Compact strip listing the skills active on this page. When no skills
- * are active we collapse to a single subtle hint line so the bar doesn't
- * eat real estate above the chat. Modern engines use :has() for the
- * empty-state styling; older engines simply fall back to the chips
- * layout, which still reads fine. */
-.skills-bar{
-  display:flex;gap:6px;flex-wrap:wrap;
-  padding:8px 14px;
-  background:var(--bg-elevated);border-bottom:1px solid var(--border);
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
-  flex:0 0 auto;font-size:calc(11px * var(--xg-font-scale,1));align-items:center;
-  position:relative;z-index:3;
-  transition:padding .15s ease;
-}
-.skills-bar .label{
-  color:var(--text-muted);font-weight:700;flex-shrink:0;
-  text-transform:uppercase;letter-spacing:.08em;font-size:calc(10px * var(--xg-font-scale,1));
-}
-.skills-bar .skill-chip{
-  display:inline-flex;align-items:center;gap:4px;
-  background:var(--chip-bg);color:var(--chip-key);
-  border:1px solid var(--border-strong);border-radius:999px;
-  padding:3px 10px;font-size:calc(11px * var(--xg-font-scale,1));font-family:inherit;
-  cursor:pointer;-webkit-tap-highlight-color:transparent;
-  transition:background .15s ease,color .15s ease,border-color .15s ease,
-             box-shadow .15s ease,transform .15s ease;
-}
-.skills-bar .skill-chip:hover{
-  background:var(--bg-active);color:var(--text-strong);
-  box-shadow:0 0 0 3px rgba(168,85,247,.12);
-}
-.skills-bar .skill-chip:active{transform:translateY(1px)}
-.skills-bar .skill-chip.disabled{opacity:.55;text-decoration:line-through}
-.skills-bar .skill-chip.user-authored{
-  background:linear-gradient(120deg,rgba(99,102,241,.18),rgba(236,72,153,.18));
-  border-color:rgba(168,85,247,.45);
-}
-.skills-bar .skills-list{
-  display:inline-flex;gap:6px;flex-wrap:wrap;align-items:center;
-  flex:1 1 auto;min-width:0;
-}
-.skills-bar .empty{
-  color:var(--text-faint);font-style:normal;letter-spacing:.02em;
-}
-.skills-login-hint{margin:0;padding:4px 14px 6px;color:var(--text-faint);font-size:calc(11px * var(--xg-font-scale,1));line-height:1.4}
-/* When the skills list only contains the empty hint, collapse the row. */
-.skills-bar:has(.skills-list > .empty:only-child){
-  padding:5px 14px;background:transparent;
-  -webkit-backdrop-filter:none;backdrop-filter:none;
-}
-.skills-bar:has(.skills-list > .empty:only-child) .label{display:none}
-.skills-bar:has(.skills-list > .empty:only-child) .empty::before{
-  content:"✦";margin-right:6px;color:rgba(168,85,247,.65);
-  font-style:normal;font-size:calc(9px * var(--xg-font-scale,1));vertical-align:1px;
-}
-
-/* ── scroll area ──
- * Firefox via scrollbar-{width,color}; WebKit via ::-webkit-scrollbar.
- */
-.msgs{
-  flex:1 1 0;min-height:0;min-width:0;overflow-y:auto;overflow-x:hidden;
-  padding:14px 14px;
-  scrollbar-width:thin;scrollbar-color:rgba(168,85,247,.30) transparent;
-  scroll-behavior:smooth;
-  position:relative;z-index:1;
-  -webkit-overflow-scrolling:touch;
-  overscroll-behavior:contain;
-}
-.msgs::-webkit-scrollbar{width:7px;height:7px}
-.msgs::-webkit-scrollbar-track{background:transparent}
-.msgs::-webkit-scrollbar-thumb{
-  background:linear-gradient(180deg,rgba(99,102,241,.35),rgba(168,85,247,.35),rgba(236,72,153,.35));
-  border-radius:4px;
-}
-.msgs::-webkit-scrollbar-thumb:hover{
-  background:linear-gradient(180deg,rgba(99,102,241,.55),rgba(168,85,247,.55),rgba(236,72,153,.55));
-}
-
-.msgs > *{display:block;margin-bottom:10px;-webkit-animation:msgIn .35s cubic-bezier(.22,1,.36,1) both;animation:msgIn .35s cubic-bezier(.22,1,.36,1) both}
-.msgs > *:last-child{margin-bottom:0}
-@-webkit-keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-@keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-
-/* ── empty state ── */
-.empty-state{
-  text-align:center;padding:54px 20px 42px;color:var(--text-muted);
-}
-.empty-state h3{
-  color:var(--text-strong);margin:0 0 10px;font-size:calc(18px * var(--xg-font-scale,1));font-weight:650;
-  letter-spacing:-.01em;
-  background-image:linear-gradient(120deg,var(--gradient-from),var(--gradient-via),var(--gradient-to));
-  -webkit-background-clip:text;background-clip:text;
-  -webkit-text-fill-color:transparent;color:transparent;
-}
-.empty-state p{margin:.4em 0;font-size:calc(12.5px * var(--xg-font-scale,1));line-height:1.55}
-.empty-state .api-warn{
-  margin-top:14px;padding:9px 12px;background:var(--err-bg);
-  color:var(--err-text);border:1px solid var(--err-border);border-radius:10px;
-  font-size:calc(12px * var(--xg-font-scale,1));text-align:left;
-}
-.empty-state .api-cta{
-  margin-top:14px;padding:9px 18px;
-  background-image:linear-gradient(120deg,var(--gradient-from),var(--gradient-via),var(--gradient-to));
-  background-size:200% 100%;background-position:0% 50%;
-  color:var(--xg-on-accent,#fff);border:none;border-radius:10px;font:inherit;font-weight:600;
-  cursor:pointer;
-  box-shadow:0 6px 18px -4px rgba(168,85,247,.45);
-  transition:background-position .4s ease,transform .15s ease,box-shadow .25s ease;
-}
-.empty-state .api-cta:hover{background-position:100% 50%;transform:translateY(-1px)}
-.empty-state .api-cta:focus-visible{
-  outline:none;
-  box-shadow:0 0 0 3px rgba(168,85,247,.45),0 6px 18px -4px rgba(168,85,247,.45);
-}
-
-/* ── user bubble ── */
-.msg-user-wrap{text-align:right}
-.msg-user{
-  display:inline-block;text-align:left;
-  max-width:88%;
-  background-image:linear-gradient(135deg,var(--gradient-from),var(--gradient-via) 55%,var(--gradient-to));
-  color:var(--xg-on-accent,#fff);padding:9px 15px;
-  border-radius:16px 16px 4px 16px;font-size:calc(13px * var(--xg-font-scale,1));line-height:1.5;
-  box-shadow:
-    0 1px 0 rgba(255,255,255,.10) inset,
-    0 6px 18px -4px rgba(99,102,241,.40);
-  word-wrap:break-word;white-space:pre-wrap;
-}
-
-/* ── assistant text ── */
-.msg-ai{
-  max-width:95%;
-  color:var(--text-ai);font-size:calc(13px * var(--xg-font-scale,1));line-height:1.55;
-  word-wrap:break-word;overflow-wrap:anywhere;
-}
-.msg-ai h1,.msg-ai h2,.msg-ai h3{color:var(--text-ai-head);margin:8px 0 4px;font-size:calc(13.5px * var(--xg-font-scale,1));font-weight:650;letter-spacing:-.005em}
-.msg-ai h1{font-size:calc(15.5px * var(--xg-font-scale,1))}
-.msg-ai pre{
-  background:var(--code-bg);color:var(--code-text);
-  padding:11px 12px;border-radius:10px;
-  border:1px solid rgba(168,85,247,.18);overflow-x:auto;
-  font-size:calc(11.5px * var(--xg-font-scale,1));margin:6px 0;line-height:1.5;
-  font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  -webkit-overflow-scrolling:touch;
-}
-.msg-ai code{
-  background:var(--code-inline);padding:2px 6px;border-radius:5px;font-size:calc(11.5px * var(--xg-font-scale,1));
-  color:var(--code-text);
-  font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-}
-.msg-ai pre code{background:none;padding:0;color:var(--code-text)}
-.msg-ai a{
-  color:var(--code-text);text-decoration:underline;
-  text-underline-offset:3px;text-decoration-color:rgba(168,85,247,.45);
-  text-decoration-thickness:1.5px;
-  transition:text-decoration-color .15s ease;
-}
-.msg-ai a:hover{text-decoration-color:currentColor}
-.msg-ai ul,.msg-ai ol{margin:4px 0;padding-left:20px}
-.msg-ai li{margin:2px 0}
-.msg-ai blockquote{
-  border-left:2px solid var(--border-strong);margin:6px 0;padding:2px 12px;
-  color:var(--text-muted);
-}
-.msg-ai p{margin:5px 0}
-.msg-ai strong{color:var(--text-ai-head);font-weight:650}
-.msg-ai hr{
-  border:none;height:1px;margin:10px 0;
-  background:linear-gradient(90deg,transparent,var(--border-strong),transparent);
-}
-.msg-ai table{
-  border-collapse:collapse;width:100%;margin:8px 0;font-size:calc(12px * var(--xg-font-scale,1));
-  table-layout:fixed;word-break:break-word;
-  border:1px solid var(--table-border);border-radius:8px;overflow:hidden;
-}
-.msg-ai th,.msg-ai td{border:1px solid var(--table-border);padding:6px 9px;text-align:left}
-.msg-ai th{background:var(--table-th-bg);color:var(--text-ai-head);font-weight:650;font-size:calc(11.5px * var(--xg-font-scale,1))}
-.msg-ai td{color:var(--text-muted)}
-
-/* ── error ── */
-.msg-err{
-  background:var(--err-bg);border:1px solid var(--err-border);
-  color:var(--err-text);font-size:calc(12px * var(--xg-font-scale,1));text-align:center;
-  padding:9px 14px;border-radius:12px;
-}
-
-/* ── tool card ── */
-.tool{
-  background:var(--tool-bg);
-  border:1px solid var(--tool-border);border-radius:12px;
-  transition:border-color .25s ease,box-shadow .25s ease,background .25s ease;
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
-}
-.tool.running{
-  border-color:rgba(168,85,247,.40);
-  box-shadow:0 0 0 3px rgba(168,85,247,.08);
-}
-.tool.done{
-  border-color:rgba(16,185,129,.30);
-  box-shadow:0 0 0 3px rgba(16,185,129,.06);
-}
-.tool.error{
-  border-color:rgba(239,68,68,.40);
-  box-shadow:0 0 0 3px rgba(239,68,68,.08);
-}
-.tool-hdr{
-  display:flex;align-items:center;gap:9px;
-  padding:7px 12px;cursor:pointer;
-  -webkit-user-select:none;user-select:none;
-  transition:background .15s ease;
-  border-radius:11px;
-  -webkit-tap-highlight-color:transparent;
-}
-.tool-hdr:hover{background:var(--bg-hover)}
-.tool-ico{
-  width:24px;height:24px;border-radius:8px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:calc(12px * var(--xg-font-scale,1));flex:0 0 24px;
-  border:1px solid rgba(255,255,255,.05);
-}
-.tool-ico.search{background:rgba(14,165,233,.18);color:#7dd3fc}
-.tool-ico.browse{background:rgba(234,179,8,.16);color:#fde68a}
-.tool-ico.user{background:rgba(168,85,247,.18);color:#d8b4fe}
-.tool-ico.list{background:rgba(16,185,129,.16);color:#6ee7b7}
-.tool-ico.code{background:rgba(99,102,241,.20);color:#c7d2fe}
-.tool-ico.mem{background:rgba(236,72,153,.18);color:#f9a8d4}
-.tool-body{flex:1;min-width:0}
-.tool-title{color:var(--text);font-weight:550;font-size:calc(12.5px * var(--xg-font-scale,1));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tool-sub{
-  color:var(--text-muted);font-size:calc(10.5px * var(--xg-font-scale,1));margin-top:2px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-}
-/* Compact single-line layout when there's no subtitle yet (e.g. fallback
-   "done" placeholder cards for tools that don't register a label). */
-.tool-sub:empty{display:none}
-.tool-st{
-  flex:0 0 20px;width:20px;height:20px;
-  display:flex;align-items:center;justify-content:center;font-size:calc(12px * var(--xg-font-scale,1));
-}
-.tool-st.running .sp{
-  width:13px;height:13px;border:2px solid rgba(168,85,247,.20);
-  border-top-color:var(--gradient-via);border-radius:50%;
-  -webkit-animation:spin .8s linear infinite;animation:spin .8s linear infinite;
-}
-.tool-st.done{color:#4ade80;text-shadow:0 0 6px rgba(74,222,128,.45)}
-.tool-st.error{color:#f87171;text-shadow:0 0 6px rgba(248,113,113,.45)}
-.tool-detail{display:none;padding:0 12px 10px;max-height:280px;overflow:auto;-webkit-overflow-scrolling:touch}
-.tool-detail.open{display:block}
-.tool-detail .section{
-  margin-top:8px;font-size:calc(10px * var(--xg-font-scale,1));text-transform:uppercase;letter-spacing:.10em;
-  color:var(--text-faint);font-weight:700;
-}
-.tool-detail pre{
-  margin:5px 0 0;white-space:pre-wrap;word-break:break-word;
-  font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  font-size:calc(10.5px * var(--xg-font-scale,1));line-height:1.45;color:var(--text-muted);
-}
-.tool-detail pre.code{
-  background:var(--code-bg);color:var(--code-text);
-  padding:9px 10px;border-radius:8px;border:1px solid rgba(168,85,247,.18);
-  font-size:calc(11px * var(--xg-font-scale,1));line-height:1.45;
-  white-space:pre;overflow-x:auto;word-break:normal;-webkit-overflow-scrolling:touch;
-}
-
-/* ── chip strip (tool inputs) ── */
-.chip-strip{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
-.chip{
-  display:inline-flex;align-items:baseline;gap:3px;
-  background:var(--chip-bg);
-  border:1px solid rgba(168,85,247,.18);
-  border-radius:6px;padding:2px 7px;font-size:calc(10.5px * var(--xg-font-scale,1));
-  font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  max-width:100%;overflow:hidden;
-}
-.chip-key{color:var(--chip-key);font-weight:600}
-.chip-eq{color:var(--text-faint)}
-.chip-val{color:var(--chip-val);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-
-/* ── reply block (fenced "reply" code block) ── */
-.reply-block{
-  background:var(--bg-elevated);
-  border:1px solid var(--border);
-  border-left:3px solid transparent;
-  border-image:linear-gradient(180deg,var(--gradient-from),var(--gradient-via),var(--gradient-to)) 1;
-  border-radius:12px;margin:8px 0;overflow:hidden;
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
-}
-.reply-body{padding:11px 13px;font-size:calc(12px * var(--xg-font-scale,1));line-height:1.6;color:var(--text);word-break:break-word;white-space:pre-wrap}
-.reply-footer{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:0 12px 10px}
-.reply-to{
-  font-size:calc(11px * var(--xg-font-scale,1));color:var(--text-muted);margin-right:auto;
-  font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-}
-.reply-post-btn{
-  padding:6px 16px;border:none;border-radius:8px;
-  font-size:calc(12px * var(--xg-font-scale,1));font-weight:600;
-  background-image:linear-gradient(120deg,var(--gradient-from),var(--gradient-via),var(--gradient-to));
-  background-size:200% 100%;background-position:0% 50%;
-  color:var(--xg-on-accent,#fff);cursor:pointer;
-  box-shadow:0 4px 14px -4px rgba(168,85,247,.45);
-  transition:background-position .35s ease,opacity .15s ease,transform .15s ease;
-  font-family:inherit;
-  -webkit-tap-highlight-color:transparent;
-}
-.reply-post-btn:hover{background-position:100% 50%;transform:translateY(-1px)}
-.reply-post-btn:disabled{opacity:.55;cursor:default;transform:none;box-shadow:none}
-.reply-post-btn.posted{background:linear-gradient(120deg,#10b981,#22c55e);background-size:100% 100%}
-.reply-post-btn.errored{background:linear-gradient(120deg,#ef4444,#dc2626);background-size:100% 100%}
-
-/* ── reasoning ── */
-.reason{
-  background:var(--reason-bg);
-  border:1px solid var(--border-strong);border-radius:12px;
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
-}
-.reason-hdr{
-  display:flex;align-items:center;gap:7px;
-  padding:7px 11px;cursor:pointer;-webkit-user-select:none;user-select:none;
-  color:var(--text-muted);font-size:calc(11px * var(--xg-font-scale,1));font-weight:550;
-  transition:color .15s ease;
-  -webkit-tap-highlight-color:transparent;
-}
-.reason-hdr:hover{color:var(--text-strong)}
-.reason-arrow{
-  font-size:calc(9px * var(--xg-font-scale,1));transition:transform .2s ease;display:inline-block;
-  color:var(--chip-key);
-}
-.reason.open .reason-arrow{-webkit-transform:rotate(90deg);transform:rotate(90deg)}
-.reason-hdr .sp{
-  width:11px;height:11px;border:1.5px solid rgba(168,85,247,.20);
-  border-top-color:var(--gradient-via);border-radius:50%;
-  -webkit-animation:spin .8s linear infinite;animation:spin .8s linear infinite;
-}
-.reason-body{
-  display:none;padding:0 12px 10px;color:var(--text-muted);
-  font-size:calc(11px * var(--xg-font-scale,1));line-height:1.5;max-height:240px;overflow-y:auto;
-  white-space:pre-wrap;word-break:break-word;-webkit-overflow-scrolling:touch;
-  scrollbar-width:thin;scrollbar-color:rgba(168,85,247,.30) transparent;
-}
-.reason-body::-webkit-scrollbar{width:6px}
-.reason-body::-webkit-scrollbar-thumb{background:rgba(168,85,247,.30);border-radius:3px}
-.reason.open .reason-body{display:block}
-
-/* ── thinking indicator ── */
-.thinking{
-  display:flex;align-items:center;gap:8px;padding:4px 2px;
-  color:var(--text-muted);font-size:calc(11.5px * var(--xg-font-scale,1));
-}
-.thinking .sp{
-  width:14px;height:14px;border:2px solid rgba(168,85,247,.18);
-  border-top-color:var(--gradient-via);border-radius:50%;
-  -webkit-animation:spin .8s linear infinite;animation:spin .8s linear infinite;
-}
-
-@-webkit-keyframes spin{to{-webkit-transform:rotate(360deg);transform:rotate(360deg)}}
-@keyframes spin{to{-webkit-transform:rotate(360deg);transform:rotate(360deg)}}
-
-/* ── generation bar ──
- * A 2px shimmer pinned just above the status row while the agent is
- * streaming. Uses the brand gradient so it doubles as a brand cue.
- */
-.gen-bar{
-  flex:0 0 2px;overflow:hidden;opacity:0;
-  transition:opacity .25s ease;
-  background:rgba(168,85,247,.06);
-}
-.gen-bar.active{opacity:1}
-.gen-bar-inner{
-  width:40%;height:100%;
-  background:linear-gradient(90deg,
-    rgba(99,102,241,0),
-    var(--gradient-from),
-    var(--gradient-via),
-    var(--gradient-to),
-    rgba(236,72,153,0));
-  -webkit-animation:gen-slide 1.4s ease-in-out infinite;
-          animation:gen-slide 1.4s ease-in-out infinite;
-}
-@-webkit-keyframes gen-slide{
-  0%{-webkit-transform:translateX(-100%);transform:translateX(-100%)}
-  100%{-webkit-transform:translateX(350%);transform:translateX(350%)}
-}
-@keyframes gen-slide{
-  0%{-webkit-transform:translateX(-100%);transform:translateX(-100%)}
-  100%{-webkit-transform:translateX(350%);transform:translateX(350%)}
-}
-
-/* ── status bar ── */
-.status-row{
-  display:flex;align-items:center;gap:8px;
-  padding:6px 14px;font-size:calc(10px * var(--xg-font-scale,1));color:var(--text-faint);
-  flex:0 0 auto;border-top:1px solid var(--border);
-  background:rgba(8,8,13,.35);
-  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
-  font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  letter-spacing:.04em;
-  min-height:24px;position:relative;z-index:3;
-}
-.panel.light .status-row{background:rgba(255,255,255,.55)}
-.loading-status{
-  display:none;align-items:center;gap:7px;color:var(--text-muted);
-  white-space:nowrap;
-}
-.loading-status.active{display:flex}
-.loading-status .sp{
-  width:10px;height:10px;border:1.5px solid rgba(168,85,247,.18);
-  border-top-color:var(--gradient-via);border-radius:50%;
-  -webkit-animation:spin .8s linear infinite;animation:spin .8s linear infinite;
-}
-.status{
-  flex:1 1 auto;text-align:center;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
-/* webagent-style usage rollup pinned to the right side of the status bar */
-.metrics{
-  flex:0 0 auto;display:none;align-items:center;gap:6px;
-  color:var(--text-muted);white-space:nowrap;
-  font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  font-size:calc(10px * var(--xg-font-scale,1));
-}
-.context-meter{flex:0 0 auto;white-space:nowrap;color:var(--text-muted);font-size:calc(9px * var(--xg-font-scale,1))}.context-meter[hidden]{display:none}
-.loading-status{min-width:0;overflow:hidden;flex:0 1 auto}.loading-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.metrics.active{display:inline-flex}
-.metrics .sep{opacity:.45}
-.metrics .cost{color:var(--text-strong);font-weight:600}
-.metrics .cache-hit{color:#22c55e;font-weight:600}
-.metrics .cache-miss{color:var(--text-faint)}
-
-/* ── history sidebar (slides over msgs) ── */
-.history{
-  display:none;flex:1 1 0;overflow-y:auto;padding:10px 12px;
-  scrollbar-width:thin;scrollbar-color:rgba(168,85,247,.30) transparent;
-  -webkit-overflow-scrolling:touch;overscroll-behavior:contain;
-}
-.history::-webkit-scrollbar{width:7px}
-.history::-webkit-scrollbar-thumb{
-  background:linear-gradient(180deg,rgba(99,102,241,.35),rgba(168,85,247,.35),rgba(236,72,153,.35));
-  border-radius:4px;
-}
-.history.open{display:block}
-.history.open ~ .msgs{display:none}
-.history.open ~ .status-row{display:none}
-.history.open ~ .gen-bar{display:none}
-.history.open ~ .shortcuts{display:none}
-.history.open ~ .input-area{display:none}
-.history-empty{color:var(--text-faint);font-size:calc(12px * var(--xg-font-scale,1));text-align:center;padding:32px 12px;line-height:1.55}
-.history-section{
-  font-size:calc(10px * var(--xg-font-scale,1));text-transform:uppercase;letter-spacing:.10em;
-  color:var(--text-faint);font-weight:700;padding:10px 4px 6px;
-}
-.history-item{
-  display:flex;align-items:center;gap:8px;
-  padding:10px 12px;border:1px solid transparent;border-radius:12px;cursor:pointer;
-  transition:background .15s ease,border-color .15s ease,box-shadow .15s ease;
-  margin-bottom:3px;
-  -webkit-tap-highlight-color:transparent;
-}
-.history-item:hover{background:var(--bg-hover);border-color:var(--border)}
-.history-item.current{
-  background:linear-gradient(120deg,rgba(99,102,241,.10),rgba(236,72,153,.06));
-  border-color:var(--border-strong);
-  box-shadow:0 0 0 3px rgba(168,85,247,.10);
-}
-.history-item-body{flex:1;min-width:0}
-.history-item-title{color:var(--text-strong);font-size:calc(12.5px * var(--xg-font-scale,1));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:550}
-.history-item-meta{
-  color:var(--text-faint);font-size:calc(10px * var(--xg-font-scale,1));
-  font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  margin-top:2px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-}
-.history-item-actions{
-  flex:0 0 auto;display:flex;gap:2px;opacity:0;transition:opacity .15s ease;
-}
-.history-item:hover .history-item-actions,
-.history-item.current .history-item-actions{opacity:1}
-.history-item-actions .history-act{
-  color:var(--text-muted);font-size:calc(13px * var(--xg-font-scale,1));cursor:pointer;
-  padding:4px 8px;border-radius:6px;
-  transition:color .15s ease,background .15s ease;
-  display:inline-flex;align-items:center;justify-content:center;line-height:1;
-  -webkit-tap-highlight-color:transparent;
-}
-.history-item-actions .history-act:hover{color:var(--text-strong);background:var(--bg-active)}
-.history-item-actions .history-act.del:hover{color:#f87171;background:rgba(239,68,68,.10)}
-/* On mobile the actions need to always be visible (no hover state). */
-@media (pointer:coarse){
-  .history-item-actions{opacity:1}
-  .history-item-actions .history-act{padding:8px 12px;font-size:calc(15px * var(--xg-font-scale,1))}
-}
-
-/* ── Todos: dedicated UI for the agent's todo_write list ──
-   Lives as a sibling of .history; same overlay-style slide-in so opening
-   one closes the other. The toolbar button shows a small "done/total"
-   counter pill, and tints purple when there's an in_progress item. */
-/* Todos action lives inside .hdr-tools; the counter floats as a small
-   notification badge over the top-right corner of the icon button. */
-.btn-todos .todo-count{
-  position:absolute;top:-4px;right:-4px;
-  display:none;
-  background:linear-gradient(135deg,var(--gradient-via),var(--gradient-to));
-  color:#fff;
-  border-radius:999px;padding:0 5px;font-size:calc(9px * var(--xg-font-scale,1));font-weight:700;
-  font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  line-height:1.5;min-height:13px;min-width:13px;
-  text-align:center;letter-spacing:0;
-  box-shadow:0 0 0 2px var(--bg),0 4px 8px -2px rgba(168,85,247,.55);
-  font-variant-numeric:tabular-nums;
-}
-.btn-todos .todo-count.active{display:inline-flex;align-items:center;justify-content:center}
-.btn-todos.has-active{
-  color:var(--text-strong);
-  background:linear-gradient(135deg,rgba(99,102,241,.18),rgba(236,72,153,.18));
-  box-shadow:inset 0 0 0 1px rgba(168,85,247,.35);
-}
-
-.todos{
-  display:none;flex-direction:column;flex:1 1 auto;min-height:0;
-  overflow:hidden;padding:0;
-  background:linear-gradient(180deg,rgba(168,85,247,.05),transparent 60%);
-}
-.todos.open{display:flex}
-.todos.open ~ .msgs{display:none}
-.todos.open ~ .status-row{display:none}
-.todos.open ~ .gen-bar{display:none}
-.todos.open ~ .shortcuts{display:none}
-.todos.open ~ .input-area{display:none}
-.todos.open ~ .queued-row{display:none}
-.todos-header{
-  display:flex;align-items:center;justify-content:space-between;gap:8px;
-  padding:11px 14px 9px;border-bottom:1px solid var(--border);
-  flex:0 0 auto;
-}
-.todos-header .todos-title{
-  color:var(--text-strong);font-size:calc(12.5px * var(--xg-font-scale,1));font-weight:650;
-  display:flex;align-items:center;gap:8px;letter-spacing:.005em;
-}
-.todos-header .todos-summary{
-  font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  font-size:calc(10.5px * var(--xg-font-scale,1));color:var(--text-faint);font-weight:500;
-}
-.todos-header .todos-clear{
-  background:transparent;border:1px solid var(--border-input);
-  color:var(--text-muted);font-size:calc(11px * var(--xg-font-scale,1));font-family:inherit;
-  padding:5px 10px;border-radius:8px;cursor:pointer;
-  transition:background .15s ease,color .15s ease,border-color .15s ease;
-  -webkit-tap-highlight-color:transparent;
-}
-.todos-header .todos-clear:hover{
-  background:rgba(239,68,68,.10);color:#f87171;border-color:rgba(239,68,68,.40);
-}
-.todos-header .todos-clear:disabled{opacity:.4;cursor:default}
-.todos-list{
-  flex:1 1 auto;min-height:0;overflow-y:auto;
-  padding:10px 12px 16px;
-  scrollbar-width:thin;scrollbar-color:rgba(168,85,247,.30) transparent;
-  -webkit-overflow-scrolling:touch;overscroll-behavior:contain;
-}
-.todos-list::-webkit-scrollbar{width:7px}
-.todos-list::-webkit-scrollbar-thumb{
-  background:linear-gradient(180deg,rgba(99,102,241,.35),rgba(168,85,247,.35),rgba(236,72,153,.35));
-  border-radius:4px;
-}
-.todos-empty{
-  color:var(--text-faint);font-size:calc(12px * var(--xg-font-scale,1));text-align:center;
-  padding:32px 12px;line-height:1.6;
-}
-.todos-empty code{
-  background:var(--bg-input);color:var(--text);
-  padding:2px 6px;border-radius:6px;
-  font-family:'SF Mono','JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  font-size:calc(11px * var(--xg-font-scale,1));
-  border:1px solid var(--border);
-}
-
-.todo-item{
-  display:flex;align-items:flex-start;gap:10px;
-  padding:9px 11px;border-radius:11px;margin-bottom:3px;
-  transition:background .15s ease;
-  border:1px solid transparent;
-}
-.todo-item:hover{background:var(--bg-hover);border-color:var(--border)}
-.todo-item .todo-status{
-  flex:0 0 auto;width:22px;height:22px;border-radius:50%;
-  display:inline-flex;align-items:center;justify-content:center;
-  font-size:calc(13px * var(--xg-font-scale,1));font-weight:700;cursor:pointer;
-  border:1.5px solid var(--border-input);background:transparent;
-  color:var(--text-muted);
-  transition:border-color .2s ease,background .2s ease,color .2s ease,box-shadow .2s ease;
-  line-height:1;margin-top:1px;
-  -webkit-appearance:none;appearance:none;
-  font-family:inherit;
-  -webkit-tap-highlight-color:transparent;
-}
-.todo-item .todo-status:hover{
-  border-color:var(--border-strong);color:var(--chip-key);
-}
-.todo-item .todo-text{
-  flex:1 1 auto;color:var(--text);font-size:calc(12.5px * var(--xg-font-scale,1));line-height:1.55;
-  word-break:break-word;
-}
-/* pending: open circle, normal text */
-.todo-item.pending .todo-status::before{content:''}
-/* in_progress: filled half-circle + pulsing aura + bold accent text */
-.todo-item.in_progress .todo-status{
-  border-color:transparent;color:var(--xg-on-accent,#fff);
-  background-image:linear-gradient(135deg,var(--gradient-from),var(--gradient-via));
-  box-shadow:0 0 0 0 rgba(168,85,247,.45);
-  -webkit-animation:todoPulse 2.4s ease-in-out infinite;
-          animation:todoPulse 2.4s ease-in-out infinite;
-}
-.todo-item.in_progress .todo-status::before{content:'\\25B6';font-size:calc(9px * var(--xg-font-scale,1));line-height:1}
-.todo-item.in_progress .todo-text{
-  color:var(--text-strong);font-weight:600;
-}
-/* completed: filled check, strikethrough text */
-.todo-item.completed .todo-status{
-  border-color:transparent;
-  background-image:linear-gradient(135deg,#10b981,#22c55e);color:#fff;
-  box-shadow:0 4px 12px -4px rgba(16,185,129,.55);
-}
-.todo-item.completed .todo-status::before{content:'\\2713';font-size:calc(13px * var(--xg-font-scale,1));line-height:1;font-weight:700}
-.todo-item.completed .todo-text{
-  text-decoration:line-through;color:var(--text-faint);
-}
-
-@-webkit-keyframes todoPulse{
-  0%,100%{box-shadow:0 0 0 0 rgba(168,85,247,.45)}
-  50%{box-shadow:0 0 0 7px rgba(168,85,247,0)}
-}
-@keyframes todoPulse{
-  0%,100%{box-shadow:0 0 0 0 rgba(168,85,247,.45)}
-  50%{box-shadow:0 0 0 7px rgba(168,85,247,0)}
-}
-
-/* Mobile: bigger touch targets. */
-@media (pointer:coarse){
-  .todo-item{padding:12px 10px}
-  .todo-item .todo-status{width:28px;height:28px;font-size:calc(14px * var(--xg-font-scale,1))}
-  .todo-item .todo-text{font-size:calc(13.5px * var(--xg-font-scale,1))}
-  .todos-header .todos-clear{padding:8px 12px;font-size:calc(12.5px * var(--xg-font-scale,1))}
-}
-
-/* ── shortcuts row ── */
-.shortcuts{display:flex;gap:6px;padding:8px 12px 0;flex-wrap:wrap}
-.shortcuts:empty{display:none}
-.shortcuts button{
-  background:var(--bg-input);color:var(--text-muted);
-  border:1px solid var(--border-input);
-  border-radius:999px;padding:5px 12px;font-size:calc(11.5px * var(--xg-font-scale,1));font-family:inherit;
-  cursor:pointer;white-space:nowrap;
-  transition:background .15s ease,color .15s ease,border-color .15s ease,
-             box-shadow .15s ease,transform .15s ease;
-  -webkit-tap-highlight-color:transparent;
-}
-.shortcuts button:hover{
-  background:var(--bg-hover);color:var(--text-strong);
-  border-color:var(--border-strong);
-  box-shadow:0 0 0 3px rgba(168,85,247,.10);
-}
-.shortcuts button:focus-visible{
-  outline:none;
-  box-shadow:0 0 0 2px rgba(168,85,247,.55),0 0 0 4px rgba(168,85,247,.18);
-}
-
-.image-previews{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px 0;background:var(--bg);flex:0 0 auto}
-.image-previews[hidden],.image-error[hidden],.btn-attach[hidden]{display:none}
-.image-preview{position:relative;width:64px;height:64px}
-.image-preview img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border-strong)}
-.image-preview button{position:absolute;top:-5px;right:-5px;border:1px solid var(--border-strong);border-radius:50%;background:var(--bg);color:var(--text-strong);width:23px;height:23px;cursor:pointer}
-.image-error{padding:8px 12px;color:var(--err-text);background:var(--err-bg);font-size:calc(12px * var(--xg-font-scale,1));flex:0 0 auto}
-.btn-attach{display:grid;place-items:center;border:1px solid var(--border-input);border-radius:10px;background:var(--bg-input);color:var(--text-muted);padding:9px;min-width:36px;min-height:39px;cursor:pointer;flex:0 0 auto}
-.btn-attach:hover{color:var(--text-strong);border-color:var(--border-strong)}
-.btn-attach:focus-visible{outline:2px solid var(--gradient-via);outline-offset:2px}
-.msg-user img{max-width:100%;max-height:220px;object-fit:contain;border-radius:8px;display:block;margin-top:8px}
-/* ── input ──
- * Row: [ textarea  ][ Stop ][ Send ]
- * Stop and Send are wrapped in .input-actions so they always stay
- * grouped against the right edge — and so future affordances (e.g. an
- * inline model picker) have an obvious home. */
-.input-area{
-  display:flex;align-items:flex-end;padding:10px 12px;gap:8px;
-  border-top:1px solid var(--border);
-  background:rgba(8,8,13,.45);
-  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
-  flex:0 0 auto;position:relative;z-index:3;
-}
-.panel.light .input-area{background:rgba(255,255,255,.65)}
-.input-actions{
-  display:inline-flex;align-items:flex-end;gap:6px;flex:0 0 auto;
-}
-.input-area textarea{
-  flex:1 1 0;min-width:0;width:0;resize:none;
-  border:1px solid var(--border-input);border-radius:12px;
-  padding:10px 13px;font-size:calc(13px * var(--xg-font-scale,1));font-family:inherit;line-height:1.45;
-  max-height:120px;min-height:24px;
-  background:var(--bg-input);color:var(--text-strong);
-  transition:border-color .2s ease,box-shadow .2s ease,background .2s ease;
-  -webkit-appearance:none;appearance:none;
-}
-.input-area textarea::placeholder{color:var(--text-faint)}
-.input-area textarea:hover{border-color:var(--border-strong)}
-.input-area textarea:focus,
-.input-area textarea:focus-visible{
-  outline:none;
-  border-color:transparent;
-  background:var(--bg);
-  box-shadow:
-    0 0 0 1px var(--gradient-via),
-    0 0 0 4px rgba(168,85,247,.18),
-    0 6px 18px -8px rgba(168,85,247,.35);
-}
-.input-area textarea:disabled{opacity:.4;cursor:not-allowed}
-.btn-send,.btn-stop{
-  -webkit-appearance:none;appearance:none;
-  border:none;cursor:pointer;font-family:inherit;
-  border-radius:12px;padding:10px 20px;
-  font-size:calc(12.5px * var(--xg-font-scale,1));font-weight:600;letter-spacing:.005em;
-  white-space:nowrap;
-  transition:background-position .35s ease,box-shadow .25s ease,
-             transform .15s ease,opacity .15s ease;
-  -webkit-tap-highlight-color:transparent;
-}
-.btn-send{
-  background-image:linear-gradient(120deg,var(--gradient-from),var(--gradient-via),var(--gradient-to));
-  background-size:200% 100%;background-position:0% 50%;
-  color:var(--xg-on-accent,#fff);
-  box-shadow:
-    0 1px 0 rgba(255,255,255,.10) inset,
-    0 6px 18px -4px rgba(168,85,247,.40);
-}
-.btn-send:hover{background-position:100% 50%;transform:translateY(-1px);box-shadow:0 1px 0 rgba(255,255,255,.10) inset,0 10px 24px -6px rgba(168,85,247,.55)}
-.btn-send:active{transform:translateY(0)}
-.btn-send:focus-visible{
-  outline:none;
-  box-shadow:0 0 0 2px var(--gradient-via),0 0 0 5px rgba(168,85,247,.22),0 6px 18px -4px rgba(168,85,247,.40);
-}
-.btn-send:disabled{
-  background:var(--send-disabled-bg);background-image:none;color:var(--text-faint);
-  cursor:default;box-shadow:none;transform:none;
-}
-.btn-send.stop{
-  background-image:linear-gradient(120deg,#f43f5e,#ef4444 55%,#dc2626);
-  box-shadow:0 1px 0 rgba(255,255,255,.10) inset,0 6px 18px -4px rgba(239,68,68,.45);
-}
-
-/* Dedicated Stop button — only visible while the agent is running. The
-   Send button stays Send the whole time so Enter / click while running
-   simply queues the next prompt (Claude-Code-style). */
-.btn-stop{
-  background-image:linear-gradient(120deg,#f43f5e,#ef4444 55%,#dc2626);
-  background-size:200% 100%;background-position:0% 50%;
-  color:#fff;
-  box-shadow:0 1px 0 rgba(255,255,255,.10) inset,0 6px 18px -4px rgba(239,68,68,.45);
-  display:none;padding:10px 16px;
-}
-.btn-stop.active{display:inline-flex;align-items:center}
-.btn-stop:hover{background-position:100% 50%;transform:translateY(-1px);box-shadow:0 1px 0 rgba(255,255,255,.10) inset,0 10px 24px -6px rgba(239,68,68,.60)}
-.btn-stop:active{transform:translateY(0)}
-.btn-stop:focus-visible{
-  outline:none;
-  box-shadow:0 0 0 2px #ef4444,0 0 0 5px rgba(239,68,68,.22),0 6px 18px -4px rgba(239,68,68,.45);
-}
-.btn-stop:disabled{opacity:.65;cursor:default;transform:none;box-shadow:none}
-
-/* Queue tray — pinned just above the input area. Shows pending prompts
-   that the user typed while the agent was busy; they'll be picked up as
-   the next turn(s) once the current one finishes. Clicking × removes one. */
-.queued-row{
-  display:none;flex-wrap:wrap;gap:6px;align-items:center;
-  padding:8px 14px 0 14px;
-  position:relative;z-index:3;
-}
-.queued-row.active{display:flex}
-.queued-row .qlabel{
-  font-size:calc(10px * var(--xg-font-scale,1));color:var(--text-faint);font-weight:700;
-  text-transform:uppercase;letter-spacing:.08em;margin-right:2px;
-}
-.queued-pill{
-  background:linear-gradient(120deg,rgba(99,102,241,.10),rgba(168,85,247,.10),rgba(236,72,153,.10));
-  border:1px solid rgba(168,85,247,.28);
-  border-radius:999px;padding:4px 4px 4px 12px;
-  display:inline-flex;gap:6px;align-items:center;
-  font-size:calc(11.5px * var(--xg-font-scale,1));color:var(--text);max-width:240px;
-  font-family:inherit;
-}
-.queued-pill .qtext{
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  flex:1 1 auto;min-width:0;
-}
-.queued-pill .qrm{
-  cursor:pointer;background:transparent;border:none;color:var(--text-muted);
-  font-size:calc(14px * var(--xg-font-scale,1));line-height:1;padding:3px 7px;border-radius:999px;
-  font-family:inherit;
-  transition:background .15s ease,color .15s ease;
-  -webkit-appearance:none;appearance:none;
-  -webkit-tap-highlight-color:transparent;
-}
-.queued-pill .qrm:hover{background:var(--bg-active);color:var(--text-strong)}
-
-/* ── accessibility: reduced motion / high contrast ── */
-@media (prefers-reduced-motion:reduce){
-  *,*::before,*::after{
-    -webkit-animation-duration:.001s !important;animation-duration:.001s !important;
-    -webkit-animation-iteration-count:1 !important;animation-iteration-count:1 !important;
-    transition-duration:.001s !important;
-  }
-  .toggle::before,.panel::before{display:none}
-  .msgs > *{-webkit-animation:none !important;animation:none !important}
-}
-@media (prefers-contrast:more){
-  .panel{
-    --border:rgba(255,255,255,.20);
-    --border-input:rgba(255,255,255,.28);
-    --border-strong:rgba(168,85,247,.55);
-    --text:#ffffff;--text-muted:#cccccc;--text-faint:#9a9aa6;
-  }
-  .panel.light{
-    --border:rgba(0,0,0,.25);--border-input:rgba(0,0,0,.35);
-    --border-strong:rgba(99,102,241,.65);
-    --text:#000000;--text-muted:#1c1c25;
-  }
-}
-/* Tablet/desktop pointer-fine: tighter hairlines, slightly smaller toggle. */
-@media (pointer:fine) and (min-width:521px){
-  .toggle{width:46px;height:46px}
-}
-
-/* iOS visualViewport zoom guard: when the page is zoomed, our panel stays
-   pinned to the visual viewport, not the layout viewport. */
-@supports (top:env(safe-area-inset-top)){
-  .panel{
-    /* Already padded by JS-applied media query above on mobile; this just
-       makes sure tablet split-screen also respects insets when overlayed. */
-  }
-}
-`;
-
 const HTML = `
-<button class="toggle" title="Open xgoose">✦</button>
+<button class="toggle" title="Open xgoose">${GOOSE_MARK}</button>
 <div class="panel">
   <div class="resize-handle corner" data-axis="corner"></div>
   <div class="resize-handle edge" data-axis="h"></div>
   <div class="resize-handle edge" data-axis="v"></div>
   <div class="hdr">
-    <div class="hdr-title"><span class="hdr-dot"></span><span>xgoose</span></div>
+    <div class="hdr-title"><span class="hdr-mark">${GOOSE_MARK}</span><span>xgoose</span></div>
     <div class="hdr-actions">
       <div class="hdr-tools" role="group" aria-label="Conversation tools">
         <button class="btn-history hdr-icon-btn" title="Past conversations" aria-label="History"><svg class="hdr-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8m0 0V4m0 4h4M12 8v4.5l3 1.8"/></svg></button>
@@ -1319,7 +27,6 @@ const HTML = `
         <button class="btn-settings hdr-icon-btn" title="Open settings" aria-label="Settings"><svg class="hdr-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.07.07a2 2 0 1 1-2.83 2.83l-.07-.07a1.7 1.7 0 0 0-1.83-.3 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.54 1.7 1.7 0 0 0-1.83.3l-.07.07a2 2 0 1 1-2.83-2.83l.07-.07A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.83l-.07-.07a2 2 0 1 1 2.83-2.83l.07.07A1.7 1.7 0 0 0 9 4.64h.1A1.7 1.7 0 0 0 10 3.1V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.83-.3l.07-.07a2 2 0 1 1 2.83 2.83l-.07.07a1.7 1.7 0 0 0-.3 1.83V9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.55 1Z"/></svg></button>
         <button class="btn-expand hdr-icon-btn" title="Toggle wide overlay" aria-label="Toggle wide overlay"><svg class="hdr-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 9V5h4M20 9V5h-4M4 15v4h4m12-4v4h-4"/></svg></button>
       </div>
-      <span class="hdr-sep" aria-hidden="true"></span>
       <button class="btn-new" title="New conversation"><span class="btn-new-glyph" aria-hidden="true">+</span><span class="btn-new-label">New</span></button>
       <button class="btn-close hdr-icon-btn hdr-close" title="Minimize chat" aria-label="Minimize"><svg class="hdr-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M5 12h14"/></svg></button>
     </div>
@@ -1413,24 +120,6 @@ export type CreatePanelOpts = {
   /** Safari keeps controls within the visible page when zoom or a keyboard changes it. */
   visualViewport?: boolean;
   editableSkills?: boolean;
-  branding?: {
-    /** Replaces the literal "xgoose" text in the header title. */
-    name?: string;
-    /** URL or data-URI. When set, replaces the `✦` text on the floating
-     *  toggle button AND the green dot in the header with an `<img>` of
-     *  this asset. */
-    logoUrl?: string;
-  };
-  /** Per-toolbar-button visibility flags. Anything set to `false` hides
-   *  the corresponding `<button>` and turns the matching `set…` panel
-   *  method into a no-op so callers don't have to branch. Defaults
-   *  preserve the historical behaviour (settings/history/todos all on)
-   *  for extension hosts that pass no options. */
-  buttons?: {
-    settings?: boolean;
-    history?: boolean;
-    todos?: boolean;
-  };
 };
 
 export type Panel = {
@@ -1456,7 +145,7 @@ export type Panel = {
   ): void;
   onSkillAction(
     handler: (
-      action: "edit" | "disable" | "enable" | "publish" | "read",
+      action: "edit" | "disable" | "enable" | "read",
       name: string,
     ) => void,
   ): void;
@@ -1542,14 +231,6 @@ export type Panel = {
 };
 
 export function createPanel(opts: CreatePanelOpts = {}): Panel {
-  // Per-button visibility flags. Default `true` for every button so
-  // extension hosts that pass no options keep the historical layout.
-  const showSettingsBtn = opts.buttons?.settings !== false;
-  const showHistoryBtn = opts.buttons?.history !== false;
-  const showTodosBtn = opts.buttons?.todos !== false;
-  const brandingName = opts.branding?.name ?? null;
-  const brandingLogo = opts.branding?.logoUrl ?? null;
-
   const host = document.createElement("div");
   host.id = "xgoose-root";
   const shadow = host.attachShadow({ mode: "open" });
@@ -1563,7 +244,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   }
 
   const style = document.createElement("style");
-  style.textContent = CSS+APPEARANCE_STYLE_CSS;
+  style.textContent = PANEL_CSS+APPEARANCE_STYLE_CSS;
   shadow.appendChild(style);
 
   const wrap = document.createElement("div");
@@ -1584,6 +265,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   const msgs = $(".msgs") as HTMLDivElement;
   const historyEl = $(".history") as HTMLDivElement;
   const genBar = $(".gen-bar") as HTMLDivElement;
+  mountMotion(panel);
   const statusEl = $(".status") as HTMLSpanElement;
   const metricsEl = $(".metrics") as HTMLSpanElement;
   const contextMeter=$(".context-meter") as HTMLSpanElement;
@@ -1608,7 +290,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       remove.onclick=()=>{pendingImages.splice(index,1);renderImages();};
       wrap.append(img,remove);previewEl.append(wrap);
     });
-    if(pendingImages.length){const hint=document.createElement("span");hint.style.cssText="width:100%;font-size:calc(11px * var(--xg-font-scale,1));color:var(--text-muted)";hint.textContent="Images are resized locally and sent with this message to your AI provider.";previewEl.append(hint);}
+    if(pendingImages.length){const hint=document.createElement("span");hint.className="image-hint";hint.textContent="Images are resized locally and sent with this message to your AI provider.";previewEl.append(hint);}
   }
   async function attachFiles(files:File[]){
     if(imagePreparing||!opts.imageUploads)return;
@@ -1655,49 +337,13 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     closeSkillMenu();
     const menu = document.createElement("div");
     menu.className = "skill-menu";
-    menu.setAttribute(
-      "style",
-      [
-        "position:absolute",
-        "background:var(--panel-bg, #1f2937)",
-        "color:var(--panel-fg, #f9fafb)",
-        "border:1px solid var(--panel-border, rgba(255,255,255,0.12))",
-        "border-radius:8px",
-        "padding:4px",
-        "min-width:160px",
-        "z-index:1000",
-        "box-shadow:0 8px 22px rgba(0,0,0,0.35)",
-        "font-size:calc(13px * var(--xg-font-scale,1))",
-      ].join(";"),
-    );
     const addItem = (
       label: string,
-      action: "edit" | "disable" | "enable" | "publish" | "read",
+      action: "edit" | "disable" | "enable" | "read",
     ): void => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = label;
-      btn.setAttribute(
-        "style",
-        [
-          "display:block",
-          "width:100%",
-          "text-align:left",
-          "background:transparent",
-          "border:0",
-          "color:inherit",
-          "padding:6px 10px",
-          "border-radius:6px",
-          "cursor:pointer",
-          "font-size:calc(13px * var(--xg-font-scale,1))",
-        ].join(";"),
-      );
-      btn.addEventListener("mouseenter", () => {
-        btn.style.background = "rgba(255,255,255,0.08)";
-      });
-      btn.addEventListener("mouseleave", () => {
-        btn.style.background = "transparent";
-      });
       btn.addEventListener("click", () => {
         closeSkillMenu();
         handlers.skillAction?.(action, skill.name);
@@ -1710,16 +356,17 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       skill.enabled === false ? "Enable" : "Disable for all pages",
       skill.enabled === false ? "enable" : "disable",
     );
-    if(opts.editableSkills!==false)addItem("Publish to xgoose-web", "publish");
 
-    const rect = anchor.getBoundingClientRect();
-    menu.style.left = `${rect.left}px`;
-    menu.style.top = `${rect.bottom + 4}px`;
-    document.body.appendChild(menu);
+    // Inside the panel the menu takes its theme and follows its position and scale.
+    panel.appendChild(menu);
+    const rect = anchor.getBoundingClientRect(), box = panel.getBoundingClientRect();
+    const scale = box.width / panel.offsetWidth || 1;
+    menu.style.left = `${Math.max(8, Math.min((rect.left - box.left) / scale, panel.clientWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${(rect.bottom - box.top) / scale + 4}px`;
     skillMenu = menu;
 
     const onDocClick = (e: MouseEvent): void => {
-      if (menu.contains(e.target as Node)) return;
+      if (e.composedPath().includes(menu)) return;
       closeSkillMenu();
       document.removeEventListener("mousedown", onDocClick, true);
     };
@@ -1739,46 +386,6 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   const btnSettings = $(".btn-settings") as HTMLButtonElement;
   const btnClose = $(".btn-close") as HTMLButtonElement;
   const btnExpand = $(".btn-expand") as HTMLButtonElement;
-
-  // ── apply host branding + button visibility ──
-  // Done before any handlers attach so hidden buttons can never fire.
-  if (!showSettingsBtn) btnSettings.style.display = "none";
-  if (!showHistoryBtn) btnHistory.style.display = "none";
-  if (!showTodosBtn) btnTodos.style.display = "none";
-
-  if (brandingName) {
-    const titleEl = shadow.querySelector(".hdr-title") as HTMLElement | null;
-    const labelSpan = titleEl?.querySelector(
-      "span:not(.hdr-dot)",
-    ) as HTMLElement | null;
-    if (labelSpan) labelSpan.textContent = brandingName;
-  }
-  if (brandingLogo) {
-    // Replace the green status dot with the host's logo image.
-    const dot = shadow.querySelector(".hdr-dot") as HTMLElement | null;
-    if (dot) {
-      const img = document.createElement("img");
-      img.src = brandingLogo;
-      img.alt = brandingName ?? "";
-      img.setAttribute(
-        "style",
-        "width:16px;height:16px;border-radius:4px;object-fit:contain;display:block;animation:none;background:transparent;box-shadow:none;",
-      );
-      dot.replaceWith(img);
-    }
-    // Replace the floating toggle's `✦` glyph with the same asset, scaled
-    // to fit the 46px button. We keep the gradient background so the
-    // button still reads as the xgoose anchor on the page.
-    const toggleImg = document.createElement("img");
-    toggleImg.src = brandingLogo;
-    toggleImg.alt = brandingName ?? "";
-    toggleImg.setAttribute(
-      "style",
-      "width:26px;height:26px;border-radius:6px;object-fit:contain;pointer-events:none;",
-    );
-    toggleBtn.textContent = "";
-    toggleBtn.appendChild(toggleImg);
-  }
 
   const handlers = {
     send: null as null | ((t: string, images?: ImageAttachment[]) => void),
@@ -1802,7 +409,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     skillAction: null as
       | null
       | ((
-          action: "edit" | "disable" | "enable" | "publish" | "read",
+          action: "edit" | "disable" | "enable" | "read",
           name: string,
         ) => void),
     skillActionRun: null as
@@ -2375,7 +982,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       <div class="empty-state">
         <h3>What's on your mind?</h3>
         <p>Ask anything about this page. Skills active on this URL are listed above.</p>
-        <p style="opacity:.7;font-size:calc(11px * var(--xg-font-scale,1));margin-top:8px">Try: "summarize this page", or "find the form on the page and tell me which fields are required".</p>
+        <p class="empty-hint">Try: "summarize this page", or "find the form on the page and tell me which fields are required".</p>
       </div>
     `;
   }
@@ -2591,6 +1198,13 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       return;
     }
 
+    const stepsHdr = target.closest(".steps-hdr") as HTMLElement | null;
+    if (stepsHdr) {
+      const open = stepsHdr.parentElement!.classList.toggle("open");
+      stepsHdr.setAttribute("aria-expanded", String(open));
+      return;
+    }
+
     const toolHdr = target.closest(".tool-hdr") as HTMLElement | null;
     if (toolHdr) {
       const card = toolHdr.parentElement as HTMLElement | null;
@@ -2654,18 +1268,47 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     detail.innerHTML = parts.join("");
   }
 
+  // ── activity groups ──
+  // A run of consecutive tool calls and reasoning blocks shares one line that
+  // shows the step in progress, then the count once the run is finished.
+  // Failed calls are only marked inside the expanded list.
+
+  function activityList(): HTMLElement {
+    const last = msgs.lastElementChild;
+    if (last?.classList.contains("steps")) return last.querySelector(".steps-list") as HTMLElement;
+    const group = append(el(
+      "steps",
+      `<button class="steps-hdr" type="button" aria-expanded="false"><span class="steps-st"></span><span class="steps-label"></span><svg class="steps-caret" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.5 6.5 5 3 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button><div class="steps-list"></div>`,
+    ));
+    return group.querySelector(".steps-list") as HTMLElement;
+  }
+
+  function syncActivity(list: HTMLElement): void {
+    const group = list.parentElement as HTMLElement;
+    const items = Array.from(list.children);
+    const active = items.filter((item) => item.matches(".running,.waiting")).at(-1);
+    const tools = items.filter((item) => item.classList.contains("tool"));
+    const status = group.querySelector(".steps-st") as HTMLElement;
+    status.className = active ? "steps-st" : "steps-st done";
+    status.innerHTML = active ? '<div class="sp"></div>' : "✓";
+    (group.querySelector(".steps-label") as HTMLElement).textContent = active
+      ? (active.querySelector(".tool-title,.reason-label") as HTMLElement).textContent
+      : tools.length
+        ? `${tools.length} action${tools.length === 1 ? "" : "s"}`
+        : "Thought";
+  }
+
   function createToolCard(name: string, input: unknown): ToolCardHandle {
     const meta = describeToolCall(name, input);
     const card = el(
       "tool running",
       `
       <div class="tool-hdr">
-        <div class="tool-ico ${meta.iconClass}">${meta.icon}</div>
+        <div class="tool-st running"><div class="sp"></div></div>
         <div class="tool-body">
           <div class="tool-title"></div>
           <div class="tool-sub"></div>
         </div>
-        <div class="tool-st running"><div class="sp"></div></div>
       </div>
       <div class="tool-detail"></div>
     `,
@@ -2676,27 +1319,23 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       meta.subtitle;
     const detail = card.querySelector(".tool-detail") as HTMLElement;
     renderToolDetail(detail, name, input, undefined);
-    append(card);
-    return wrapToolCard(card, name, input);
-  }
-
-  function wrapToolCard(
-    card: HTMLElement,
-    name: string,
-    input: unknown,
-  ): ToolCardHandle {
+    const list = activityList();
+    list.appendChild(card);
+    syncActivity(list);
+    scroll();
     return {
       el: card,
       setResult(output, error) {
+        // Tools report expected failures as {ok:false,error}; show them as failures.
+        const failure = error ?? ((output as {ok?: boolean})?.ok === false ? String((output as {error?: unknown}).error ?? "Tool failed") : undefined);
         const st = card.querySelector(".tool-st") as HTMLElement;
         const sub = card.querySelector(".tool-sub") as HTMLElement;
-        const detail = card.querySelector(".tool-detail") as HTMLElement;
         card.classList.remove("running", "waiting", "done", "error");
-        if (error) {
+        if (failure) {
           card.classList.add("error");
           st.className = "tool-st error";
-          st.textContent = "✗";
-          sub.textContent = `Error: ${truncate(error, 80)}`;
+          st.textContent = "✕";
+          sub.textContent = truncate(failure, 120);
         } else if (name === "wait_agents" && (output as {waiting?: boolean})?.waiting) {
           card.classList.add("waiting");
           st.className = "tool-st running";
@@ -2706,10 +1345,10 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
           card.classList.add("done");
           st.className = "tool-st done";
           st.textContent = "✓";
-          const summary = summarizeToolResult(name, output);
-          sub.textContent = summary;
+          sub.textContent = summarizeToolResult(name, output);
         }
-        renderToolDetail(detail, name, input, output, error);
+        renderToolDetail(detail, name, input, output, failure);
+        syncActivity(card.parentElement as HTMLElement);
         scroll();
       },
     };
@@ -2724,17 +1363,19 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
 
   function addReasoningBlock(): ReasoningBlockHandle {
     const block = el(
-      "reason open",
+      "reason running",
       `
       <div class="reason-hdr">
         <span class="reason-arrow">▶</span>
-        <div class="sp"></div>
         <span class="reason-label">Thinking…</span>
       </div>
       <div class="reason-body"></div>
     `,
     );
-    append(block);
+    const list = activityList();
+    list.appendChild(block);
+    syncActivity(list);
+    scroll();
     _reasonBuf = "";
     _reasonBody = null;
     if (_reasonTimer != null) {
@@ -2768,12 +1409,10 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
         }
         body.normalize();
         _reasonBody = null;
-        const spinner = block.querySelector(".sp");
-        if (spinner) spinner.remove();
         const label = block.querySelector(".reason-label") as HTMLElement;
-        const len = body.textContent?.length ?? 0;
-        label.textContent = `Thinking · ${len} chars`;
-        block.classList.remove("open");
+        label.textContent = `Thinking · ${body.textContent!.length} chars`;
+        block.classList.remove("running");
+        syncActivity(list);
       },
     };
   }
@@ -3102,10 +1741,6 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     },
 
     setHistory(items) {
-      // History button hidden by host config → ignore data writes so the
-      // tray never inflates and a stale `showHistory(true)` can't surface
-      // ghost UI.
-      if (!showHistoryBtn) return;
       historyEl.innerHTML = "";
       if (!items.length) {
         const empty = document.createElement("div");
@@ -3129,7 +1764,6 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       }
     },
     showHistory(visible) {
-      if (!showHistoryBtn) return;
       historyEl.classList.toggle("open", visible);
       if (visible) {
         todosEl.classList.remove("open");
@@ -3139,7 +1773,6 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     isHistoryOpen: () => historyEl.classList.contains("open"),
 
     setTodos(items) {
-      if (!showTodosBtn) return;
       const total = items.length;
       const done = items.filter((t) => t.status === "completed").length;
       const hasActive = items.some((t) => t.status === "in_progress");
@@ -3179,7 +1812,6 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       for (const t of items) todosListEl.appendChild(makeTodoRow(t));
     },
     showTodos(visible) {
-      if (!showTodosBtn) return;
       todosEl.classList.toggle("open", visible);
       if (visible) {
         historyEl.classList.remove("open");

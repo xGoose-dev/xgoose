@@ -17,8 +17,6 @@ function truncate(s: string, n: number): string {
 
 registerToolLabels({
   list_skills: {
-    icon: "📚",
-    iconClass: "list",
     label: "List skills",
     summarize: (output: any) => {
       if (Array.isArray(output)) {
@@ -29,13 +27,9 @@ registerToolLabels({
     },
   },
   read_skill: {
-    icon: "📖",
-    iconClass: "list",
     label: "Read skill",
     argKey: "name",
-    describe: (input, m) => ({
-      icon: m.icon,
-      iconClass: m.iconClass,
+    describe: (input) => ({
       title: `Read skill: ${input?.name ?? "?"}`,
       subtitle: "",
     }),
@@ -47,13 +41,9 @@ registerToolLabels({
     },
   },
   search_skills: {
-    icon: "🔍",
-    iconClass: "search",
     label: "Search skills",
     argKey: "query",
-    describe: (input, m) => ({
-      icon: m.icon,
-      iconClass: m.iconClass,
+    describe: (input) => ({
       title: "Search skills",
       subtitle: input?.query ? truncate(String(input.query), 60) : "",
     }),
@@ -63,13 +53,9 @@ registerToolLabels({
         : "ok",
   },
   help: {
-    icon: "❓",
-    iconClass: "list",
     label: "Help",
     argKey: "skill",
-    describe: (input, m) => ({
-      icon: m.icon,
-      iconClass: m.iconClass,
+    describe: (input) => ({
       title: `Help: ${input?.skill ?? "?"}${input?.function ? `.${input.function}` : ""}`,
       subtitle: "",
     }),
@@ -84,11 +70,9 @@ registerToolLabels({
     },
   },
   skill_call: {
-    icon: "🪄",
-    iconClass: "code",
     label: "Call skill",
     argKey: "function",
-    describe: (input, m) => {
+    describe: (input) => {
       const skill = input?.skill ?? "?";
       const fn = input?.function ?? "?";
       const args =
@@ -101,8 +85,6 @@ registerToolLabels({
           .join(" · ");
       }
       return {
-        icon: m.icon,
-        iconClass: m.iconClass,
         title: `${skill}.${fn}()`,
         subtitle: sub,
       };
@@ -116,13 +98,9 @@ registerToolLabels({
     },
   },
   edit_skill: {
-    icon: "✏️",
-    iconClass: "code",
     label: "Edit skill",
     argKey: "name",
-    describe: (input, m) => ({
-      icon: m.icon,
-      iconClass: m.iconClass,
+    describe: (input) => ({
       title: `Edit skill: ${input?.name ?? "?"}`,
       subtitle:
         typeof input?.source === "string" ? `${input.source.length} chars` : "",
@@ -133,8 +111,6 @@ registerToolLabels({
         : "error",
   },
   skill_help: {
-    icon: "📘",
-    iconClass: "list",
     label: "Read skill authoring spec",
     summarize: (output: any) => {
       if (output?.ok && typeof output.length === "number") {
@@ -144,10 +120,8 @@ registerToolLabels({
     },
   },
   create_skill: {
-    icon: "🆕",
-    iconClass: "code",
     label: "Create skill",
-    describe: (input, m) => {
+    describe: (input) => {
       let nameGuess = "?";
       if (typeof input?.source === "string") {
         const m2 = /@name\s+(\S+)/.exec(input.source);
@@ -156,8 +130,6 @@ registerToolLabels({
       const size =
         typeof input?.source === "string" ? `${input.source.length} chars` : "";
       return {
-        icon: m.icon,
-        iconClass: m.iconClass,
         title: `Create skill: ${nameGuess}`,
         subtitle: size,
       };
