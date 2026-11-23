@@ -1,17 +1,24 @@
 # Appearance presets and analytics
 
-The interface offers five complete presets: `default`, `glass`, `notebook`, `soft`, and `bold`.
+The interface offers ten complete presets: `default`, `glass`, `notebook`, `soft`, `bold`, `aurora`, `terminal`, `studio`, `pop`, and `noir`.
 The other controls are mode (`system`, `light`, `dark`), font (follow preset, sans, serif, mono),
-and four text sizes (90%, 100%, 115%, 130%). There are no color, opacity, radius or shadow editors.
+and five text sizes (80%, 90%, 100%, 115%, 130%). There are no color, opacity, radius or shadow editors.
 A preset selects the complete material, shape, typography, border and shadow treatment together.
 
 | Preset | Material and geometry | Source |
 | --- | --- | --- |
-| Classic (`default`) | Existing platform appearance, unchanged | xgoose |
+| Classic (`default`) | xgoose brand palette (ink, violet, lavender, beak orange), opaque surface, 20px corners | xgoose |
 | Glass | 72% light / 78% dark fill, 24px backdrop blur, reflection layers, 20px corners | daisyUI Glass, adapted |
 | Notebook | Opaque paper, fine rules, 10px corners, subtle offset shadow, bundled handwriting font | tweakcn Notebook, adapted |
 | Soft | Opaque rounded surfaces, 24px corners, inset highlights and soft shadows | tweakcn Claymorphism, adapted |
 | Bold | Opaque surface, square corners, 3px stroke, 4px hard offset shadow | tweakcn Neo Brutalism, adapted |
+| Aurora | Liquid glass (28px blur, 22px corners) over drifting light; blur-in message reveal, staggered lists, edge-fade on the conversation, gradient-rimmed controls, clip-reveal headings, a dot grid, shimmer on the step in progress and a flowing composer rim while a turn runs. Loops stop under reduced motion. SwiftUI shows a static gradient. | xgoose |
+| Terminal | Black surface, green monospace, 4px corners; prompt marks, block cursor on the step in progress, scanlines, typed-in answers | xgoose, after zui.ooo |
+| Studio | Warm stone, 2px corners, hairlines; uppercase headlines that slide out of a clip with a drawn rule | xgoose, after Halston |
+| Pop | Aqua surface, hot pink accent, pills; springy message and button motion, bobbing launcher | xgoose, after nojiggery.co |
+| Noir | Pure black and white, square corners, film grain; controls and links invert on hover, wipe-in messages | xgoose, after HOLMCHROME |
+
+The animated presets share motion.ts: word-by-word headings, a pointer follower, magnetic buttons, pointer tilt and parallax, a status ticker, scrambled activity text, a spotlight and confetti on send. Terminal has notched corners and a CRT power-on, Pop is a morphing blob, Noir opens through an iris and Studio turns in like a page. Pointer effects need a mouse; touch devices keep the entrances, shapes and loops.
 
 Existing Settings buttons retain their original options-page or native-app destination.
 Appearance is an additional optional setting; an upgrade does not select a new preset.

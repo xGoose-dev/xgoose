@@ -32,11 +32,11 @@ try {
  // A synthetic conversation makes the material comparison independent of login/setup banners.
  await page.evaluate(()=>{const shadow=document.querySelector('#xgoose-root').shadowRoot;const style=document.createElement('style');style.textContent='.user-scripts-guide{display:none!important}';shadow.append(style);shadow.querySelector('.msgs').innerHTML='<div class="msg-user-wrap"><div class="msg-user">整理一下当前页面。<br>Help me explore this page.</div></div><div class="msg-ai"><h3>A little clarity, right where you are.</h3><p>Follow the useful details, keep the sources close, and carry on reading.</p><p>保留重点，也保留你的阅读节奏。</p><pre><code>const next = "keep exploring";</code></pre></div><div class="tool"><div class="tool-hdr"><span class="tool-title">Read page · 当前网页</span></div></div>';});
 
- for(const preset of ['default','glass','notebook','soft','bold'])for(const mode of ['light','dark']){
+ for(const preset of ['default','glass','notebook','soft','bold','aurora','terminal','studio','pop','noir'])for(const mode of ['light','dark']){
    await settings.locator(`[data-preset=${preset}]`).click();await settings.locator('[data-field=font]').selectOption('default');await settings.locator('[data-field=theme]').selectOption(mode);
    await expect.poll(()=>settings.evaluate(async()=>((await chrome.storage.local.get('xgoose.settings'))['xgoose.settings']).appearance.preset)).toBe(preset);
    await expect.poll(()=>page.locator('.panel').getAttribute('data-xg-preset')).toBe(preset);await expect.poll(()=>page.locator('.panel').getAttribute('data-xg-mode')).toBe(mode);
-   await expect.poll(()=>page.locator('.panel').evaluate(el=>getComputedStyle(el).borderRadius)).toBe(`${({default:20,glass:20,notebook:10,soft:24,bold:0})[preset]}px`);
+   /* Pop keeps changing shape. */if(preset!=='pop')await expect.poll(()=>page.locator('.panel').evaluate(el=>getComputedStyle(el).borderRadius)).toBe(`${({default:20,glass:20,notebook:10,soft:24,bold:0,aurora:22,terminal:4,studio:2,pop:24,noir:0})[preset]}px`);
    const measured=await page.locator('.panel').evaluate(el=>{const c=getComputedStyle(el);return {preset:el.dataset.xgPreset,radius:c.borderRadius,border:c.borderTopWidth,blur:c.backdropFilter,background:c.backgroundColor,shadow:c.boxShadow};});materials.push(measured);
    if(preset==='glass')assert.ok(measured.blur.includes('24px'));
    if(preset==='bold'){assert.equal(measured.radius,'0px');assert.equal(measured.border,'3px');}

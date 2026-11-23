@@ -104,7 +104,7 @@ export function onAccountChange(
 
 export type ApiResponse<T> =
   | { ok: true; status: number; data: T }
-  | { ok: false; status: number; error: string };
+  | { ok: false; status: number; error: string; code?: string };
 
 /**
  * Single-shot fetch against the xgoose API. Returns a tagged result so
@@ -152,7 +152,8 @@ export async function apiFetch<T = unknown>(
         (obj && typeof obj.message === "string" && obj.message) ||
         (obj && typeof obj.error === "string" && obj.error) ||
         `${res.status} ${res.statusText}`;
-      return { ok: false, status: res.status, error: String(msg) };
+      // `code` is the API's own error code; responses from anything else lack it.
+      return { ok: false, status: res.status, error: String(msg), ...(obj && typeof obj.error === "string" ? { code: obj.error } : {}) };
     }
     return { ok: true, status: res.status, data: body as T };
   }

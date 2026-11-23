@@ -13,7 +13,7 @@
   <body>
     <div class="page">
       <header>
-        <h1><span class="dot"></span>Install xgoose skill</h1>
+        <h1>Install xgoose skill</h1>
         <p class="subtitle">
           Review the header below, then confirm to install. You can also paste
           source or upload an
@@ -47,16 +47,12 @@
           <span id="fileLabel" class="hint install-file-label"></span>
         </div>
 
-        <div class="row">
-          <label class="col">
-            <textarea
+        <textarea
               id="sourceInput"
               rows="18"
               class="mono install-source-input"
               placeholder="// ==XGooseSkill==&#10;// @name         my-skill&#10;// @namespace    mySkill&#10;// @version      0.1.0&#10;// @description  What this skill does&#10;// @match        *://example.com/*&#10;// @primary      doSomething&#10;// ==/XGooseSkill==&#10;&#10;import { defineSkill, fn } from '@xgoose/skill';&#10;import { z } from 'zod';&#10;&#10;export default defineSkill({&#10;  doSomething: fn({&#10;    summary: 'Do the thing.',&#10;    input: z.object({ x: z.string() }),&#10;    handler: async ({ x }) => ({ ok: true, x }),&#10;  }),&#10;});"
             ></textarea>
-          </label>
-        </div>
       </section>
 
       <section id="previewSection" hidden>
@@ -72,7 +68,7 @@
       <section id="resultSection" hidden>
         <h2>Result</h2>
         <p id="resultBody" class="install-result"></p>
-        <div class="row install-result-actions">
+        <div class="install-result-actions">
           <button id="openOptionsBtn" class="btn secondary" type="button">
             Open Settings
           </button>

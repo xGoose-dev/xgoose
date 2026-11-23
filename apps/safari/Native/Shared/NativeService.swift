@@ -5,11 +5,15 @@ import Darwin
 let appGroup = "group.org.xgoose.xgoose-safari"
 let extensionIdentifier = "org.xgoose.xgoose-safari.Extension"
 let apiBase = "https://api.xgoose.org"
+/// Used until the Hosted catalogue names its own default.
+let hostedDefaultModel = "deepseek-flash"
 typealias JSONObject = [String: Any]
 
 struct ServiceError: LocalizedError {
     let message: String
     var status:Int? = nil
+    /// The xgoose API's own error code. Responses from proxies or captive portals have none.
+    var code:String? = nil
     var errorDescription: String? { message }
 }
 
@@ -90,18 +94,17 @@ enum NativeService {
         var vault = try Vault.read()
         let defaults = UserDefaults(suiteName: appGroup)!
         if state["settings"] == nil {
-            var settings: JSONObject = ["provider":"xgoose-hosted", "model":"claude-haiku-5-5", "thinking":false,"language":"auto","answerLanguage":"auto","theme":"system","launcherVisibility":"skill-sites","analyticsEnabled":false]
+            var settings: JSONObject = ["provider":"xgoose-hosted", "model":hostedDefaultModel, "thinking":false,"language":"auto","answerLanguage":"auto","theme":"system","launcherVisibility":"skill-sites","analyticsEnabled":true]
             for key in ["xgoose.settings","xgoose.account","xgoose.skills.disabled","xgoose.skills.user","xgoose.layout"] {
                 var value: Any? = defaults.object(forKey: key)
                 if let raw = value as? String, let data = raw.data(using: .utf8) { value = try? JSONSerialization.jsonObject(with: data) }
-                if key == "xgoose.settings", let old = value as? JSONObject { settings.merge(old) { _, new in new };if old["language"] != nil {state["languageChosen"]=true} }
+                if key == "xgoose.settings", let old = value as? JSONObject { settings.merge(old) { _, new in new };settings["analyticsEnabled"]=false;if old["language"] != nil {state["languageChosen"]=true} }
                 else if key == "xgoose.account", let account = value as? JSONObject {
                     if verifiedLegacyAccount(account) {vault["account"]=account}
                     else {vault["legacyAccount"]=account}
                 }
                 else if let value { state[key] = value }
             }
-            settings["analyticsEnabled"] = false
             state["settings"] = settings
         }
         if state["extensionMigrated"] as? Bool != true, !supplied.isEmpty {
@@ -141,9 +144,9 @@ enum NativeService {
         if let data = try? JSONSerialization.data(withJSONObject: settings), let json = String(data:data,encoding:.utf8) { defaults.set(json,forKey:"xgoose.settings") }
         defaults.removeObject(forKey:"xgoose.account")
     }
-    static func request(_ path: String, method: String = "GET", body: JSONObject? = nil, bearer: String? = nil) async throws -> JSONObject {
+    static func request(_ path: String, method: String = "GET", body: JSONObject? = nil, bearer: String? = nil, timeout: TimeInterval? = nil) async throws -> JSONObject {
         var request = URLRequest(url: URL(string:apiBase + path)!)
-        request.httpMethod = method; request.timeoutInterval = path == "/a/collect" ? 10:45
+        request.httpMethod = method; request.timeoutInterval = timeout ?? (path == "/a/collect" ? 10:45)
         request.setValue("application/json",forHTTPHeaderField:"Content-Type")
         if let bearer { request.setValue("Bearer \(bearer)",forHTTPHeaderField:"Authorization") }
         if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
@@ -152,7 +155,7 @@ enum NativeService {
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(code) else {
             let error = (result["error"] as? JSONObject)?["message"] as? String ?? result["message"] as? String ?? result["error"] as? String ?? "Request failed (HTTP \(code))."
-            throw ServiceError(message:error,status:code)
+            throw ServiceError(message:error,status:code,code:result["error"] as? String)
         }
         return result
     }
@@ -163,13 +166,45 @@ enum NativeService {
         let expires = account["accessTokenExpiresAt"] as? String ?? ""
         let date = format.date(from:expires) ?? ISO8601DateFormatter().date(from:expires) ?? .distantPast
         if !force && date.timeIntervalSinceNow > 60 { return account }
-        let tokens:JSONObject
-        do {tokens = try await request("/auth/refresh",method:"POST",body:["refresh_token":account["refreshToken"] ?? ""])}
-        catch {if let failure=error as? ServiceError,[401,403].contains(failure.status ?? 0) {vault.removeValue(forKey:"account");try Vault.write(vault);throw ServiceError(message:"Your session expired. Sign in with email again.")};throw error}
+        // Persist the request secret before sending, so a lost response retries
+        // this exact rotation even after the server's short overlap.
+        let requestId = account["refreshRequestId"] as? String ?? UUID().uuidString.lowercased()
+        if account["refreshRequestId"] == nil {account["refreshRequestId"]=requestId;vault["account"]=account;try Vault.write(vault)}
+        var renewed:JSONObject?
+        for attempt in 0..<3 {
+            do {renewed = try await request("/auth/refresh",method:"POST",body:["refresh_token":account["refreshToken"] ?? "","refresh_request_id":requestId],timeout:8);break}
+            catch {
+                if let failure=error as? ServiceError,let status=failure.status {
+                    // Only the API's own rejection signs the user out. A bare 401/403 can
+                    // come from a captive portal, proxy or firewall and keeps the account.
+                    if [401,403].contains(status),["unauthorized","forbidden"].contains(failure.code ?? "") {vault.removeValue(forKey:"account");try Vault.write(vault);throw ServiceError(message:"Your session expired. Sign in with email again.")}
+                    if status<500 && ![408,425,429].contains(status) {break}
+                }
+                if attempt<2 {try await Task.sleep(for:.milliseconds(250*(attempt+1)))}
+            }
+        }
+        guard let tokens=renewed else {throw ServiceError(message:"Connection interrupted while renewing your session. Your account is still saved. Please retry.",status:503)}
+        account.removeValue(forKey:"refreshRequestId")
         account["accessToken"] = tokens["access_token"]; account["refreshToken"] = tokens["refresh_token"]
         account["accessTokenExpiresAt"] = tokens["access_token_expires_at"]
         vault["account"] = account; try Vault.write(vault)
         return account
+    }
+    /// Signing in is the agreement to Hosted data use, which the sign-in screen states.
+    static func enableHosted(state: inout JSONObject, model requested: String = "") async throws {
+        guard let account = try await freshAccount(), let token = account["accessToken"] as? String else { throw ServiceError(message:"Open xgoose and sign in to use Hosted AI.") }
+        _ = try await request("/me/transcript-consent",method:"PUT",body:["hosted":true,"byok":false],bearer:token)
+        let catalog=try await request("/ai/v1/models",bearer:token)
+        let ids=(catalog["data"] as? [JSONObject] ?? []).compactMap{$0["id"] as? String}
+        guard let first=ids.first else {throw ServiceError(message:"Hosted has no available models. Try again later or use BYOK.")}
+        var settings=state["settings"] as? JSONObject ?? [:]
+        if ids.contains(requested) {settings["model"]=requested;state.removeValue(forKey:"connectionTested")}
+        else if settings["provider"] as? String != "xgoose-hosted" || !ids.contains(settings["model"] as? String ?? "") {
+            let preferred=[catalog["default_model"] as? String ?? "",hostedDefaultModel].first{ids.contains($0)}
+            settings["model"]=preferred ?? first;state.removeValue(forKey:"connectionTested")
+        }
+        settings["provider"]="xgoose-hosted";state["settings"]=settings
+        state["hostedAccepted"] = true
     }
     static func poll(state: inout JSONObject) async throws {
         var vault = try Vault.read()
@@ -182,6 +217,8 @@ enum NativeService {
         vault["account"] = ["user":tokens["user"] ?? [:],"accessToken":tokens["access_token"] ?? "","refreshToken":tokens["refresh_token"] ?? "","accessTokenExpiresAt":tokens["access_token_expires_at"] ?? "","lastSeenAt":Date().timeIntervalSince1970 * 1000]
         vault.removeValue(forKey:"pending"); try Vault.write(vault); state.removeValue(forKey:"loginError")
         state.removeValue(forKey:"hostedAccepted"); state.removeValue(forKey:"connectionTested")
+        // A failure here leaves the user signed in; the first Hosted request agrees again.
+        if (state["settings"] as? JSONObject)?["provider"] as? String ?? "xgoose-hosted" == "xgoose-hosted" {try? await enableHosted(state:&state)}
     }
     static func handle(_ kind: String, _ payload: JSONObject) async -> JSONObject {
         guard let directory = try? directory else {return ["ok":false,"error":"Shared storage is unavailable. Check the app signature."]}
@@ -255,7 +292,7 @@ enum NativeService {
                 let ids=Set(payload["ids"] as? [String] ?? [])
                 state["appearanceEvents"]=(state["appearanceEvents"] as? [JSONObject] ?? []).filter{!ids.contains(($0["params"] as? JSONObject)?["event_id"] as? String ?? "")}
             case "hosted-ready":
-                guard state["hostedAccepted"] as? Bool == true else {throw ServiceError(message:"Open xgoose and agree to Hosted data use first.")}
+                if state["hostedAccepted"] as? Bool != true {try await enableHosted(state:&state)}
             case "credentials":
                 guard state["providerAccepted"] as? Bool == true else {throw ServiceError(message:"Open xgoose and agree to your provider’s data use first.")}
                 let vault = try Vault.read(); value = ["apiKey":(vault["apiKeys"] as? [String:String])?[payload["provider"] as? String ?? ""] ?? ""]
@@ -281,8 +318,9 @@ enum NativeService {
                 let settings=state["settings"] as? JSONObject ?? [:]
                 let provider=settings["provider"] as? String ?? "xgoose-hosted"
                 if provider == "xgoose-hosted" {
-                    guard state["hostedAccepted"] as? Bool == true, let account=try await freshAccount(),let token=account["accessToken"] as? String else {throw ServiceError(message:"Sign in and agree to Hosted data use first.")}
-                    _ = try await request("/ai/v1/chat/completions",method:"POST",body:["model":settings["model"] ?? "claude-haiku-5-5","messages":[["role":"user","content":"Reply with OK."]],"max_tokens":16,"stream":false],bearer:token)
+                    if state["hostedAccepted"] as? Bool != true {try await enableHosted(state:&state)}
+                    guard let account=try await freshAccount(),let token=account["accessToken"] as? String else {throw ServiceError(message:"Open xgoose and sign in to use Hosted AI.")}
+                    _ = try await request("/ai/v1/chat/completions",method:"POST",body:["model":settings["model"] ?? hostedDefaultModel,"messages":[["role":"user","content":"Reply with OK."]],"max_tokens":16,"stream":false],bearer:token)
                 } else {
                     let vault=try Vault.read()
                     guard state["providerAccepted"] as? Bool == true,let key=(vault["apiKeys"] as? [String:String])?[provider],!key.isEmpty else {throw ServiceError(message:"Save your API key and agree to provider data use first.")}
@@ -320,18 +358,7 @@ enum NativeService {
             case "claim-trial":
                 guard let account=try await freshAccount(),let token=account["accessToken"] as? String else {throw ServiceError(message:"Sign in first.")}
                 value=try await request("/me/trial/claim",method:"POST",bearer:token)
-            case "consent":
-                guard let account = try await freshAccount(), let token = account["accessToken"] as? String else { throw ServiceError(message:"Sign in with email first.") }
-                _ = try await request("/me/transcript-consent",method:"PUT",body:["hosted":true,"byok":false],bearer:token)
-                let catalog=try await request("/ai/v1/models",bearer:token)
-                let ids=(catalog["data"] as? [JSONObject] ?? []).compactMap{$0["id"] as? String}
-                guard let first=ids.first else {throw ServiceError(message:"Hosted has no available models. Try again later or use BYOK.")}
-                var settings=state["settings"] as? JSONObject ?? [:]
-                let requested=payload["model"] as? String ?? ""
-                if ids.contains(requested) {settings["model"]=requested;state.removeValue(forKey:"connectionTested")}
-                else if settings["provider"] as? String != "xgoose-hosted" || !ids.contains(settings["model"] as? String ?? "") {settings["model"]=ids.contains("claude-haiku-5-5") ? "claude-haiku-5-5":first;state.removeValue(forKey:"connectionTested")}
-                settings["provider"]="xgoose-hosted";state["settings"]=settings
-                state["hostedAccepted"] = true
+            case "consent": try await enableHosted(state:&state,model:payload["model"] as? String ?? "")
             case "progress":
                 if payload["kind"] as? String == "diagnostic",let error=payload["error"] as? String {state["lastSkillError"]=String(error.prefix(300))}
                 if payload["kind"] as? String == "page" { state["pageSeenAt"] = Date().timeIntervalSince1970;state["websiteAvailable"]=true;state["pageHostname"]=payload["hostname"] ?? "";state["allWebsites"]=payload["allWebsites"] as? Bool ?? false;state.removeValue(forKey:"lastSkillError") }

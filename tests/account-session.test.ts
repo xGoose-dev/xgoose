@@ -18,7 +18,7 @@ test('parallel failed requests share one rotation; fresh readers wait during rot
  assert.equal((await f.session.refresh('A'))?.accessToken,'B');assert.equal(f.renewals(),1,'late A failure must not rotate B');
 });
 test('revoked refresh clears the account and never falls back to unexpired rejected credentials',async()=>{
- const f=fixture(token('A','user',30000));const fresh=f.session.fresh();await started(f);f.gate.resolve({ok:false,status:401});
+ const f=fixture(token('A','user',30000));const fresh=f.session.fresh();await started(f);f.gate.resolve({ok:false,status:401,rejected:true});
  assert.equal(await fresh,null);assert.equal(f.read(),null);assert.equal(f.cleared(),1);
 });
 test('temporary refresh failure keeps valid storage, expired storage is not used',async()=>{
@@ -28,13 +28,13 @@ test('logout while refresh is in flight cannot resurrect the session',async()=>{
  const f=fixture();const old=f.session.refresh('A');await started(f);await f.session.replace(null);f.gate.resolve({ok:true,account:token('B')});assert.equal(await old,null);assert.equal(f.read(),null);
 });
 test('new login wins over both stale refresh success and stale refresh rejection',async()=>{
- for(const reply of [{ok:true,account:token('B')},{ok:false,status:401}]){
+ for(const reply of [{ok:true,account:token('B')},{ok:false,status:401,rejected:true}]){
   const f=fixture();const old=f.session.refresh('A');await started(f);await f.session.replace(token('C','other'));f.gate.resolve(reply);
   assert.equal((await old)?.accessToken,'C');assert.equal(f.read()?.user.id,'other');assert.equal(f.cleared(),0);
  }
 });
 test('storage changed by another context is not overwritten or cleared by a stale refresh',async()=>{
- const f=fixture();const old=f.session.refresh('A');await started(f);f.external(token('C'));f.gate.resolve({ok:false,status:401});assert.equal((await old)?.accessToken,'C');assert.equal(f.cleared(),0);
+ const f=fixture();const old=f.session.refresh('A');await started(f);f.external(token('C'));f.gate.resolve({ok:false,status:401,rejected:true});assert.equal((await old)?.accessToken,'C');assert.equal(f.cleared(),0);
 });
 test('fresh readers retain a still-valid stored token when an in-flight proactive refresh has a transient failure',async()=>{
  const f=fixture();const refresh=f.session.refresh('A');await started(f);const fresh=f.session.fresh();f.gate.resolve({ok:false,status:503});await assert.rejects(refresh,/still saved/);assert.equal((await fresh)?.accessToken,'A');
@@ -63,4 +63,13 @@ test('logout during a transient retry prevents further renewal and preserves sig
  let account:Account|null=token('A');let attempts=0;let session:ReturnType<typeof createAccountSession>;
  session=createAccountSession({read:async()=>account,save:async a=>{account=a;},clear:async()=>{account=null;},wait:async()=>session.replace(null),renew:async()=>{attempts++;return {ok:false,status:503};}});
  assert.equal(await session.refresh(),null);assert.equal(attempts,1);assert.equal(await session.snapshot(),null);
+});
+test('a 401 or 403 that the xgoose API did not issue keeps the account signed in',async()=>{
+ // Captive portals, proxies and firewalls answer with these statuses too.
+ for(const status of [401,403]){
+  const live=fixture(token('A','user',30000));const fresh=live.session.fresh();await started(live);live.gate.resolve({ok:false,status});
+  assert.equal((await fresh)?.accessToken,'A');assert.equal(live.cleared(),0);
+  const expired=fixture(token('A','user',-1000));const stale=expired.session.fresh();await started(expired);expired.gate.resolve({ok:false,status});
+  await assert.rejects(stale,/still saved/);assert.equal(expired.read()?.accessToken,'A');assert.equal(expired.cleared(),0);
+ }
 });

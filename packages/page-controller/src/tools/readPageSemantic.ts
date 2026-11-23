@@ -103,18 +103,8 @@ export function createReadPageSemanticTool(): XgooseBuiltTool {
       const max = maxBytes ?? resultBudgetBytes();
       const sel = selector ?? "body";
 
-      let root: Element | null = null;
-      try {
-        root = document.querySelector(sel);
-      } catch (err: any) {
-        return {
-          ok: false,
-          error: `Invalid selector: ${err?.message ?? String(err)}`,
-        };
-      }
-      if (!root) {
-        return { ok: false, error: `No element matched selector: ${sel}` };
-      }
+      const root = document.querySelector(sel);
+      if (!root) throw new Error(`No element matched selector: ${sel}`);
 
       if (waitForStableMs && waitForStableMs > 0) {
         await awaitDomQuiet({

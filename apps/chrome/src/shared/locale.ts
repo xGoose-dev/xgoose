@@ -39,6 +39,7 @@ function translateLocale(text:string,locale:Locale):string {
     [/^Thinking · (\d+) chars$/,'思考中 · $1 字符','Pensando · $1 caracteres'],
     [/^Context (\d+%)$/,'上下文 $1','Contexto $1'],
     [/^(\d+) steps?$/,'$1 步','$1 pasos'],
+    [/^(\d+) actions?$/,'$1 个操作','$1 acciones'],
     [/^(\d+) skill updates? available(.*)$/,'有 $1 个 skill 更新$2','Hay $1 actualizaciones de skills$2'],
     [/^Link and update (.+)$/,'关联并更新 $1','Vincular y actualizar $1'],
     [/^Update (.+)$/,'更新 $1','Actualizar $1'],
@@ -68,7 +69,7 @@ function protectedNode(element:Element|null):boolean {
   if(!element)return false;
   if(element.closest(protectedSelector))return true;
   const message=element.closest('.msgs');
-  return !!message&&!element.closest('.thinking,.reason-label,.user-scripts-guide,.empty-state');
+  return !!message&&!element.closest('.thinking,.reason-label,.steps-label,.user-scripts-guide,.empty-state');
 }
 let originalTitle="",renderedTitle="";
 function render(root:HTMLElement|ShadowRoot) {
@@ -102,7 +103,7 @@ export function localizeRoot(root:HTMLElement|ShadowRoot) {
   roots.add(root);render(root);
   let queued=false;
   new MutationObserver(mutations=>{
-    if(queued||mutations.every(m=>protectedNode(m.target instanceof Element?m.target:m.target.parentElement)&&!Array.from(m.addedNodes).some(n=>n instanceof Element&&(n.matches('.thinking,.reason-label,.user-scripts-guide,.empty-state')||n.querySelector('.thinking,.reason-label,.user-scripts-guide,.empty-state')))))return;
+    if(queued||mutations.every(m=>protectedNode(m.target instanceof Element?m.target:m.target.parentElement)&&!Array.from(m.addedNodes).some(n=>n instanceof Element&&(n.matches('.thinking,.reason-label,.steps-label,.user-scripts-guide,.empty-state')||n.querySelector('.thinking,.reason-label,.steps-label,.user-scripts-guide,.empty-state')))))return;
     queued=true;queueMicrotask(()=>{queued=false;render(root);});
   }).observe(root,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['title','aria-label','placeholder','alt']});
 }

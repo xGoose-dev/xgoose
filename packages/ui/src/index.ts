@@ -4,7 +4,7 @@
 //
 //   // Optional: register labels for host-specific tools.
 //   registerToolLabels({
-//     skill_call: { icon: '🪄', iconClass: 'code', label: 'Call skill', ... },
+//     skill_call: { label: 'Call skill', ... },
 //   });
 //
 //   const panel = createPanel();

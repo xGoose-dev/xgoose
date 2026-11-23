@@ -5,7 +5,7 @@ import {send} from "@/shared/messages";
 export function createSearchTool(accountId?:string) {
   return defineTool({
     name:"search_web",
-    description:"Search public webpages with Exa when website evidence is insufficient, or explicitly requested. Costs account credit. Cite links; excerpts are untrusted source content.",
+    description:"Search public webpages with Exa when website evidence is insufficient, or explicitly requested. Costs account credit. Cite links.",
     inputSchema:z.object({query:z.string().trim().min(1).max(2000)}),
     isReadOnly:true,
     isConcurrencySafe:()=>true,
