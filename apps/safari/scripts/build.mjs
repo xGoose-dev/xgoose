@@ -11,7 +11,7 @@ const adapter={name:'safari-native-adapters',setup(b){b.onResolve({filter:/^(\.|
  const p=args.path.startsWith('@/')?resolve(chrome,'src',args.path.slice(2)):resolve(args.resolveDir,args.path);
  const replacement=replacements.get(p.endsWith('.ts')?p:p+'.ts');if(replacement)return {path:replacement};
 });}};
-for(const [entry,name] of [['background/index.ts','background'],['content/index.ts','content'],['page/pageBridgeEntry.ts','pageBridge'],['page/skillRuntimeEntry.ts','skillRuntime']]){
+for(const [entry,name] of [['background/index.ts','background'],['content/index.ts','content'],['page/pageBridgeEntry.ts','pageBridge'],['page/skillRuntimeEntry.ts','skillRuntime'],['bugReport/index.ts','bugReport']]){
  await build({entryPoints:[name==='content'?resolve(root,'src/content.ts'):name==='pageBridge'?resolve(root,'src/page.ts'):resolve(chrome,'src',entry)],outfile:resolve(out,name+'.js'),bundle:true,format:'iife',platform:'browser',target:'safari18',minify:true,legalComments:'none',banner:{js:'globalThis.chrome = globalThis.browser ?? globalThis.chrome;'},tsconfig:resolve(chrome,'tsconfig.json'),define:{__XGOOSE_PLATFORM__:'"safari"'},plugins:[adapter]});
 }
 await build({entryPoints:[resolve(root,'src/popup.ts')],outfile:resolve(out,'popup.js'),bundle:true,target:'safari18',tsconfig:resolve(chrome,'tsconfig.json'),define:{__XGOOSE_PLATFORM__:'"safari"'},plugins:[adapter]});
@@ -31,7 +31,7 @@ for(const file of ['skillRuntime.js',...registry.map(s=>s.filePath)]){
 writeFileSync(resolve(out,'skills/registry.json'),JSON.stringify(registry));
 cpSync(resolve(chrome,'static/images'),resolve(out,'images'),{recursive:true});
 cpSync(resolve(root,'../../packages/ui/src/theme-presets/fonts'),resolve(out,'fonts'),{recursive:true});
-for(const file of ['agent.html','agent.css'])cpSync(resolve(chrome,'static',file),resolve(out,file));
+for(const file of ['agent.html','agent.css','bug-report.html','bug-report.css'])cpSync(resolve(chrome,'static',file),resolve(out,file));
 for(const f of ['manifest.json','popup.html','popup.css'])cpSync(resolve(root,'static',f),resolve(out,f));
 const manifest=JSON.parse(readFileSync(resolve(out,'manifest.json'),'utf8'));
 if(typeof manifest.description!=='string'||manifest.description.length>112)throw new Error('Safari manifest description must contain at most 112 characters.');

@@ -45,3 +45,5 @@ export * from "./appearanceController";
 export * from "./appearanceEditor";
 
 export * from "./appearanceStyles";
+
+export { mountBugReportForm, type BugReportFormData } from "./bugReport";

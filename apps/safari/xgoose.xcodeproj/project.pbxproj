@@ -12,6 +12,7 @@
 		375139A8E74A3748DD0EF278 /* third-party-notices.txt in Resources */ = {isa = PBXBuildFile; fileRef = AF628712EC87D244D5D6BCEA /* third-party-notices.txt */; };
 		37D934569AB2ACD2D0DB5005 /* agent.css in Resources */ = {isa = PBXBuildFile; fileRef = 1470670A5C0A14F116625A45 /* agent.css */; };
 		3A71834748928232A8542216 /* fonts in Resources */ = {isa = PBXBuildFile; fileRef = 6F9D91549FBFF22A524D0A7C /* fonts */; };
+		3DBF29A6BDF41A11B7E8C647 /* bug-report.css in Resources */ = {isa = PBXBuildFile; fileRef = 75A5EC912CC60C4A0FB1D446 /* bug-report.css */; };
 		4DDCED019BFD313B2AE94A84 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 2235CEF00B8E72FAF6E84E51 /* manifest.json */; };
 		50D915BC6242A74CAAA344A7 /* NativeServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D79724DCB5B9ECF9D72EF5 /* NativeServiceTests.swift */; };
 		53C6D297AE31995FA83F05BA /* pageBridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 739AD40BBA4479CF4B7355AC /* pageBridge.js */; };
@@ -27,10 +28,12 @@
 		C767E0BA3F73E2B37D4F7660 /* popup.css in Resources */ = {isa = PBXBuildFile; fileRef = E2908B9D8FEBC13C65BD8D96 /* popup.css */; };
 		CAD6EFCC4BAE605A56F0531D /* agent.html in Resources */ = {isa = PBXBuildFile; fileRef = 9AF477FADF592D453B2FA6DB /* agent.html */; };
 		D739453C7A100DBBB6D50F9C /* XGooseApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9255C5C22F3044299D78A0AE /* XGooseApp.swift */; };
+		DCA8BE1B495F69390D5FE6E3 /* bugReport.js in Resources */ = {isa = PBXBuildFile; fileRef = 43D4176596051A8BB6B489F8 /* bugReport.js */; };
 		DF3A3590E6CABFB63838A83A /* NativeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30DE80143A2E87D453284C8E /* NativeService.swift */; };
 		E39591C7357E1DC47CD49F5D /* NativeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30DE80143A2E87D453284C8E /* NativeService.swift */; };
 		E649E17C847F7E3FA63EF4A5 /* skillRuntime.js in Resources */ = {isa = PBXBuildFile; fileRef = 4F93AB2498265A72491E223B /* skillRuntime.js */; };
 		E65E8F1100EE97B987E4CCF9 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 55AB5544C4895498D37DF137 /* content.js */; };
+		F17BFB316662DA4AE180D5E6 /* bug-report.html in Resources */ = {isa = PBXBuildFile; fileRef = 6FF33F616B6137BA96EA087F /* bug-report.html */; };
 		FD7D75CE4778988C19748EFE /* skills in Resources */ = {isa = PBXBuildFile; fileRef = E6FD773FC7B7DB131229887F /* skills */; };
 /* End PBXBuildFile section */
 
@@ -73,12 +76,15 @@
 		2946E0D88BEB6BC75E64C167 /* popup.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = popup.js; sourceTree = "<group>"; };
 		30DE80143A2E87D453284C8E /* NativeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeService.swift; sourceTree = "<group>"; };
 		345EDB8829F60CA30851B1BD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		43D4176596051A8BB6B489F8 /* bugReport.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = bugReport.js; sourceTree = "<group>"; };
 		4F93AB2498265A72491E223B /* skillRuntime.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = skillRuntime.js; sourceTree = "<group>"; };
 		54A382181D5692D14E982554 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
 		55AB5544C4895498D37DF137 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = content.js; sourceTree = "<group>"; };
 		6F9D91549FBFF22A524D0A7C /* fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = fonts; path = dist/fonts; sourceTree = SOURCE_ROOT; };
+		6FF33F616B6137BA96EA087F /* bug-report.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "bug-report.html"; sourceTree = "<group>"; };
 		739AD40BBA4479CF4B7355AC /* pageBridge.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = pageBridge.js; sourceTree = "<group>"; };
 		750EBB372E6496ED69CECC36 /* skills.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = skills.json; sourceTree = "<group>"; };
+		75A5EC912CC60C4A0FB1D446 /* bug-report.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = "bug-report.css"; sourceTree = "<group>"; };
 		8543356E25F8AFC2AD3952FE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		9255C5C22F3044299D78A0AE /* XGooseApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XGooseApp.swift; sourceTree = "<group>"; };
 		92CD3915248D39C2B553AA9E /* xgoose.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = xgoose.entitlements; sourceTree = "<group>"; };
@@ -151,6 +157,9 @@
 				1470670A5C0A14F116625A45 /* agent.css */,
 				9AF477FADF592D453B2FA6DB /* agent.html */,
 				0D75987129D2957C629F7D67 /* background.js */,
+				75A5EC912CC60C4A0FB1D446 /* bug-report.css */,
+				6FF33F616B6137BA96EA087F /* bug-report.html */,
+				43D4176596051A8BB6B489F8 /* bugReport.js */,
 				55AB5544C4895498D37DF137 /* content.js */,
 				6F9D91549FBFF22A524D0A7C /* fonts */,
 				DC56DE2586E02CA6FAC029CA /* images */,
@@ -307,6 +316,9 @@
 				37D934569AB2ACD2D0DB5005 /* agent.css in Resources */,
 				CAD6EFCC4BAE605A56F0531D /* agent.html in Resources */,
 				B227B681447B4DF57C8CB9AF /* background.js in Resources */,
+				3DBF29A6BDF41A11B7E8C647 /* bug-report.css in Resources */,
+				F17BFB316662DA4AE180D5E6 /* bug-report.html in Resources */,
+				DCA8BE1B495F69390D5FE6E3 /* bugReport.js in Resources */,
 				E65E8F1100EE97B987E4CCF9 /* content.js in Resources */,
 				3A71834748928232A8542216 /* fonts in Resources */,
 				7C9D6597B7D6449471812C2A /* images in Resources */,

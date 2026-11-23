@@ -69,7 +69,7 @@ function protectedNode(element:Element|null):boolean {
   if(!element)return false;
   if(element.closest(protectedSelector))return true;
   const message=element.closest('.msgs');
-  return !!message&&!element.closest('.thinking,.reason-label,.steps-label,.user-scripts-guide,.empty-state');
+  return !!message&&!element.closest('.thinking,.reason-label,.steps-label,.user-scripts-guide,.empty-state,.recovery-actions,.recovery-detail');
 }
 let originalTitle="",renderedTitle="";
 function render(root:HTMLElement|ShadowRoot) {
@@ -103,7 +103,7 @@ export function localizeRoot(root:HTMLElement|ShadowRoot) {
   roots.add(root);render(root);
   let queued=false;
   new MutationObserver(mutations=>{
-    if(queued||mutations.every(m=>protectedNode(m.target instanceof Element?m.target:m.target.parentElement)&&!Array.from(m.addedNodes).some(n=>n instanceof Element&&(n.matches('.thinking,.reason-label,.steps-label,.user-scripts-guide,.empty-state')||n.querySelector('.thinking,.reason-label,.steps-label,.user-scripts-guide,.empty-state')))))return;
+    if(queued||mutations.every(m=>protectedNode(m.target instanceof Element?m.target:m.target.parentElement)&&!Array.from(m.addedNodes).some(n=>n instanceof Element&&(n.matches('.thinking,.reason-label,.steps-label,.user-scripts-guide,.empty-state,.recovery-actions,.recovery-detail')||n.querySelector('.thinking,.reason-label,.steps-label,.user-scripts-guide,.empty-state,.recovery-actions,.recovery-detail')))))return;
     queued=true;queueMicrotask(()=>{queued=false;render(root);});
   }).observe(root,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['title','aria-label','placeholder','alt']});
 }
