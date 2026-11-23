@@ -1,3 +1,4 @@
+import { BUG_ICON, BUG_REPORT_CSS, createBugReportView, type BugReportTarget } from "./bugReport";
 import {APPEARANCE_STYLE_CSS} from "./appearanceStyles";
 import {PANEL_CSS,GOOSE_MARK} from "./panelStyles";
 import {mountMotion} from "./motion";
@@ -24,6 +25,7 @@ const HTML = `
       <div class="hdr-tools" role="group" aria-label="Conversation tools">
         <button class="btn-history hdr-icon-btn" title="Past conversations" aria-label="History"><svg class="hdr-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8m0 0V4m0 4h4M12 8v4.5l3 1.8"/></svg></button>
         <button class="btn-todos hdr-icon-btn" title="Todo list" aria-label="Todos"><svg class="hdr-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="m4.5 7 1.5 1.5L9 5.5M4.5 13 6 14.5 9 11.5M4.5 19 6 20.5 9 17.5M12 7h8M12 13h8M12 19h8"/></svg><span class="todo-count"></span></button>
+        <button class="btn-bug hdr-icon-btn" type="button" title="Report a bug" aria-label="Report a bug" hidden>${BUG_ICON}</button>
         <button class="btn-settings hdr-icon-btn" title="Open settings" aria-label="Settings"><svg class="hdr-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.07.07a2 2 0 1 1-2.83 2.83l-.07-.07a1.7 1.7 0 0 0-1.83-.3 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.54 1.7 1.7 0 0 0-1.83.3l-.07.07a2 2 0 1 1-2.83-2.83l.07-.07A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.83l-.07-.07a2 2 0 1 1 2.83-2.83l.07.07A1.7 1.7 0 0 0 9 4.64h.1A1.7 1.7 0 0 0 10 3.1V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.83-.3l.07-.07a2 2 0 1 1 2.83 2.83l-.07.07a1.7 1.7 0 0 0-.3 1.83V9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.55 1Z"/></svg></button>
         <button class="btn-expand hdr-icon-btn" title="Toggle wide overlay" aria-label="Toggle wide overlay"><svg class="hdr-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 9V5h4M20 9V5h-4M4 15v4h4m12-4v4h-4"/></svg></button>
       </div>
@@ -166,6 +168,8 @@ export type Panel = {
   addToolCard(name: string, input: unknown): ToolCardHandle;
   addReasoningBlock(): ReasoningBlockHandle;
   addErrorMessage(text: string): void;
+  addInterruptedTurn(text: string, actions: { retry?: () => void; report: () => BugReportTarget; detail?: string }): void;
+  onReportBug(prepare: () => BugReportTarget): void;
   showThinking(label?: string): void;
   removeThinking(): void;
 
@@ -244,7 +248,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
   }
 
   const style = document.createElement("style");
-  style.textContent = PANEL_CSS+APPEARANCE_STYLE_CSS;
+  style.textContent = PANEL_CSS+APPEARANCE_STYLE_CSS+BUG_REPORT_CSS;
   shadow.appendChild(style);
 
   const wrap = document.createElement("div");
@@ -262,6 +266,12 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     shadow.querySelector(sel) as T;
   const toggleBtn = $(".toggle") as HTMLButtonElement;
   const panel = $(".panel") as HTMLDivElement;
+  const reportView = createBugReportView(panel);
+  const reportButton = $<HTMLButtonElement>(".btn-bug");
+  let prepareBugReport: (() => BugReportTarget) | undefined;
+  reportButton.addEventListener("click", (event) => {
+    if (event.isTrusted && prepareBugReport) reportView.open(prepareBugReport(), reportButton);
+  });
   const msgs = $(".msgs") as HTMLDivElement;
   const historyEl = $(".history") as HTMLDivElement;
   const genBar = $(".gen-bar") as HTMLDivElement;
@@ -1587,6 +1597,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     },
 
     clear() {
+      reportView.close(false);
       imageGeneration++;pendingImages=[];renderImages();imageError.hidden=true;
       msgs.innerHTML = "";
       statusEl.textContent = "";
@@ -1602,6 +1613,50 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     addToolCard: createToolCard,
     addReasoningBlock,
     addErrorMessage,
+    addInterruptedTurn(text, actions) {
+      const node = el("msg-recovery");
+      const message = document.createElement("div");
+      message.className = "recovery-message";
+      message.textContent = text;
+      message.setAttribute("role", "status");
+      message.setAttribute("data-no-i18n", "");
+      const controls = el("recovery-actions");
+      if (actions.retry) {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "bug-control recovery-retry";
+        retry.textContent = "Retry";
+        retry.addEventListener("click", event => { if (event.isTrusted) actions.retry?.(); });
+        controls.append(retry);
+      }
+      const report = document.createElement("button");
+      report.type = "button";
+      report.className = "bug-control recovery-report";
+      report.textContent = "Report a bug";
+      report.addEventListener("click", event => {
+        if (event.isTrusted) reportView.open(actions.report(), report);
+      });
+      controls.append(report);
+      node.append(message, controls);
+      if (actions.detail) {
+        const details = el("recovery-detail");
+        const disclosure = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "Error details";
+        const detail = el("msg-err");
+        detail.textContent = actions.detail;
+        disclosure.append(summary, detail);
+        details.append(disclosure);
+        node.append(details);
+      } else {
+        message.classList.add("msg-err");
+      }
+      append(node);
+    },
+    onReportBug(prepare) {
+      prepareBugReport = prepare;
+      reportButton.hidden = false;
+    },
     showThinking,
     removeThinking,
 

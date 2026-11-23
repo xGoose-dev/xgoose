@@ -1,3 +1,4 @@
+import { sendBugReport } from "./bugReport";
 import {searchWeb,abortSearch} from "./search";
 import {notificationStatus,emitNotification,installNotificationEvents} from "./notifications";
 import {readImages,prepareImageParts} from './images';
@@ -123,6 +124,7 @@ registerRouter({
   "sw:skill_catalog": () => skillCatalog(),
   "sw:install_catalog_skill": ({slug,version}) => installCatalogSkill(slug,version),
   "sw:open_skill_catalog": async ({slugs}) => { await chrome.tabs.create({url:"https://xgoose.org/skills/"}); },
+  "sw:bug_report": (value, sender) => sendBugReport(value, sender),
   "sw:transcript_event": (value,sender) => recordJournal(value,sender),
   "sw:consent_get": () => getConsent(),
   "sw:consent_set": value => setConsent(value),

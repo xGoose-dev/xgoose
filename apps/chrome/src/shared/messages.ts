@@ -62,6 +62,7 @@ export type MessageMap = {
   "sw:install_catalog_skill": {request:{slug:string;version:string};response:void};
   "sw:open_skill_catalog": {request:{slugs:string[]};response:void};
 
+  "sw:bug_report": { request: import("./bugReport").BugReportRequest; response: { id: string } };
   "sw:transcript_event": { request: import("@/background/sessionDb").JournalEvent; response: void };
   "sw:consent_get": { request: void; response: {hosted:boolean;byok:boolean} };
   "sw:consent_set": { request: {hosted:boolean;byok:boolean}; response: {hosted:boolean;byok:boolean} };
@@ -318,7 +319,9 @@ export async function send<K extends MessageKey>(
   // waiting. Do not turn those uncertain external effects into retryable errors.
   const bounded = (peerOperation !== undefined && peerOperation !== "spawn" && peerOperation !== "send") ||
     kind === "sw:session" || kind === "sw:transcript_event" || kind === "sw:consent_get";
-  const response = await (bounded ? withDeadline(request, 25000,
+  const response = await (kind === "sw:bug_report"
+    ? withDeadline(request, 70_000, "Sending the report timed out. Try again.")
+    : bounded ? withDeadline(request, 25000,
     `Extension request timed out (${kind}). Reload xgoose in your browser's extension settings, then refresh this page.`) : request);
   if (response?.__error) throw new Error(response.__error);
   return response as MessageMap[K]["response"];

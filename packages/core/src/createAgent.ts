@@ -316,7 +316,12 @@ export class PageAgentRuntime {
         if(tokens>0)await emit({type:'context-usage',tokens,contextWindow:model.contextWindow,outputReserve:OUTPUT_RESERVE_TOKENS,estimated:false,model:model.id});
       }
       if (event.type === "message_end") await emit({ type: "message-end", messages: fromPiMessages([event.message]) });
-      if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error") await emit({ type: "error", error: event.message.errorMessage ?? "Provider stream failed" });
+      if (event.type === "message_end" && event.message.role === "assistant") {
+        const reason = event.message.stopReason;
+        if (reason === "error" || (reason === "aborted" && !input.abortSignal?.aborted)) {
+          await emit({ type: "error", error: event.message.errorMessage ?? "Provider stream failed" });
+        }
+      }
     });
     const abort = () => pi.abort();
     input.abortSignal?.addEventListener("abort", abort, { once: true });

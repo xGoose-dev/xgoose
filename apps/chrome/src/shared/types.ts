@@ -231,6 +231,7 @@ export type UserSkill = z.infer<typeof UserSkillSchema>;
 // ---------------------------------------------------------------------------
 
 export type StoredConversation = {
+  lastRun?: import("./bugReport").ReportRun;
   modelContext?: any[];
   /** Number of leading `messages` that `modelContext` already represents. */
   modelContextCovers?: number;

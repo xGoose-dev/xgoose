@@ -1,3 +1,4 @@
+import { CONTINUE_INTERRUPTED_TURN, snapshotReportMessages, type ReportRun } from "@/shared/bugReport";
 import {installAppearanceFont} from "@xgoose/ui";
 import {bindDocumentAppearance} from "@/shared/appearance";
 import {createAppearanceUsage,normalizeState} from "@xgoose/ui";
@@ -267,8 +268,9 @@ async function bootstrap(): Promise<void> {
   let currentConvoTitle = "";
   let abortController: AbortController | null = null;
   let running = false;
+  let latestRun: ReportRun | undefined;
+  let activeRun: (ReportRun & { retryable: boolean }) | undefined;
   let lifecycleInterrupted = false;
-  const interruptionNotice = "Interrupted before completion. Received content was saved. Send another message to continue.";
   let runSettled: Promise<void> = Promise.resolve();
   let resolveRunSettled: (() => void) | undefined;
   async function stopBeforeConversationSwitch() {
@@ -347,6 +349,73 @@ async function bootstrap(): Promise<void> {
     conversationMessages.push(...captured);
     return true;
   };
+
+  type InterruptedMessage = { role: "xgoose-error"; content: string; recovery: ReportRun & { at: number; retryable: boolean } };
+  const isInterrupted = (message: any): message is InterruptedMessage =>
+    message?.role === "xgoose-error" && !!message.recovery;
+
+  function prepareBugReport(interrupted?: InterruptedMessage) {
+    const capturedAt = Date.now();
+    const sessionId = currentConvoId ?? undefined;
+    const index = interrupted ? conversationMessages.indexOf(interrupted) : -1;
+    const historical = index >= 0 && index < conversationMessages.length - 1;
+    const history = historical ? conversationMessages.slice(0, index + 1) : conversationMessages;
+    const partial = !historical && inFlight ? buildCapturedAssistantTurn({
+      text: inFlightText(inFlight), toolNames: inFlight.toolNames,
+      toolInputs: inFlight.toolInputs, toolOutputs: inFlight.toolOutputs,
+    }) : [];
+    const snapshot = snapshotReportMessages([...history, ...partial]);
+    const settings = { ...getSettings(), ...peerModel };
+    const latestMessage = history.at(-1);
+    const lastFailure = interrupted ?? (isInterrupted(latestMessage) ? latestMessage : undefined);
+    const run = interrupted?.recovery ?? latestRun;
+    const id = crypto.randomUUID();
+    const state = interrupted ? "interrupted" : running ? "running" : peers.waiting ? "waiting" : "idle";
+    const viewport = `${window.innerWidth} × ${window.innerHeight}`;
+    return {
+      interrupted: !!interrupted,
+      hasTranscript: !!sessionId,
+      send: (draft: { description: string; includeTranscript: boolean; screenshot?: ImageAttachment }) =>
+        send("sw:bug_report", {
+          id, kind: interrupted ? "interrupted" : "manual", description: draft.description,
+          screenshot: draft.screenshot && { data: draft.screenshot.data },
+          includeTranscript: draft.includeTranscript,
+          capturedAt: historical && interrupted ? interrupted.recovery.at : capturedAt,
+          sessionId, runId: run?.runId, provider: run?.provider ?? settings.provider,
+          model: run?.model ?? settings.model, failure: lastFailure?.content,
+          state, viewport,
+          messages: draft.includeTranscript ? snapshot.messages : [],
+          omittedMessages: draft.includeTranscript ? snapshot.omittedMessages : 0,
+        }),
+    };
+  }
+  panel.onReportBug(() => prepareBugReport());
+
+  function renderInterruption(message: InterruptedMessage, canRetry: boolean) {
+    const conversationId = currentConvoId;
+    const providerError = message.content.startsWith("Error: ");
+    panel.addInterruptedTurn(translate(providerError ? "The agent stopped before finishing." : message.content), {
+      detail: providerError ? translate(message.content) : undefined,
+      retry: canRetry && message.recovery.retryable ? () => {
+        if (conversationId !== currentConvoId || conversationMessages.at(-1) !== message) {
+          panel.setStatus("This conversation has already moved on.");
+          return;
+        }
+        if (running || agentLoopActive) {
+          panel.setStatus("Wait for the current turn to finish.");
+          return;
+        }
+        void processQueue(CONTINUE_INTERRUPTED_TURN, [], true);
+      } : undefined,
+      report: () => prepareBugReport(message),
+    });
+  }
+
+  function saveInterruption(text: string, run: ReportRun, canRetry: boolean) {
+    const message: InterruptedMessage = { role: "xgoose-error", content: text, recovery: { ...run, at: Date.now(), retryable: canRetry } };
+    conversationMessages.push(message);
+    renderInterruption(message, canRetry);
+  }
 
   // Roll a single turn's provider-reported usage into `conversationUsage` and
   // push the fresh snapshot to the panel status bar. Called from the stream
@@ -437,6 +506,7 @@ async function bootstrap(): Promise<void> {
           ? String(messages[0].content).slice(0, 80)
           : "Untitled"),
       messages,
+      lastRun: latestRun,
       modelContext: modelContext ?? undefined,
       modelContextCovers: modelContext ? modelContextCovers : undefined,
       createdAt: Date.now(),
@@ -455,13 +525,6 @@ async function bootstrap(): Promise<void> {
     snapshotInFlightToMessages();
     persistCurrentConvo();
   });
-  // Same handler under `pagehide` for iOS Safari, where `beforeunload`
-  // sometimes doesn't fire on link clicks / BFCache transitions.
-  window.addEventListener("pagehide", () => {
-    snapshotInFlightToMessages();
-    persistCurrentConvo();
-  });
-
   // Each document starts a fresh session. History is opened explicitly.
   const saveCheckpoint = () => {
     if (!running || !inFlight) return;
@@ -471,18 +534,15 @@ async function bootstrap(): Promise<void> {
     })]);
   };
   const checkpoint = window.setInterval(saveCheckpoint, 1000);
-  function interruptPageRun(reason:string):void {
-    if(!isSafari || !running || lifecycleInterrupted)return;
-    lifecycleInterrupted=true;
-    snapshotInFlightToMessages();
-    conversationMessages.push({role:"xgoose-error",content:interruptionNotice});
-    panel.addErrorMessage(interruptionNotice);
-    queuedMessages.length=0;panel.setQueuedMessages([]);
-    persistCurrentConvo();
-    abortController?.abort(new Error(reason));
-  }
   window.addEventListener("pagehide", () => {
-    interruptPageRun("document_closed");
+    if (activeRun && !abortController?.signal.aborted) {
+      lifecycleInterrupted = true;
+      snapshotInFlightToMessages();
+      saveInterruption("The page closed before the agent finished.", activeRun, activeRun.retryable);
+    } else {
+      snapshotInFlightToMessages();
+    }
+    void persistCurrentConvo().catch(error => console.warn("[xgoose] page close save failed", error));
     window.clearInterval(checkpoint);
     abortController?.abort(new Error("document_closed"));
   }, { once: true });
@@ -497,6 +557,7 @@ async function bootstrap(): Promise<void> {
     persistCurrentConvo();
     currentConvoId = null;
     currentConvoTitle = "";
+    latestRun = undefined;
     conversationMessages = [];
     toolCards.clear();
     setModelContext(null);
@@ -582,6 +643,7 @@ async function bootstrap(): Promise<void> {
     if (!convo) return;
     currentConvoId = convo.id;
     currentConvoTitle = convo.title;
+    latestRun = convo.lastRun;
     conversationMessages = (convo.messages as any[]) ?? [];
     modelContext = convo.modelContext ?? null;
     modelContextCovers = Math.min(convo.modelContextCovers ?? conversationMessages.length, conversationMessages.length);
@@ -589,7 +651,10 @@ async function bootstrap(): Promise<void> {
     conversationUsage = convo.usage
       ? { ...EMPTY_USAGE, ...convo.usage }
       : { ...EMPTY_USAGE };
-    toolCards = replayConversation(panel, conversationMessages);
+    toolCards = replayConversation(panel, conversationMessages, (message, last) => {
+      if (isInterrupted(message)) { renderInterruption(message, last); return true; }
+      return false;
+    });
     replayTodosFromMessages(conversationMessages);
     panel.setStatus(`Loaded: ${convo.title}`);
     panel.setUsage(conversationUsage);
@@ -603,6 +668,7 @@ async function bootstrap(): Promise<void> {
     if (id === currentConvoId) {
       currentConvoId = null;
       currentConvoTitle = "";
+      latestRun = undefined;
       conversationMessages = [];
       toolCards.clear();
       setModelContext(null);
@@ -654,7 +720,7 @@ async function bootstrap(): Promise<void> {
   //                          adding a user bubble so the UI stays clean).
   async function runAgentTurn(
     prompt: string,
-    opts: { hidden?: boolean; images?: ImageAttachment[]; peerMessage?: PeerMessage } = {},
+    opts: { hidden?: boolean; images?: ImageAttachment[]; peerMessage?: PeerMessage; recovery?: boolean } = {},
   ): Promise<void> {
     if (running) return;
     const turnStarted=Date.now(),turnFlow=crypto.randomUUID();let firstResponse=false;
@@ -696,7 +762,7 @@ async function bootstrap(): Promise<void> {
     } else {
       conversationMessages.push(visibleUserMessage);
     }
-    if ((!opts.peerMessage || opts.peerMessage.kind === "task") && (!opts.hidden || opts.peerMessage)) panel.addUserMessage(prompt,images);
+    if (!opts.recovery && (!opts.peerMessage || opts.peerMessage.kind === "task") && (!opts.hidden || opts.peerMessage)) panel.addUserMessage(prompt,images);
     panel.setSending(true);
     panel.setStatus("");
     panel.setGenerating(true);
@@ -710,6 +776,8 @@ async function bootstrap(): Promise<void> {
     abortController = new AbortController();
 
     const journalRunId = crypto.randomUUID();
+    const run = { runId: journalRunId, provider: settings.provider, model: settings.model, retryable: !opts.hidden };
+    latestRun = activeRun = run;
     const journalSessionId = currentConvoId!;
     const journalProvider = settings.provider === "xgoose-hosted" ? "hosted" : "byok";
     const record = (event: any) => send("sw:transcript_event", {
@@ -747,7 +815,7 @@ async function bootstrap(): Promise<void> {
     let snapshotted = false;
     let navigated = false;
     const reportStopped = (): void => {
-      panel.setStatus(lifecycleInterrupted ? "Interrupted — send another message to continue" : navigated ? "Navigation stopped the turn" : "Stopped");
+      panel.setStatus(lifecycleInterrupted ? "Interrupted" : navigated ? "Navigation stopped the turn" : "Stopped");
       track(navigated ? "chat_turn_navigated" : "chat_turn_stopped_by_user", {
         flow_id:turnFlow,duration_ms:Date.now()-turnStarted,provider:getSettings().provider,
         steps: stepCount,
@@ -770,7 +838,8 @@ async function bootstrap(): Promise<void> {
       if (opts.peerMessage) await record({type:"peer-receive",kind:opts.peerMessage.kind,content:opts.peerMessage.text,
         taskId:opts.peerMessage.taskId,outcome:opts.peerMessage.outcome,
         deliveryMs:opts.peerMessage.sentAt === undefined ? undefined : Math.max(0, Date.now()-opts.peerMessage.sentAt)});
-      if (!opts.peerMessage) await record({type:"user-message",content:prompt,...(images.length?{attachments:images.map(image=>({type:"image",mimeType:image.mimeType,width:image.width,height:image.height}))}:{})});
+      await record({ type: "run-start", provider: settings.provider, model: settings.model, continuation: !!opts.recovery });
+      if (!opts.peerMessage && !opts.recovery) await record({type:"user-message",content:prompt,...(images.length?{attachments:images.map(image=>({type:"image",mimeType:image.mimeType,width:image.width,height:image.height}))}:{})});
       const scriptsEnabled=isAgentPage() ? false : await permissionGuide.check();
       // Keep the visible skills, shortcuts and launcher on the same detection
       // result that this turn exposes to the model and skill_call.
@@ -858,7 +927,7 @@ async function bootstrap(): Promise<void> {
       for await (const part of result.fullStream as AsyncIterable<any>) {
         switch (part.type) {
           case 'context-usage': {
-            usageModel = part.model;
+            usageModel = run.model = part.model;
             panel.setContextUsage(part);
             break;
           }
@@ -958,6 +1027,7 @@ async function bootstrap(): Promise<void> {
               snapshotInFlightToMessages();
               snapshotted = true;
               navigated = true;
+              activeRun = undefined;
               await persistCurrentConvo().catch(error => console.warn("[xgoose] nav persist failed", error));
               // Stop the stream — any further fetch from the AI SDK will fail
               // once the page unloads anyway, so end it cleanly here.
@@ -977,7 +1047,6 @@ async function bootstrap(): Promise<void> {
             panel.removeThinking();
             const errText = describeTurnError(part.error);
             turnErrorDisplay = `Error: ${errText}`;
-            panel.addErrorMessage(turnErrorDisplay);
             break;
           }
         }
@@ -995,7 +1064,11 @@ async function bootstrap(): Promise<void> {
       peerResult = response?.messages.filter(m => m.role === "assistant").flatMap(m => Array.isArray(m.content) ? m.content.filter((p:any) => p.type === "text").map((p:any) => p.text) : [m.content]).join("\n") ?? "";
       if (response?.reachedStepLimit) {peerOutcome = "failed"; peerResult = "Peer reached its step limit.\n" + peerResult;}
       const usage = await Promise.resolve(result.usage).catch(() => null);
-      if (isSafari && lifecycleInterrupted) {
+      if (!abortController?.signal.aborted && !navigated && !peers.waiting && !opts.hidden && !turnErrorDisplay) {
+        if (response?.reachedStepLimit) turnErrorDisplay = "The agent reached its step limit before finishing.";
+        else if (!peerResult.trim()) turnErrorDisplay = "The agent stopped without a final answer.";
+      }
+      if (lifecycleInterrupted) {
         // The lifecycle snapshot already contains the received partial turn.
         // Some providers resolve a canonical response after abort; appending it
         // again would duplicate the preserved text and tool results.
@@ -1018,14 +1091,6 @@ async function bootstrap(): Promise<void> {
         if (snapshotInFlightToMessages()) snapshotted = true;
       }
 
-      // Persist an in-stream error into history so it's visible after reload.
-      if (turnErrorDisplay) {
-        conversationMessages.push({
-          role: "xgoose-error",
-          content: turnErrorDisplay,
-        });
-      }
-
       accumulateUsage(usage as any);
       if (abortController?.signal.aborted && !turnErrorDisplay) reportStopped();
       else {
@@ -1042,7 +1107,7 @@ async function bootstrap(): Promise<void> {
       peerOutcome = abortController?.signal.aborted ? "cancelled" : "failed";
       peerResult = describeTurnError(err);
       panel.removeThinking();
-      if (err?.name === "AbortError" || abortController?.signal?.aborted) {
+      if (abortController?.signal?.aborted) {
         // Navigation-triggered abort vs user-Stop abort. In both cases we keep
         // the partial transcript, but never resume automatically on another
         // page.
@@ -1081,19 +1146,22 @@ async function bootstrap(): Promise<void> {
           model: getSettings().model,
           error_kind: String(err?.name ?? "Error").slice(0, 40),
         });
-        const errDisplay = `Error: ${describeTurnError(err)}`;
-        panel.addErrorMessage(errDisplay);
-        // Persist into history so the error is still visible after reload.
-        conversationMessages.push({ role: "xgoose-error", content: errDisplay });
-        panel.setStatus(getSettings().provider==="xgoose-hosted"&&isHostedAuthStopped(errDisplay)?"Listening stopped — sign in to continue":"");
+        turnErrorDisplay = `Error: ${describeTurnError(err)}`;
+        panel.setStatus(settings.provider==="xgoose-hosted"&&isHostedAuthStopped(turnErrorDisplay)?"Listening stopped — sign in to continue":"");
       }
     } finally {
-      if (abortController?.signal.aborted) peerOutcome = "cancelled";
+      activeRun = undefined;
+      const aborted = abortController?.signal.aborted;
+      if (aborted) peerOutcome = "cancelled";
+      if (turnErrorDisplay && !aborted && !navigated && !lifecycleInterrupted) {
+        saveInterruption(turnErrorDisplay, run, !opts.hidden);
+      }
       try {
         await Promise.all([
           record({type:abortController?.signal.aborted?"run-interrupted":"run-end",
             outcome:turnErrorDisplay ? "failed" : peers.waiting && peerOutcome === "completed" ? "waiting" : peerOutcome,
-            durationMs:Date.now()-turnStarted,sourceTabId:peers.agent?.tabId}),
+            durationMs:Date.now()-turnStarted,sourceTabId:peers.agent?.tabId,
+            ...(turnErrorDisplay ? { error: turnErrorDisplay } : {})}),
           persistCurrentConvo().catch(error => console.warn("[xgoose] final conversation save failed", error)),
           peers.finish(turnErrorDisplay ? "failed" : peerOutcome,
             turnErrorDisplay ?? peerResult).catch(error => panel.setStatus(`Peer: ${error.message}`)),
@@ -1161,7 +1229,7 @@ async function bootstrap(): Promise<void> {
   // pill above the input; the drain loop below picks them up between
   // turns. `agentLoopActive` covers the brief gap *between* runAgentTurn
   // calls, so a second onSend can't accidentally start a parallel loop.
-  async function processQueue(initial?: string,images:ImageAttachment[]=[]): Promise<void> {
+  async function processQueue(initial?: string,images:ImageAttachment[]=[],recovery = false): Promise<void> {
     const item=initial?{text:initial,images}:undefined;
     if (agentLoopActive) {
       if (initial && initial.trim()) {
@@ -1173,7 +1241,7 @@ async function bootstrap(): Promise<void> {
     agentLoopActive = true;
     try {
       if (initial && initial.trim()) {
-        await runAgentTurn(initial, { hidden: false,images });
+        await runAgentTurn(initial, { hidden: false, images, recovery });
       }
       // Keep waiting prompts in the shared queue so Stop and conversation
       // switches can discard every item that has not started yet.
@@ -1568,7 +1636,7 @@ function replayTodosFromMessages(messages: any[]): void {
   clearTodos();
 }
 
-function replayConversation(panel: Panel, messages: any[]): Map<string, ReturnType<Panel["addToolCard"]>> {
+function replayConversation(panel: Panel, messages: any[], renderInterruption?: (message: any, last: boolean) => boolean): Map<string, ReturnType<Panel["addToolCard"]>> {
   panel.clear();
   // Tool results live in a separate `{role:'tool', content:[{type:'tool-result',
   // toolCallId, output}]}` message in the AI SDK v5 history shape, so we must
@@ -1652,6 +1720,7 @@ function replayConversation(panel: Panel, messages: any[]): Map<string, ReturnTy
         if (card) applyStoredResult(card, p);
       }
     } else if (msg.role === "xgoose-error") {
+      if (renderInterruption?.(msg, messages.at(-1) === msg)) continue;
       panel.addErrorMessage(
         typeof msg.content === "string"
           ? msg.content
