@@ -1,4 +1,4 @@
-import { BUG_ICON, BUG_REPORT_CSS, createBugReportView, type BugReportTarget } from "./bugReport";
+import { BUG_ICON, BUG_REPORT_CSS } from "./bugReport";
 import {APPEARANCE_STYLE_CSS} from "./appearanceStyles";
 import {PANEL_CSS,GOOSE_MARK} from "./panelStyles";
 import {mountMotion} from "./motion";
@@ -168,8 +168,8 @@ export type Panel = {
   addToolCard(name: string, input: unknown): ToolCardHandle;
   addReasoningBlock(): ReasoningBlockHandle;
   addErrorMessage(text: string): void;
-  addInterruptedTurn(text: string, actions: { retry?: () => void; report: () => BugReportTarget; detail?: string }): void;
-  onReportBug(prepare: () => BugReportTarget): void;
+  addInterruptedTurn(text: string, actions: { retry?: () => void; report: () => void; detail?: string }): void;
+  onReportBug(open: () => void): void;
   showThinking(label?: string): void;
   removeThinking(): void;
 
@@ -266,11 +266,10 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     shadow.querySelector(sel) as T;
   const toggleBtn = $(".toggle") as HTMLButtonElement;
   const panel = $(".panel") as HTMLDivElement;
-  const reportView = createBugReportView(panel);
   const reportButton = $<HTMLButtonElement>(".btn-bug");
-  let prepareBugReport: (() => BugReportTarget) | undefined;
+  let openBugReport: (() => void) | undefined;
   reportButton.addEventListener("click", (event) => {
-    if (event.isTrusted && prepareBugReport) reportView.open(prepareBugReport(), reportButton);
+    if (event.isTrusted) openBugReport?.();
   });
   const msgs = $(".msgs") as HTMLDivElement;
   const historyEl = $(".history") as HTMLDivElement;
@@ -1597,7 +1596,6 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
     },
 
     clear() {
-      reportView.close(false);
       imageGeneration++;pendingImages=[];renderImages();imageError.hidden=true;
       msgs.innerHTML = "";
       statusEl.textContent = "";
@@ -1634,7 +1632,7 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       report.className = "bug-control recovery-report";
       report.textContent = "Report a bug";
       report.addEventListener("click", event => {
-        if (event.isTrusted) reportView.open(actions.report(), report);
+        if (event.isTrusted) actions.report();
       });
       controls.append(report);
       node.append(message, controls);
@@ -1653,8 +1651,8 @@ export function createPanel(opts: CreatePanelOpts = {}): Panel {
       }
       append(node);
     },
-    onReportBug(prepare) {
-      prepareBugReport = prepare;
+    onReportBug(open) {
+      openBugReport = open;
       reportButton.hidden = false;
     },
     showThinking,

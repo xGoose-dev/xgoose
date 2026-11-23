@@ -453,5 +453,8 @@
   "The agent stopped before finishing.": "El agente se detuvo antes de terminar.",
   "Error details": "Detalles del error",
   "Interrupted": "Interrumpido",
-  "Sending the report timed out. Try again.": "Se agotó el tiempo de envío. Inténtalo de nuevo."
+  "Sending the report timed out. Try again.": "Se agotó el tiempo de envío. Inténtalo de nuevo.",
+  "This report draft expired. Open Report a bug again from the chat.": "El borrador caducó. Vuelve a abrir la opción de informar desde el chat.",
+  "The agent reached its output limit before finishing.": "El agente alcanzó su límite de salida antes de terminar.",
+  "Open the report from the extension.": "Abre el informe desde la extensión."
 }

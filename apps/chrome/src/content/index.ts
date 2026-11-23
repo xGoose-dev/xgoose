@@ -270,7 +270,7 @@ async function bootstrap(): Promise<void> {
   let running = false;
   let latestRun: ReportRun | undefined;
   let activeRun: (ReportRun & { retryable: boolean }) | undefined;
-  let lifecycleInterrupted = false;
+  let lifecycleInterruptionAt: number | undefined;
   let runSettled: Promise<void> = Promise.resolve();
   let resolveRunSettled: (() => void) | undefined;
   async function stopBeforeConversationSwitch() {
@@ -354,7 +354,7 @@ async function bootstrap(): Promise<void> {
   const isInterrupted = (message: any): message is InterruptedMessage =>
     message?.role === "xgoose-error" && !!message.recovery;
 
-  function prepareBugReport(interrupted?: InterruptedMessage) {
+  function openBugReport(interrupted?: InterruptedMessage) {
     const capturedAt = Date.now();
     const sessionId = currentConvoId ?? undefined;
     const index = interrupted ? conversationMessages.indexOf(interrupted) : -1;
@@ -372,24 +372,15 @@ async function bootstrap(): Promise<void> {
     const id = crypto.randomUUID();
     const state = interrupted ? "interrupted" : running ? "running" : peers.waiting ? "waiting" : "idle";
     const viewport = `${window.innerWidth} × ${window.innerHeight}`;
-    return {
-      interrupted: !!interrupted,
-      hasTranscript: !!sessionId,
-      send: (draft: { description: string; includeTranscript: boolean; screenshot?: ImageAttachment }) =>
-        send("sw:bug_report", {
-          id, kind: interrupted ? "interrupted" : "manual", description: draft.description,
-          screenshot: draft.screenshot && { data: draft.screenshot.data },
-          includeTranscript: draft.includeTranscript,
-          capturedAt: historical && interrupted ? interrupted.recovery.at : capturedAt,
-          sessionId, runId: run?.runId, provider: run?.provider ?? settings.provider,
-          model: run?.model ?? settings.model, failure: lastFailure?.content,
-          state, viewport,
-          messages: draft.includeTranscript ? snapshot.messages : [],
-          omittedMessages: draft.includeTranscript ? snapshot.omittedMessages : 0,
-        }),
-    };
+    void send("sw:open_bug_report", {
+      id, kind: interrupted ? "interrupted" : "manual",
+      capturedAt: historical && interrupted ? interrupted.recovery.at : capturedAt,
+      sessionId, runId: run?.runId, provider: run?.provider ?? settings.provider,
+      model: run?.model ?? settings.model, failure: lastFailure?.content,
+      state, viewport, ...snapshot,
+    }).catch(error => panel.setStatus(error.message));
   }
-  panel.onReportBug(() => prepareBugReport());
+  panel.onReportBug(() => openBugReport());
 
   function renderInterruption(message: InterruptedMessage, canRetry: boolean) {
     const conversationId = currentConvoId;
@@ -407,12 +398,12 @@ async function bootstrap(): Promise<void> {
         }
         void processQueue(CONTINUE_INTERRUPTED_TURN, [], true);
       } : undefined,
-      report: () => prepareBugReport(message),
+      report: () => openBugReport(message),
     });
   }
 
-  function saveInterruption(text: string, run: ReportRun, canRetry: boolean) {
-    const message: InterruptedMessage = { role: "xgoose-error", content: text, recovery: { ...run, at: Date.now(), retryable: canRetry } };
+  function saveInterruption(text: string, run: ReportRun, canRetry: boolean, at: number) {
+    const message: InterruptedMessage = { role: "xgoose-error", content: text, recovery: { ...run, at, retryable: canRetry } };
     conversationMessages.push(message);
     renderInterruption(message, canRetry);
   }
@@ -533,19 +524,27 @@ async function bootstrap(): Promise<void> {
       toolInputs: inFlight.toolInputs, toolOutputs: inFlight.toolOutputs,
     })]);
   };
-  const checkpoint = window.setInterval(saveCheckpoint, 1000);
+  let checkpoint = window.setInterval(saveCheckpoint, 1000);
+  window.addEventListener("pageshow", event => {
+    if (event.persisted) {
+      window.clearInterval(checkpoint);
+      checkpoint = window.setInterval(saveCheckpoint, 1000);
+    }
+  });
   window.addEventListener("pagehide", () => {
     if (activeRun && !abortController?.signal.aborted) {
-      lifecycleInterrupted = true;
+      lifecycleInterruptionAt = Date.now();
       snapshotInFlightToMessages();
-      saveInterruption("The page closed before the agent finished.", activeRun, activeRun.retryable);
+      saveInterruption("The page closed before the agent finished.", activeRun, activeRun.retryable, lifecycleInterruptionAt);
     } else {
       snapshotInFlightToMessages();
     }
     void persistCurrentConvo().catch(error => console.warn("[xgoose] page close save failed", error));
     window.clearInterval(checkpoint);
+    queuedMessages.length = 0;
+    panel.setQueuedMessages([]);
     abortController?.abort(new Error("document_closed"));
-  }, { once: true });
+  });
   document.addEventListener("visibilitychange",()=>{
     if(document.visibilityState==="hidden")saveCheckpoint();
   });
@@ -771,7 +770,7 @@ async function bootstrap(): Promise<void> {
     );
     panel.showThinking(opts.hidden ? "Processing peer message…" : "Thinking…");
     running = true;
-    lifecycleInterrupted = false;
+    lifecycleInterruptionAt = undefined;
     runSettled = new Promise<void>(resolve => { resolveRunSettled = resolve; });
     abortController = new AbortController();
 
@@ -780,9 +779,9 @@ async function bootstrap(): Promise<void> {
     latestRun = activeRun = run;
     const journalSessionId = currentConvoId!;
     const journalProvider = settings.provider === "xgoose-hosted" ? "hosted" : "byok";
-    const record = (event: any) => send("sw:transcript_event", {
+    const record = (event: any, at = Date.now()) => send("sw:transcript_event", {
       id: crypto.randomUUID(), sessionId: journalSessionId, runId: journalRunId,
-      provider: journalProvider, at: Date.now(), event:{...event,clientVersion:chrome.runtime.getManifest().version,
+      provider: journalProvider, at, event:{...event,clientVersion:chrome.runtime.getManifest().version,
         correlation: {traceId:peers.agent?.traceId ?? journalRunId, agentId:peers.agent?.id,
           taskId:peers.agent?.activeTaskId, triggerMessageId:opts.peerMessage?.id,
           sourceAgentId:opts.peerMessage?.from, sourceSessionId:opts.peerMessage?.fromSessionId,
@@ -815,7 +814,7 @@ async function bootstrap(): Promise<void> {
     let snapshotted = false;
     let navigated = false;
     const reportStopped = (): void => {
-      panel.setStatus(lifecycleInterrupted ? "Interrupted" : navigated ? "Navigation stopped the turn" : "Stopped");
+      panel.setStatus(lifecycleInterruptionAt ? "Interrupted" : navigated ? "Navigation stopped the turn" : "Stopped");
       track(navigated ? "chat_turn_navigated" : "chat_turn_stopped_by_user", {
         flow_id:turnFlow,duration_ms:Date.now()-turnStarted,provider:getSettings().provider,
         steps: stepCount,
@@ -1065,10 +1064,16 @@ async function bootstrap(): Promise<void> {
       if (response?.reachedStepLimit) {peerOutcome = "failed"; peerResult = "Peer reached its step limit.\n" + peerResult;}
       const usage = await Promise.resolve(result.usage).catch(() => null);
       if (!abortController?.signal.aborted && !navigated && !peers.waiting && !opts.hidden && !turnErrorDisplay) {
+        const terminal = response?.messages.at(-1);
+        const content = terminal?.role === "assistant" ? terminal.content : undefined;
+        const terminalText = typeof content === "string"
+          ? content
+          : content?.flatMap((part: { type: string; text?: string }) => part.type === "text" && part.text ? [part.text] : []).join("");
         if (response?.reachedStepLimit) turnErrorDisplay = "The agent reached its step limit before finishing.";
-        else if (!peerResult.trim()) turnErrorDisplay = "The agent stopped without a final answer.";
+        else if (response?.stopReason === "length") turnErrorDisplay = "The agent reached its output limit before finishing.";
+        else if (!terminalText?.trim()) turnErrorDisplay = "The agent stopped without a final answer.";
       }
-      if (lifecycleInterrupted) {
+      if (lifecycleInterruptionAt) {
         // The lifecycle snapshot already contains the received partial turn.
         // Some providers resolve a canonical response after abort; appending it
         // again would duplicate the preserved text and tool results.
@@ -1152,16 +1157,17 @@ async function bootstrap(): Promise<void> {
     } finally {
       activeRun = undefined;
       const aborted = abortController?.signal.aborted;
+      const finishedAt = lifecycleInterruptionAt ?? Date.now();
       if (aborted) peerOutcome = "cancelled";
-      if (turnErrorDisplay && !aborted && !navigated && !lifecycleInterrupted) {
-        saveInterruption(turnErrorDisplay, run, !opts.hidden);
+      if (turnErrorDisplay && !aborted && !navigated && !lifecycleInterruptionAt) {
+        saveInterruption(turnErrorDisplay, run, !opts.hidden, finishedAt);
       }
       try {
         await Promise.all([
           record({type:abortController?.signal.aborted?"run-interrupted":"run-end",
             outcome:turnErrorDisplay ? "failed" : peers.waiting && peerOutcome === "completed" ? "waiting" : peerOutcome,
             durationMs:Date.now()-turnStarted,sourceTabId:peers.agent?.tabId,
-            ...(turnErrorDisplay ? { error: turnErrorDisplay } : {})}),
+            ...(turnErrorDisplay ? { error: turnErrorDisplay } : {})}, finishedAt),
           persistCurrentConvo().catch(error => console.warn("[xgoose] final conversation save failed", error)),
           peers.finish(turnErrorDisplay ? "failed" : peerOutcome,
             turnErrorDisplay ?? peerResult).catch(error => panel.setStatus(`Peer: ${error.message}`)),

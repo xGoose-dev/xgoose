@@ -39,6 +39,27 @@ try {
           });
         }
         const frame = (delta, finish_reason = null) => `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
+        if (reportFixture.modelRequests.length === 3) {
+          return new Response(frame({
+            role: "assistant", content: "I will read the page first.",
+            tool_calls: [{ index: 0, id: "read-fixture", type: "function", function: {
+              name: "read_page", arguments: JSON.stringify({ format: "text" }),
+            } }],
+          }) + frame({}, "tool_calls") + "data: [DONE]\n\n", { headers: { "Content-Type": "text/event-stream" } });
+        }
+        if (reportFixture.modelRequests.length === 4) {
+          return new Response(frame({ role: "assistant" }) + frame({}, "stop") + "data: [DONE]\n\n", {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        }
+        if (reportFixture.modelRequests.length > 4) {
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(frame({ content: "Partial departure reply" })));
+            },
+          });
+          return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+        }
         return new Response(frame({ content: "Task continued from the saved conversation." }) + frame({}, "stop") + "data: [DONE]\n\n", {
           headers: { "Content-Type": "text/event-stream" },
         });
@@ -61,53 +82,69 @@ try {
   await page.goto("https://report.fixture.test/?token=never-send-query");
   await page.locator(".toggle").click();
   const bugButton = page.locator(".btn-bug");
-  const sendReport = page.getByRole("button", { name: "Send report", exact: true });
-  await bugButton.click();
-  await expect(sendReport).toBeDisabled();
+  async function openReport(trigger) {
+    const opened = context.waitForEvent("page");
+    await trigger.click();
+    const report = await opened;
+    await report.waitForURL(/chrome-extension:\/\/[^/]+\/bug-report\.html#/);
+    await expect(report.getByRole("heading", { name: "Report a bug" })).toBeVisible();
+    return report;
+  }
+  const sendReport = report => report.getByRole("button", { name: "Send report", exact: true });
+  async function submitAndClose(report) {
+    await sendReport(report).click();
+    await expect(report.getByText("Report sent.", { exact: false })).toBeVisible();
+    await Promise.all([report.waitForEvent("close"), report.getByRole("button", { name: "Done", exact: true }).click()]);
+  }
+  const initialTabs = context.pages().length;
+  await bugButton.evaluate(button => button.click());
+  assert.equal(context.pages().length, initialTabs, "page-script clicks cannot open the private report editor");
+
+  let report = await openReport(bugButton);
+  await expect(sendReport(report)).toBeDisabled();
   const screenshotPath = resolve(profile, "fixture.png");
   await page.screenshot({ path: screenshotPath });
-  const chooseFile = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: "Add screenshot" }).click();
-  await (await chooseFile).setFiles(screenshotPath);
-  await expect(page.getByRole("img", { name: "Screenshot preview" })).toBeVisible();
-  await sendReport.evaluate(button => button.click());
-  assert.equal(await worker.evaluate(() => reportFixture.uploads.length), 0, "page-script clicks cannot submit a report");
-  await sendReport.click();
-  await expect(page.getByText("Report sent.", { exact: false })).toBeVisible();
-  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await report.locator(".bug-file").setInputFiles(screenshotPath);
+  await expect(report.getByAltText("Screenshot preview")).toBeVisible();
+  await expect(page.locator(".bug-file, #bug-description")).toHaveCount(0);
+  await submitAndClose(report);
 
   await page.locator(".in-text").fill("Finish my fixture task");
   await page.locator(".btn-send").click();
   await expect(page.locator(".msg-recovery")).toContainText("Fixture connection interrupted");
   await expect(page.locator(".btn-stop")).toBeHidden();
   await page.locator(".panel").screenshot({ path: resolve(artifacts, "interrupted.png") });
-  await page.locator(".recovery-report").click();
-  await expect(page.getByRole("checkbox", { name: "Include this conversation and run details" })).toBeChecked();
-  await sendReport.click();
-  await expect(page.getByText("Report sent.", { exact: false })).toBeVisible();
-  await page.getByRole("button", { name: "Done", exact: true }).click();
+  const firstRecovery = page.locator(".recovery-report").first();
+  report = await openReport(firstRecovery);
+  await expect(report.getByRole("checkbox", { name: "Include this conversation and run details" })).toBeChecked();
+  await submitAndClose(report);
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.locator(".msg-ai")).toContainText("Task continued from the saved conversation.");
   await expect(page.locator(".btn-stop")).toBeHidden();
   await expect(page.locator(".msg-user")).toHaveCount(1);
 
-  await page.setViewportSize({ width: 375, height: 730 });
-  await bugButton.click();
-  await page.getByLabel("What happened?").fill("The provider stopped on the previous turn.");
-  await expect(sendReport).toBeInViewport();
-  await page.locator(".panel").screenshot({ path: resolve(artifacts, "manual-mobile.png") });
-  await sendReport.click();
-  await expect(page.getByText("Report sent.", { exact: false })).toBeVisible();
+  report = await openReport(bugButton);
+  await report.setViewportSize({ width: 375, height: 730 });
+  await report.getByLabel("What happened?").fill("The provider stopped on the previous turn.");
+  await expect(sendReport(report)).toBeInViewport();
+  await report.screenshot({ path: resolve(artifacts, "manual-mobile.png") });
+  await submitAndClose(report);
 
-  await page.getByRole("button", { name: "Done", exact: true }).click();
-  await bugButton.click();
-  await page.getByLabel("What happened?").fill("A report without the conversation.");
-  await page.getByRole("checkbox", { name: "Include this conversation and run details" }).uncheck();
-  await sendReport.click();
-  await expect(page.getByText("Report sent.", { exact: false })).toBeVisible();
+  report = await openReport(firstRecovery);
+  await report.getByRole("checkbox", { name: "Include this conversation and run details" }).uncheck();
+  await submitAndClose(report);
+
+  await page.locator(".in-text").fill("Read the page and give a final answer");
+  await page.locator(".btn-send").click();
+  await expect(page.locator(".msg-ai").last()).toContainText("I will read the page first.");
+  await expect(page.locator(".msg-recovery").last()).toContainText("stopped without a final answer");
+  await expect(page.locator(".btn-stop")).toBeHidden();
+
+  report = await openReport(firstRecovery);
+  await submitAndClose(report);
 
   const { uploads, modelRequests } = await worker.evaluate(() => reportFixture);
-  assert.equal(uploads.length, 4);
+  assert.equal(uploads.length, 5);
   assert.match(uploads[0].screenshot.data, /^\/9j\//);
   assert.equal(uploads[1].kind, "interrupted");
   assert.equal(uploads[1].diagnostics.state, "interrupted");
@@ -119,10 +156,33 @@ try {
   assert.match(JSON.stringify(uploads[2].diagnostics.messages), /Task continued/);
   assert.deepEqual(uploads[3].diagnostics.messages, []);
   assert.deepEqual(uploads[3].diagnostics.events, []);
+  assert.equal(uploads[3].diagnostics.failure, "Agent turn interrupted.");
   assert.equal(uploads[3].diagnostics.sessionId, undefined);
-  assert.equal(modelRequests.length, 2);
+  assert.equal(modelRequests.length, 4);
   assert.match(JSON.stringify(modelRequests[1].messages), /Continue the interrupted user task/);
-  console.log("Bug report UI, screenshot, diagnostics and retry passed.");
+  const historicalEvents = uploads[4].diagnostics.events;
+  assert.ok(historicalEvents.some(event => event.type === "run-end" && event.runId === uploads[1].diagnostics.runId));
+  assert.doesNotMatch(JSON.stringify(uploads[4].diagnostics), /Read the page and give a final answer/);
+  async function prompt(text) {
+    await page.locator(".in-text").fill(text);
+    await page.locator(".btn-send").click();
+  }
+  // Drive pagehide/pageshow twice to cover resumed lifecycle handlers and pending prompts.
+  const departureMessage = page.locator(".recovery-message").filter({ hasText: "The page closed before the agent finished." });
+  for (const departure of [1, 2]) {
+    await prompt(`Start departure turn ${departure}`);
+    await expect.poll(() => worker.evaluate(() => reportFixture.modelRequests.length)).toBe(4 + departure);
+    await expect(page.locator(".msg-ai").last()).toContainText("Partial departure reply");
+    await prompt(`This queued prompt must be discarded ${departure}`);
+    await expect(page.locator(".queued-pill")).toHaveCount(1);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })));
+    await expect(departureMessage).toHaveCount(departure);
+    await expect(page.locator(".queued-pill")).toHaveCount(0);
+    await expect(page.locator(".btn-stop")).toBeHidden();
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+  }
+  assert.equal(await worker.evaluate(() => reportFixture.modelRequests.length), 6);
+  console.log("Private report editor, diagnostics, terminal answer, retry and repeatable departure passed.");
 } finally {
   await context.close();
   await rm(profile, { recursive: true, force: true });

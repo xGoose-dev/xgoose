@@ -4,12 +4,9 @@ type DiagnosticEntry = Record<string, unknown>;
 
 export type ReportRun = { runId: string; provider: string; model: string };
 
-export type BugReportRequest = {
+export type BugReportContext = {
   id: string;
   kind: "manual" | "interrupted";
-  description: string;
-  screenshot?: { data: string };
-  includeTranscript: boolean;
   capturedAt: number;
   sessionId?: string;
   runId?: string;
@@ -21,6 +18,9 @@ export type BugReportRequest = {
   messages: DiagnosticEntry[];
   omittedMessages: number;
 };
+
+export type BugReportSubmission = import("@xgoose/ui").BugReportFormData & { id: string };
+export type BugReportDraft = BugReportContext & { hostname?: string; expiresAt: number };
 
 export const CONTINUE_INTERRUPTED_TURN = "<system-reminder>Continue the interrupted user task from the saved conversation and tool results. Check the current state before taking action. If a prior action may have changed anything, verify its outcome before attempting it again.</system-reminder>";
 

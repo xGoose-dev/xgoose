@@ -453,5 +453,8 @@
   "The agent stopped before finishing.": "Agent 在完成前停止了。",
   "Error details": "错误详情",
   "Interrupted": "已中断",
-  "Sending the report timed out. Try again.": "发送报告超时，请重试。"
+  "Sending the report timed out. Try again.": "发送报告超时，请重试。",
+  "This report draft expired. Open Report a bug again from the chat.": "报告草稿已过期。请从对话中重新打开报告入口。",
+  "The agent reached its output limit before finishing.": "Agent 达到了输出上限。",
+  "Open the report from the extension.": "请从插件中打开报告。"
 }

@@ -101,6 +101,7 @@ export class PageAgentRuntime {
     this.modelMessages = history;
     let steps = 0, lengthContinuations = 0, continueAfterLength = false, reachedStepLimit = false;
     const completedMessages: AgentMessage[] = [];
+    let stopReason: AssistantMessage["stopReason"] | undefined;
     const summaryUsage: AssistantMessage[] = [];
     let gatewayBudget=opts.requestBudgetBytes??requestByteBudget(model.contextWindow);
     let tokenBudget=inputTokenBudget(model.contextWindow);
@@ -309,7 +310,10 @@ export class PageAgentRuntime {
       }
       if (event.type === "tool_execution_start") await emit({ type: "tool-call", toolCallId: event.toolCallId, toolName: event.toolName, input: event.args });
       if (event.type === "tool_execution_end") await emit({ type: event.isError ? "tool-error" : "tool-result", toolCallId: event.toolCallId, toolName: event.toolName, output: event.result.details ?? event.result, error: event.isError ? event.result.content.filter((p:{type:string})=>p.type==="text").map((p:{text?:string})=>p.text).join("\n") : undefined });
-      if (event.type === "message_end") completedMessages.push(event.message);
+      if (event.type === "message_end") {
+        completedMessages.push(event.message);
+        if (event.message.role === "assistant") stopReason = event.message.stopReason;
+      }
       if(event.type==='message_end'&&event.message.role==='assistant'&&event.message.stopReason!=='error'){
         const usage=event.message.usage;
         const tokens=usage.input+usage.cacheRead+usage.cacheWrite+usage.output;
@@ -330,7 +334,12 @@ export class PageAgentRuntime {
     });
     return {
       fullStream: queue,
-      response: completed.then(() => ({ messages: fromPiMessages(completedMessages), modelContext: fromPiMessages(this.modelMessages, true), reachedStepLimit })),
+      response: completed.then(() => ({
+        messages: fromPiMessages(completedMessages),
+        modelContext: fromPiMessages(this.modelMessages, true),
+        reachedStepLimit,
+        stopReason,
+      })),
       usage: completed.then(() => {
         const u = [...completedMessages,...summaryUsage].filter((m): m is AssistantMessage => m.role === "assistant").reduce((sum, m) => ({ input: sum.input + m.usage.input + m.usage.cacheRead + m.usage.cacheWrite, output: sum.output + m.usage.output, cacheRead: sum.cacheRead + m.usage.cacheRead, reasoning: sum.reasoning + (m.usage.reasoning ?? 0) }), { input: 0, output: 0, cacheRead: 0, reasoning: 0 });
         return { inputTokens: u.input, outputTokens: u.output, inputTokensDetails: { cacheReadTokens: u.cacheRead }, outputTokensDetails: { reasoningTokens: u.reasoning } };

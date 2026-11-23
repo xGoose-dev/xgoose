@@ -1,4 +1,4 @@
-import { entryBytes } from "@/shared/bugReport";
+import { entryBytes, type BugReportDraft } from "@/shared/bugReport";
 import {isSafari} from "@/shared/host";
 import type { StoredConversation } from "@/shared/types";
 import {emptyPeerState, type PeerState} from "../../../../packages/core/src/peerAgents";
@@ -9,7 +9,7 @@ import {emptyPeerState, type PeerState} from "../../../../packages/core/src/peer
 let opening: Promise<IDBDatabase> | undefined;
 function open(): Promise<IDBDatabase> {
   return opening ??= new Promise((resolve, reject) => {
-    const request = indexedDB.open("xgoose-sessions", 2);
+    const request = indexedDB.open("xgoose-sessions", 3);
     let abandoned = false;
     const fail = (error: unknown) => {
       if (abandoned) return;
@@ -25,7 +25,8 @@ function open(): Promise<IDBDatabase> {
         db.createObjectStore("outbox", { keyPath: "id" });
         db.createObjectStore("meta");
       }
-      request.transaction!.objectStore("events").createIndex("sessionTime", ["sessionId", "at"]);
+      if (event.oldVersion < 2) request.transaction!.objectStore("events").createIndex("sessionTime", ["sessionId", "at"]);
+      if (event.oldVersion < 3) db.createObjectStore("reportDrafts", { keyPath: "id" }).createIndex("expiresAt", "expiresAt");
     };
     request.onerror = () => {if (!abandoned) fail(request.error);};
     request.onsuccess = () => {
@@ -159,4 +160,30 @@ export function readReportJournal(id: string, capturedAt: number) {
       cursor.continue();
     };
   });
+}
+
+export function stageReportDraft(draft: BugReportDraft): Promise<void> {
+  return transaction(["reportDrafts"], "readwrite", tx => {
+    const store = tx.objectStore("reportDrafts");
+    const expired = store.index("expiresAt").openCursor(IDBKeyRange.upperBound(Date.now()));
+    expired.onsuccess = () => {
+      const cursor = expired.result;
+      if (cursor) { cursor.delete(); cursor.continue(); }
+    };
+    store.put(draft);
+  });
+}
+
+export function readReportDraft(id: string): Promise<BugReportDraft | undefined> {
+  return transaction(["reportDrafts"], "readonly", (tx, done) => {
+    const request = tx.objectStore("reportDrafts").get(id);
+    request.onsuccess = () => {
+      const draft = request.result as BugReportDraft | undefined;
+      done(draft && draft.expiresAt > Date.now() ? draft : undefined);
+    };
+  });
+}
+
+export function deleteReportDraft(id: string): Promise<void> {
+  return transaction(["reportDrafts"], "readwrite", tx => { tx.objectStore("reportDrafts").delete(id); });
 }
