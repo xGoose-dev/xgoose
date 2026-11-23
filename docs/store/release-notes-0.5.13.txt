@@ -1,0 +1,1 @@
+Fixes the skill bar showing no available skills even after a website skill becomes usable. Skill chips, shortcuts and the launcher now stay synchronized with the skills detected before each chat turn.
