@@ -1,0 +1,4 @@
+Refreshed the chat panel and settings with new themes, motion, font and text-size options.
+Grouped tool activity and reasoning to make conversations easier to follow.
+Improved the iOS setup guide and kept sign-in active through temporary proxy errors.
+Updated website skill loading and retained recent website compatibility fixes.
