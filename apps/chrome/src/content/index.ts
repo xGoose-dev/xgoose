@@ -206,8 +206,8 @@ async function bootstrap(): Promise<void> {
   });
 
   // Active skills.
-  const refreshSkills = async (): Promise<void> => {
-    if (isAgentPage()) {panel.open(); return;}
+  const refreshSkills = async (): Promise<{candidates:RegistrySkill[];active:RegistrySkill[]}> => {
+    if (isAgentPage()) {panel.open(); return {candidates:[],active:[]};}
     panel.setLoadingStatus("Loading skills…");
     try {
       const [candidates, all] = await Promise.all([
@@ -245,6 +245,7 @@ async function bootstrap(): Promise<void> {
         }
       }
       panel.setSkillActions(skillActions);
+      return {candidates,active};
     } finally {
       panel.setLoadingStatus(null);
     }
@@ -771,8 +772,10 @@ async function bootstrap(): Promise<void> {
         deliveryMs:opts.peerMessage.sentAt === undefined ? undefined : Math.max(0, Date.now()-opts.peerMessage.sentAt)});
       if (!opts.peerMessage) await record({type:"user-message",content:prompt,...(images.length?{attachments:images.map(image=>({type:"image",mimeType:image.mimeType,width:image.width,height:image.height}))}:{})});
       const scriptsEnabled=isAgentPage() ? false : await permissionGuide.check();
-      const candidates = isAgentPage() ? [] : await send("sw:active_skills_for_url", { url: getCurrentPageUrl() });
-      const skillsForReminder = (isAgentPage() ? [] : await detectActiveSkills(candidates)).map(s => ({...s, enabled:true}));
+      // Keep the visible skills, shortcuts and launcher on the same detection
+      // result that this turn exposes to the model and skill_call.
+      const {candidates,active} = await refreshSkills();
+      const skillsForReminder = active.map(s => ({...s, enabled:true}));
       setActiveSkills(skillsForReminder);
       const loadedSkills = new Set(skillsForReminder.map(s => s.name));
       await record({
