@@ -1,0 +1,1 @@
+Resubmits the skill-status fix after the Chrome store rollback. Skill chips, shortcuts and the launcher stay synchronized with the skills detected before each chat turn. Functional code is unchanged from 0.5.13.
