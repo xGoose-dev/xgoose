@@ -8,7 +8,7 @@
 // @detect       location.hostname.endsWith('uscardforum.com')
 // @run-at       document_idle
 // @require      discourse-forum@0.2.18
-// @primary      searchWithEvidence
+// @primary      searchInCategory
 // @keyword      uscardforum
 // @keyword      美卡论坛
 // @keyword      DP
@@ -103,22 +103,13 @@ async function recentDeals() {
 }
 
 export default defineSkill({
-  searchWithEvidence: fn({
-    summary: '用 2–3 组互补关键词搜索美卡论坛，一次返回最相关的两篇主帖及关键回帖。',
-    input: z.object({
-      queries: z.array(z.string().trim().min(1)).min(2).max(3)
-        .describe('可混用英文卡名、中文论坛用语和 category:板块 等搜索限定词。'),
-    }),
-    examples: [{args: {queries: ['Citi Uber Eats offer', 'Citi Uber 改 payment', 'Citi Uber DP']}}],
-    handler: args => discourse().searchWithEvidence(args),
-  }),
   getRecentDeals: fn({
     summary: 'Find recent deals; returns up to eight topics with five-post previews and source links.',
     input: z.object({}),
     handler: async () => recentDeals(),
   }),
   searchInCategory: fn({
-    summary: 'Search topics within a specific 美卡论坛 category. Returns search snippets.',
+    summary: 'Search topics within a specific 美卡论坛 category. ★ primary entry.',
     input: z.object({
       query: z.string(),
       categorySlug: z
@@ -186,12 +177,10 @@ export default defineSkill({
   }),
 }, {
   instructions: `美卡论坛是美国信用卡、银行、积分、里程与财务优化社区。使用中文回复。
-- 搜索相关讨论，优先阅读近期（尽可能近 6 个月）、点赞和回复较多的有用帖子，关注真实用户经历、官方公告及政策变化，汇总社区共识与可操作的 DP。
-- 跨主题研究先调用 uscf.searchWithEvidence，一次提交 2–3 组互补关键词。
+- 查玩法时优先找最近的实测 DP，先从近 60 天查起。用 getRecentDPs 查带 DP 的内容，也用英文卡名、商户名配合「撸」「叠加」「改 payment」等论坛用语搜。沿相关长帖追最新回帖和结果更新，近期线索不足时再扩大时间范围。
+- 关注美卡论坛独特的处理方式，包括公开攻略少见的操作、意外叠加和实际触发条件。判断玩法怎么操作、现在是否有效，以美卡论坛的近期讨论和实测结果为准。与公开资料有出入时，优先讲清论坛用户实际怎么做、在哪些条件下成功或失败。
+- 写清每种玩法的步骤、收益、日期、金额和适用条件，附作者、楼层链接及可用的点赞数。
 - 补读时可在同一轮并行调用 discourse.readTopicPosts 读取不同主题。遇到超时后，逐个发出剩余的读帖调用。同一主题按 next_cursor 顺序逐页读。
-- 查找 DP 时重点关注近 3–6 个月，提取发生了什么、日期、金额、相关条件和用户情况；附作者、主题 ID、楼层链接及可用的点赞数，展示规律和趋势。
-- 用户问“怎么撸”、玩法或羊毛时，按社区实际在用的做法从基础到进阶完整列出（包括改 payment、叠加等），每种写清步骤、收益和对应 DP，按社区采用度和 DP 排序。
-- 搜索词用中文和论坛黑话（如“撸”“DP”“改 payment”），再配合英文卡名或商户名。
 - 比较信用卡时，结合社区反馈说明开卡奖励与要求、年费、权益、积分价值、适合人群及申请策略。
 - 总结长帖内容，读取与分页遵循 discourse-forum。`,
   actions: [

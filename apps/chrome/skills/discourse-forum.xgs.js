@@ -127,18 +127,7 @@ async function fetchForumJson(url) {
   return await r.json();
 }
 
-async function searchTopics({query, page, order}) {
-  const params = new URLSearchParams({q: query});
-  if (page !== undefined) params.set('page', String(page));
-  if (order !== undefined) params.set('order', order);
-  return compactSearchResult(await getJson(`/search.json?${params}`));
-}
-
-function fetchTopicPosts(topicId, ids) {
-  const params = new URLSearchParams();
-  for (const id of ids) params.append('post_ids[]', String(id));
-  return getJson(`/t/${topicId}/posts.json?${params}`);
-}
+function queuedSearch(url) { return getJson(url); }
 
 function compactSearchResult(raw) {
   if (!raw || typeof raw !== 'object') return raw;
@@ -330,8 +319,9 @@ async function summaryTopic(topicId, firstReplies=30, latestReplies=100) {
   const missing = selected.filter(id=>!posts.has(id));
   // Sequential, bounded reads avoid turning a shortcut into a burst of forum requests.
   for (let offset=0;offset<missing.length;offset+=20) {
-    const result = await fetchTopicPosts(id, missing.slice(offset, offset + 20));
-    if (result.httpStatus) throw new Error(result.message);
+    const params = new URLSearchParams();
+    for (const postId of missing.slice(offset,offset+20)) params.append('post_ids[]',String(postId));
+    const result = await forumJson(`/t/${id}/posts.json?${params}`);
     for (const post of result.post_stream?.posts || []) posts.set(post.id,post);
   }
   const result = selected.map(postId=>posts.get(postId)).filter(Boolean).map(post=>{
@@ -478,7 +468,8 @@ async function readTopicRange(rawArgs) {
     const id=state.ids[offset];
     if (!state.posts.has(id)) {
       const ids=state.ids.slice(offset,Math.min(end,offset+20)).filter(id=>!state.posts.has(id));
-      const batch=await fetchTopicPosts(args.topicId, ids);
+      const params=new URLSearchParams();for(const id of ids)params.append('post_ids[]',String(id));
+      const batch=await getJson(`/t/${args.topicId}/posts.json?${params}`);
       if (batch.httpStatus) {failure=batch;break;}
       rememberTopicPosts(state,batch);
       // Bodies omitted by the server are recorded once, without a retry loop.
@@ -492,76 +483,6 @@ async function readTopicRange(rawArgs) {
     posts.push(entry);offset++;
   }
   return makeResult();
-}
-
-const EvidenceSearchInput = z.object({
-  queries: z.array(z.string().trim().min(1)).min(2).max(3)
-    .describe('Complementary full-text queries. Each may include Discourse operators such as category:slug or after:YYYY-MM-DD.'),
-});
-
-function rankMatches(results) {
-  const topics = new Map();
-  for (const {query, topics: matches, posts} of results) {
-    const seen = new Set();
-    matches.forEach((topic, index) => {
-      if (seen.has(topic.id)) return;
-      seen.add(topic.id);
-      const entry = topics.get(topic.id) ?? {topic, score: 0, queries: [], replies: new Map()};
-      entry.score += 1 / (index + 1);
-      entry.queries.push(query);
-      topics.set(topic.id, entry);
-    });
-    posts.forEach((post, index) => {
-      if (post.post_number <= 1 || !seen.has(post.topic_id)) return;
-      const {replies} = topics.get(post.topic_id);
-      const entry = replies.get(post.id) ?? {post, score: 0};
-      entry.score += 1 / (index + 1);
-      replies.set(post.id, entry);
-    });
-  }
-  return [...topics.values()].sort((a, b) => b.score - a.score).slice(0, 2);
-}
-
-async function readSearchEvidence({topic, queries, replies}) {
-  const meta = {...topic, url: topicLink(topic.id), matched_queries: queries};
-  const raw = await getJson(`/t/${topic.id}.json`);
-  if (raw.httpStatus) return {...raw, ...meta, posts: []};
-  const preview = raw.post_stream?.posts ?? [];
-  const bodies = new Map(preview.map(post => [post.id, post]));
-  const ranked = [...replies.values()].sort((a, b) =>
-    b.score - a.score || (b.post.like_count ?? 0) - (a.post.like_count ?? 0));
-  const selected = ranked.slice(0, 3).map(({post}) => post.id);
-  const fallback = preview.filter(post => post.post_number > 1 && !replies.has(post.id))
-    .sort((a, b) => (postLikes(b) ?? 0) - (postLikes(a) ?? 0));
-  selected.push(...fallback.slice(0, 3 - selected.length).map(post => post.id));
-  const missing = selected.filter(id => !bodies.has(id));
-  const batch = missing.length ? await fetchTopicPosts(topic.id, missing) : null;
-  for (const post of batch?.post_stream?.posts ?? []) bodies.set(post.id, post);
-  const opening = preview.find(post => post.post_number === 1);
-  const posts = [opening, ...selected.map(id => bodies.get(id))].filter(Boolean)
-    .sort((a, b) => a.post_number - b.post_number)
-    .map(post => rangePost({...post, topic_id: topic.id}, post.post_number === 1 ? 4000 : 2500));
-  const missingPostIds = missing.filter(id => !bodies.has(id));
-  const failure = batch?.httpStatus ? batch : null;
-  return {...failure, ...meta, posts,
-    posts_count: raw.posts_count ?? topic.posts_count,
-    status: failure?.status ?? (opening && !missingPostIds.length ? 'ok' : 'partial'),
-    missing_post_ids: missingPostIds,
-  };
-}
-
-async function searchWithEvidence(args) {
-  const queries = [...new Set(EvidenceSearchInput.parse(args).queries)];
-  const searches = await Promise.all(queries.map(async query => ({query, ...await searchTopics({query})})));
-  const failures = searches.filter(result => result.httpStatus);
-  const matches = rankMatches(searches.filter(result => !result.httpStatus));
-  const topics = await Promise.all(matches.map(readSearchEvidence));
-  const failedRead = topics.find(topic => topic.status !== 'ok');
-  const status = topics.some(topic => topic.posts.length)
-    ? (failures.length || failedRead ? 'partial' : 'ok')
-    : (failedRead?.status ?? failures[0]?.status ?? 'ok');
-  return {status, queries, topics, search_failures: failures,
-    hint: 'Opening posts and selected replies. For more evidence or truncated bodies, call readTopicPosts.'};
 }
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024, MAX_IMAGE_DATA_CHARS = 500_000;
@@ -607,12 +528,6 @@ async function readPostImages({topicId, postNumber, images}) {
 }
 
 export default defineSkill({
-  searchWithEvidence: fn({
-    summary: 'Search 2–3 complementary queries, deduplicate topics, and return the two best matches with opening posts and key replies.',
-    input: EvidenceSearchInput,
-    examples: [{args: {queries: ['xgoose Discourse', 'forum reading tools DP']}}],
-    handler: searchWithEvidence,
-  }),
 
   readTopicPosts: fn({
     summary: 'Read full post bodies in a topic range with automatic batching; follow next_cursor for more posts.',
@@ -646,7 +561,12 @@ export default defineSkill({
       { args: { query: 'chase sapphire reserve' } },
       { args: { query: 'IHG ghost reservation', order: 'latest' } },
     ],
-    handler: searchTopics,
+    handler: async ({ query, page, order }) => {
+      const params = new URLSearchParams({ q: query });
+      if (page !== undefined) params.set('page', String(page));
+      if (order !== undefined) params.set('order', order);
+      return compactSearchResult(await queuedSearch(`/search.json?${params}`));
+    },
   }),
 
   getTopic: fn({
@@ -771,6 +691,7 @@ export default defineSkill({
 }, {
   instructions: `Find relevant discussions, read key posts and summarize community consensus and actionable data points.
 - Prioritize recent information, helpful topics with high engagement, first-hand experiences and official announcements or policy changes.
+- When researching how something works in practice, look for approaches specific to this forum. If they differ from public guides, use recent firsthand reports from the forum to explain the steps, conditions and outcomes.
 - For independent reads of different topics, issue the readTopicPosts calls in the same assistant turn.
 - Use provided action-result first. Search snippets locate discussions; read bodies for content claims. Listing/count questions need the requested metadata only.
 - Check topic size before choosing reading depth. getTopic and getTopicPosts return five posts. Use readTopicPosts for larger ranges with a bounded limit; follow next_cursor sequentially. If expired, resume from next_post_number. Recover needed truncated text with fromPostNumber, limit:1 and textOffset:next_text_offset.
