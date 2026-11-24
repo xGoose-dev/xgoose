@@ -691,7 +691,7 @@ export default defineSkill({
 }, {
   instructions: `Find relevant discussions, read key posts and summarize community consensus and actionable data points.
 - Prioritize recent information, helpful topics with high engagement, first-hand experiences and official announcements or policy changes.
-- When researching how something works in practice, look for approaches specific to this forum. If they differ from public guides, use recent firsthand reports from the forum to explain the steps, conditions and outcomes.
+- When researching how something works in practice, look for approaches specific to this forum. Actively seek recent firsthand reports that challenge your initial expectations, including unexpected successes and failures. If the forum's experience differs from public guides, use those reports to explain the steps, conditions and outcomes.
 - For independent reads of different topics, issue the readTopicPosts calls in the same assistant turn.
 - Use provided action-result first. Search snippets locate discussions; read bodies for content claims. Listing/count questions need the requested metadata only.
 - Check topic size before choosing reading depth. getTopic and getTopicPosts return five posts. Use readTopicPosts for larger ranges with a bounded limit; follow next_cursor sequentially. If expired, resume from next_post_number. Recover needed truncated text with fromPostNumber, limit:1 and textOffset:next_text_offset.
