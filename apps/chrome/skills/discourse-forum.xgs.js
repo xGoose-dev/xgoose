@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discourse-forum
 // @namespace    discourse
-// @version      0.2.17
+// @version      0.2.18
 // @description  Search Discourse forums, read topics and replies, and research community insights.
 // @match        *://meta.discourse.org/*
 // @match        *://*.discourse.org/*
@@ -58,20 +58,44 @@ async function csrfFetch(url, init = {}) {
   return fetch(url, { credentials: 'include', cache: 'no-cache', ...init, headers });
 }
 
-let forumReadQueue=Promise.resolve(), forumReadLastAt=0, forumReadBlockedUntil=0;
-const forumReadPending=new Map();
+const FORUM_READ_INTERVAL_MS = 1100;
+let forumReadStartQueue = Promise.resolve();
+let forumReadLastAt = 0;
+let forumReadBlockedUntil = 0;
+const forumReadPending = new Map();
+const activeForumReads = new Map();
+
 function getJson(url) {
-  if(forumReadPending.has(url))return forumReadPending.get(url);
-  const pending=forumReadQueue.catch(()=>{}).then(async()=>{
-    if(forumReadBlockedUntil>Date.now())return {status:'rate_limited',httpStatus:429,url,retry_after_ms:forumReadBlockedUntil-Date.now(),message:'Forum cooldown active. Continue after retry_after_ms; no request was sent.'};
-    const delay=Math.max(0,forumReadLastAt+1100-Date.now());
-    if(delay)await new Promise(resolve=>setTimeout(resolve,delay));
-    forumReadLastAt=Date.now();
-    return fetchForumJson(url);
+  if (forumReadPending.has(url)) return forumReadPending.get(url);
+  const topicId = url.match(/^\/t\/(\d+)(?=[./?]|$)|^\/posts\/by_number\/(\d+)\//)?.slice(1).find(Boolean) ?? null;
+  const start = forumReadStartQueue.then(async () => {
+    while (true) {
+      const now = Date.now();
+      if (forumReadBlockedUntil > now) {
+        return {response: {status: 'rate_limited', httpStatus: 429, url, retry_after_ms: forumReadBlockedUntil - now, message: 'Forum cooldown active. Continue after retry_after_ms; no request was sent.'}};
+      }
+      const blocking = topicId === null ? activeForumReads.size > 0
+        : activeForumReads.size >= 2 || activeForumReads.has(null) || activeForumReads.has(topicId);
+      if (blocking) {
+        await Promise.race(activeForumReads.values());
+        continue;
+      }
+      const delay = forumReadLastAt + FORUM_READ_INTERVAL_MS - now;
+      if (delay <= 0) break;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    forumReadLastAt = Date.now();
+    const response = fetchForumJson(url);
+    const finished = () => { activeForumReads.delete(topicId); };
+    activeForumReads.set(topicId, response.then(finished, finished));
+    // The start queue advances while the response is still in flight.
+    return {response};
   });
-  forumReadQueue=pending.then(()=>{},()=>{});
-  forumReadPending.set(url,pending);
-  pending.then(()=>forumReadPending.delete(url),()=>forumReadPending.delete(url));
+  forumReadStartQueue = start.then(() => {}, () => {});
+  const pending = start.then(({response}) => response);
+  forumReadPending.set(url, pending);
+  const finished = () => { forumReadPending.delete(url); };
+  pending.then(finished, finished);
   return pending;
 }
 
@@ -81,9 +105,10 @@ async function fetchForumJson(url) {
     if (r.status === 429) {
       const retryAfter=r.headers?.get('retry-after');
       const seconds=retryAfter && /^\d+(?:\.\d+)?$/.test(retryAfter)?Number(retryAfter)*1000:Date.parse(retryAfter || '')-Date.now();
-      const retryMs=Number.isFinite(seconds)?Math.max(1100,seconds):30000;
-      forumReadBlockedUntil=Date.now()+retryMs;
-      return {retry_after_ms:retryMs,
+      const retryMs=Number.isFinite(seconds)?Math.max(FORUM_READ_INTERVAL_MS,seconds):30000;
+      const now = Date.now();
+      forumReadBlockedUntil = Math.max(forumReadBlockedUntil, now + retryMs);
+      return {retry_after_ms:forumReadBlockedUntil - now,
         status: 'rate_limited',
         url,
         httpStatus: r.status,
@@ -105,7 +130,18 @@ async function fetchForumJson(url) {
   return await r.json();
 }
 
-function queuedSearch(url) { return getJson(url); }
+async function searchTopics({query, page, order}) {
+  const params = new URLSearchParams({q: query});
+  if (page !== undefined) params.set('page', String(page));
+  if (order !== undefined) params.set('order', order);
+  return compactSearchResult(await getJson(`/search.json?${params}`));
+}
+
+function fetchTopicPosts(topicId, ids) {
+  const params = new URLSearchParams();
+  for (const id of ids) params.append('post_ids[]', String(id));
+  return getJson(`/t/${topicId}/posts.json?${params}`);
+}
 
 function compactSearchResult(raw) {
   if (!raw || typeof raw !== 'object') return raw;
@@ -297,9 +333,8 @@ async function summaryTopic(topicId, firstReplies=30, latestReplies=100) {
   const missing = selected.filter(id=>!posts.has(id));
   // Sequential, bounded reads avoid turning a shortcut into a burst of forum requests.
   for (let offset=0;offset<missing.length;offset+=20) {
-    const params = new URLSearchParams();
-    for (const postId of missing.slice(offset,offset+20)) params.append('post_ids[]',String(postId));
-    const result = await forumJson(`/t/${id}/posts.json?${params}`);
+    const result = await fetchTopicPosts(id, missing.slice(offset, offset + 20));
+    if (result.httpStatus) throw new Error(result.message);
     for (const post of result.post_stream?.posts || []) posts.set(post.id,post);
   }
   const result = selected.map(postId=>posts.get(postId)).filter(Boolean).map(post=>{
@@ -446,8 +481,7 @@ async function readTopicRange(rawArgs) {
     const id=state.ids[offset];
     if (!state.posts.has(id)) {
       const ids=state.ids.slice(offset,Math.min(end,offset+20)).filter(id=>!state.posts.has(id));
-      const params=new URLSearchParams();for(const id of ids)params.append('post_ids[]',String(id));
-      const batch=await getJson(`/t/${args.topicId}/posts.json?${params}`);
+      const batch=await fetchTopicPosts(args.topicId, ids);
       if (batch.httpStatus) {failure=batch;break;}
       rememberTopicPosts(state,batch);
       // Bodies omitted by the server are recorded once, without a retry loop.
@@ -461,6 +495,76 @@ async function readTopicRange(rawArgs) {
     posts.push(entry);offset++;
   }
   return makeResult();
+}
+
+const EvidenceSearchInput = z.object({
+  queries: z.array(z.string().trim().min(1)).min(2).max(3)
+    .describe('Complementary full-text queries. Each may include Discourse operators such as category:slug or after:YYYY-MM-DD.'),
+});
+
+function rankMatches(results) {
+  const topics = new Map();
+  for (const {query, topics: matches, posts} of results) {
+    const seen = new Set();
+    matches.forEach((topic, index) => {
+      if (seen.has(topic.id)) return;
+      seen.add(topic.id);
+      const entry = topics.get(topic.id) ?? {topic, score: 0, queries: [], replies: new Map()};
+      entry.score += 1 / (index + 1);
+      entry.queries.push(query);
+      topics.set(topic.id, entry);
+    });
+    posts.forEach((post, index) => {
+      if (post.post_number <= 1 || !seen.has(post.topic_id)) return;
+      const {replies} = topics.get(post.topic_id);
+      const entry = replies.get(post.id) ?? {post, score: 0};
+      entry.score += 1 / (index + 1);
+      replies.set(post.id, entry);
+    });
+  }
+  return [...topics.values()].sort((a, b) => b.score - a.score).slice(0, 2);
+}
+
+async function readSearchEvidence({topic, queries, replies}) {
+  const meta = {...topic, url: topicLink(topic.id), matched_queries: queries};
+  const raw = await getJson(`/t/${topic.id}.json`);
+  if (raw.httpStatus) return {...raw, ...meta, posts: []};
+  const preview = raw.post_stream?.posts ?? [];
+  const bodies = new Map(preview.map(post => [post.id, post]));
+  const ranked = [...replies.values()].sort((a, b) =>
+    b.score - a.score || (b.post.like_count ?? 0) - (a.post.like_count ?? 0));
+  const selected = ranked.slice(0, 3).map(({post}) => post.id);
+  const fallback = preview.filter(post => post.post_number > 1 && !replies.has(post.id))
+    .sort((a, b) => (postLikes(b) ?? 0) - (postLikes(a) ?? 0));
+  selected.push(...fallback.slice(0, 3 - selected.length).map(post => post.id));
+  const missing = selected.filter(id => !bodies.has(id));
+  const batch = missing.length ? await fetchTopicPosts(topic.id, missing) : null;
+  for (const post of batch?.post_stream?.posts ?? []) bodies.set(post.id, post);
+  const opening = preview.find(post => post.post_number === 1);
+  const posts = [opening, ...selected.map(id => bodies.get(id))].filter(Boolean)
+    .sort((a, b) => a.post_number - b.post_number)
+    .map(post => rangePost({...post, topic_id: topic.id}, post.post_number === 1 ? 4000 : 2500));
+  const missingPostIds = missing.filter(id => !bodies.has(id));
+  const failure = batch?.httpStatus ? batch : null;
+  return {...failure, ...meta, posts,
+    posts_count: raw.posts_count ?? topic.posts_count,
+    status: failure?.status ?? (opening && !missingPostIds.length ? 'ok' : 'partial'),
+    missing_post_ids: missingPostIds,
+  };
+}
+
+async function searchWithEvidence(args) {
+  const queries = [...new Set(EvidenceSearchInput.parse(args).queries)];
+  const searches = await Promise.all(queries.map(async query => ({query, ...await searchTopics({query})})));
+  const failures = searches.filter(result => result.httpStatus);
+  const matches = rankMatches(searches.filter(result => !result.httpStatus));
+  const topics = await Promise.all(matches.map(readSearchEvidence));
+  const failedRead = topics.find(topic => topic.status !== 'ok');
+  const status = topics.some(topic => topic.posts.length)
+    ? (failures.length || failedRead ? 'partial' : 'ok')
+    : (failedRead?.status ?? failures[0]?.status ?? 'ok');
+  return {status, queries, topics, search_failures: failures,
+    hint: 'Opening posts and selected replies. For more evidence or truncated bodies, call readTopicPosts.'};
 }
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024, MAX_IMAGE_DATA_CHARS = 500_000;
@@ -506,6 +610,12 @@ async function readPostImages({topicId, postNumber, images}) {
 }
 
 export default defineSkill({
+  searchWithEvidence: fn({
+    summary: 'Search 2–3 complementary queries, deduplicate topics, and return the two best matches with opening posts and key replies.',
+    input: EvidenceSearchInput,
+    examples: [{args: {queries: ['xgoose Discourse', 'forum reading tools DP']}}],
+    handler: searchWithEvidence,
+  }),
 
   readTopicPosts: fn({
     summary: 'Read full post bodies in a topic range with automatic batching; follow next_cursor for more posts.',
@@ -539,12 +649,7 @@ export default defineSkill({
       { args: { query: 'chase sapphire reserve' } },
       { args: { query: 'IHG ghost reservation', order: 'latest' } },
     ],
-    handler: async ({ query, page, order }) => {
-      const params = new URLSearchParams({ q: query });
-      if (page !== undefined) params.set('page', String(page));
-      if (order !== undefined) params.set('order', order);
-      return compactSearchResult(await queuedSearch(`/search.json?${params}`));
-    },
+    handler: searchTopics,
   }),
 
   getTopic: fn({
@@ -669,6 +774,7 @@ export default defineSkill({
 }, {
   instructions: `Find relevant discussions, read key posts and summarize community consensus and actionable data points.
 - Prioritize recent information, helpful topics with high engagement, first-hand experiences and official announcements or policy changes.
+- For independent reads of different topics, issue the readTopicPosts calls in the same assistant turn.
 - Use provided action-result first. Search snippets locate discussions; read bodies for content claims. Listing/count questions need the requested metadata only.
 - Check topic size before choosing reading depth. getTopic and getTopicPosts return five posts. Use readTopicPosts for larger ranges with a bounded limit; follow next_cursor sequentially. If expired, resume from next_post_number. Recover needed truncated text with fromPostNumber, limit:1 and textOffset:next_text_offset.
 - Return skill results as they are, alone or combined in an object or array (including Promise.allSettled). They reach you as one compact line per post with date, likes, other reactions, reply target (↩@user#floor) and inline quotes ([quote @user #floor: text]). Re-mapping posts or a small maxChars drops who is answering whom.

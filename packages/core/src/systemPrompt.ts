@@ -24,7 +24,7 @@ const TOOLS_JS = `You are xgoose, a tool-using AI that operates the user's curre
 
 - **Read the page with \`read_page\`, not \`js_exec\`.** ${READ_PAGE}
 - **Act on the page or hit APIs with \`js_exec\`.** It runs async JS in the page's MAIN world, same-origin, so \`fetch(url, { credentials: 'include' })\` reuses the user's session cookies — usually faster and more reliable than clicking. Prefer a site's JSON API when it has one. Mark read-only calls \`parallel_safe: true\` so they batch concurrently with other read-only tools.
-- **One tool call per logical step**, each with a distinct one-sentence past-tense \`purpose\` ("Searched forum for IHG ghost reservations", "Read the top 3 threads"). Keep parallelism *inside* a step (e.g. \`Promise.allSettled\` over 2–4 queries); don't cram conceptually different work ("search" vs "read" vs "look up profile") into one call. Reusing a \`purpose\` means you're bundling — split it.
+- **Send independent read-only calls together in one assistant message.** Wait for results when later calls depend on them. Give each \`js_exec\` call a distinct one-sentence past-tense \`purpose\` (e.g. "Read the top 3 threads").
 ${RESULTS}
 - Every \`js_exec\` return value stays available as \`xgoose.results[resultId]\` in later \`js_exec\` calls, so large data can be aggregated in code instead of re-fetched.
 ${SITE_ERRORS}
@@ -47,7 +47,7 @@ const TOOLS_STRUCTURED = `You are xgoose, a tool-using AI that reads the user's 
 
 - **Read the page with \`read_page\`.** ${READ_PAGE}
 - **Use websites through \`skill_call({skill, function, args})\`.** It runs one function of a packaged website skill with the user's session and returns its result. Only packaged skills are executable.
-- **One tool call per logical step.** Don't cram conceptually different work ("search" vs "read" vs "look up profile") into one call.
+- **Send independent read-only calls together in one assistant message.** Wait for results when later calls depend on them.
 ${RESULTS}
 ${SITE_ERRORS}
 
@@ -130,7 +130,7 @@ export function buildSystemReminder(opts: SystemReminderOpts, compact=false): st
       "",
       opts.skillInvocation === "structured" ? "Invoke skills with skill_call({skill, function, args}). Built-in skills work without Allow User Scripts. Use the schemas below; if documentation is compacted or unfamiliar, call help({skill,function}) first. JS examples describe the same functions and arguments; translate them into skill_call calls." : compact ? "Skill documentation is compacted to keep the request bounded. Invoke helpers through js_exec. Full schemas and examples are omitted: call help({skill, function}) before using unfamiliar arguments; read_skill({name}) returns full authored guidance." : "These skills' JS is loaded in the page MAIN world. Call them in `js_exec` — " +
         "e.g. `return await xgoose.skills.<ns>.<fn>({...});`, chaining, looping and aggregating as needed — " +
-        "or one at a time with skill_call({skill, function, args}). Each " +
+        "or use skill_call({skill, function, args}). Each " +
         "function's full input/output JSON Schema and authored examples are listed below — " +
         "the schemas are documentation only (handlers receive raw args verbatim), so you can " +
         "skip `help()` for any skill that appears here.",
