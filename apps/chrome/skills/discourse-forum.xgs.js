@@ -69,22 +69,19 @@ function getJson(url) {
   if (forumReadPending.has(url)) return forumReadPending.get(url);
   const topicId = url.match(/^\/t\/(\d+)(?=[./?]|$)|^\/posts\/by_number\/(\d+)\//)?.slice(1).find(Boolean) ?? null;
   const start = forumReadStartQueue.then(async () => {
-    while (true) {
-      const now = Date.now();
-      if (forumReadBlockedUntil > now) {
-        return {response: {status: 'rate_limited', httpStatus: 429, url, retry_after_ms: forumReadBlockedUntil - now, message: 'Forum cooldown active. Continue after retry_after_ms; no request was sent.'}};
-      }
-      const blocking = topicId === null ? activeForumReads.size > 0
-        : activeForumReads.size >= 2 || activeForumReads.has(null) || activeForumReads.has(topicId);
-      if (blocking) {
-        await Promise.race(activeForumReads.values());
-        continue;
-      }
-      const delay = forumReadLastAt + FORUM_READ_INTERVAL_MS - now;
-      if (delay <= 0) break;
-      await new Promise(resolve => setTimeout(resolve, delay));
+    const blockedByActiveRead = () => topicId === null ? activeForumReads.size > 0
+      : activeForumReads.size >= 2 || activeForumReads.has(null) || activeForumReads.has(topicId);
+    while (forumReadBlockedUntil <= Date.now() && blockedByActiveRead()) {
+      await Promise.race(activeForumReads.values());
     }
-    forumReadLastAt = Date.now();
+    const now = Date.now();
+    const delay = forumReadLastAt + FORUM_READ_INTERVAL_MS - now;
+    if (forumReadBlockedUntil <= now && delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+    const startedAt = Date.now();
+    if (forumReadBlockedUntil > startedAt) {
+      return {response: {status: 'rate_limited', httpStatus: 429, url, retry_after_ms: forumReadBlockedUntil - startedAt, message: 'Forum cooldown active. Continue after retry_after_ms; no request was sent.'}};
+    }
+    forumReadLastAt = startedAt;
     const response = fetchForumJson(url);
     const finished = () => { activeForumReads.delete(topicId); };
     activeForumReads.set(topicId, response.then(finished, finished));
