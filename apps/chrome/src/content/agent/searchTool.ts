@@ -1,5 +1,5 @@
 import {z} from "zod";
-import {boundedModelText,defineTool} from "@xgoose/core";
+import {defineTool} from "@xgoose/core";
 import {send} from "@/shared/messages";
 
 export function createSearchTool(accountId?:string) {
@@ -22,6 +22,5 @@ export function createSearchTool(accountId?:string) {
         return result;
       } finally {abortSignal?.removeEventListener("abort",abort);}
     },
-    toModelOutput:output=>[{type:"text",text:boundedModelText(output,JSON.stringify(output))}],
   });
 }

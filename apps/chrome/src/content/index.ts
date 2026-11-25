@@ -322,7 +322,7 @@ async function bootstrap(): Promise<void> {
     priorText: string;
     toolNames: Map<string, string>;
     toolInputs: Map<string, unknown>;
-    toolOutputs: Map<string, { output?: unknown; error?: string }>;
+    toolOutputs: Map<string, { output?: unknown; error?: string; resultId?: string }>;
     navigatedTo: string | null;
   };
   let inFlight: InFlightTurn | null = null;
@@ -852,6 +852,7 @@ async function bootstrap(): Promise<void> {
       });
       const result = await bundle.agent.stream({
         messages: cleanMessages,
+        resultHistory: conversationMessages,
         abortSignal: abortController.signal,
       });
 
@@ -946,6 +947,7 @@ async function bootstrap(): Promise<void> {
             if (inFlight) {
               inFlight.toolOutputs.set(part.toolCallId, {
                 output: part.output,
+                resultId: part.resultId,
               });
             }
             // Navigation sentinel: stop at the current page boundary. Persist
@@ -970,7 +972,7 @@ async function bootstrap(): Promise<void> {
           case "tool-error": {
             const message = String(part.error?.message ?? part.error);
             toolCards.get(part.toolCallId)?.setResult(undefined, message);
-            inFlight?.toolOutputs.set(part.toolCallId, { error: message });
+            inFlight?.toolOutputs.set(part.toolCallId, { error: message, resultId: part.resultId });
             break;
           }
           case "error": {
@@ -1712,7 +1714,7 @@ function buildCapturedAssistantTurn(args: {
   text: string;
   toolNames: Map<string, string>;
   toolInputs: Map<string, unknown>;
-  toolOutputs: Map<string, { output?: unknown; error?: string }>;
+  toolOutputs: Map<string, { output?: unknown; error?: string; resultId?: string }>;
 }): any[] {
   const { text, toolNames, toolInputs, toolOutputs } = args;
   const out: any[] = [];
@@ -1739,6 +1741,7 @@ function buildCapturedAssistantTurn(args: {
         type: "tool-result",
         toolCallId: callId,
         toolName: name,
+        resultId: res.resultId,
         output: { type: "error-text", value: String(res.error) },
       });
     } else {
@@ -1748,7 +1751,8 @@ function buildCapturedAssistantTurn(args: {
         type: "tool-result",
         toolCallId: callId,
         toolName: name,
-        output: normalizeToolOutput(res.output),
+        resultId: res.resultId,
+        output: res.resultId ? { type: "json", value: res.output } : normalizeToolOutput(res.output),
       });
     }
   }

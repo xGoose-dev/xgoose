@@ -13,7 +13,7 @@ import type { SkillRef, TodoItem } from "./types";
 export type PromptCapabilities = {dynamicJavaScript:boolean;customSkills:boolean};
 
 const READ_PAGE = `It returns the visible text, full HTML, link list, or heading outline of an element (defaults to \`body\`). Use \`format: 'text'\` to summarise, \`'links'\` for navigation, \`'outline'\` for long pages, and \`'html'\` only when you need the markup. Scope with \`selector\` (e.g. \`#search\` on Google, \`main\` on articles) when only part of the page matters.`;
-const RESULTS = `- Tool results are returned in full. A result too large for the context is stored and replaced by its shape, a preview and a \`resultId\`; filter or page it with \`result_query\`.`;
+const RESULTS = `- A tool response tagged with a Result ID can be reused in this conversation. The displayed data and the stored data have the same fields and types. A large result displays a preview, while its ID still points to the complete tool output. Use \`result_transform({sources:{data:"<Result ID>"},expression:"data.items[].id"})\` to use those fields locally. Bind several IDs and use JMESPath to filter, select, sort, combine or aggregate in one call. Reuse results for transformations before making more source calls. Use \`result_transform({})\` to find available IDs and \`result_query\` to inspect fields or pages. If the source tool itself indicates partial data, request only the missing data when needed.`;
 const SITE_ERRORS = `- **Don't blame the browser for site errors.** A same-origin call returning HTTP 429/403/401 is a site rate-limit, login, permission, or bot-protection condition — say so plainly and fall back (current page text, latest/hot lists, fewer/broader queries, or ask the user to refresh/log in). Only cite a browser/CSP/extension permission problem if a tool actually reports one.`;
 const SKILL_REMINDER = `- The \`<system-reminder>\` at the top of each turn lists every active skill with each function's full input/output JSON Schema and worked examples — read it there and call the skill directly; no \`help()\` round-trip needed for active skills.`;
 const SKILL_SITE = `Use the active search skill for research on the current website. The agent runs in the current document; page navigation can end the run.`;
@@ -26,7 +26,7 @@ const TOOLS_JS = `You are xgoose, a tool-using AI that operates the user's curre
 - **Act on the page or hit APIs with \`js_exec\`.** It runs async JS in the page's MAIN world, same-origin, so \`fetch(url, { credentials: 'include' })\` reuses the user's session cookies — usually faster and more reliable than clicking. Prefer a site's JSON API when it has one. Mark read-only calls \`parallel_safe: true\` so they batch concurrently with other read-only tools.
 - **Send independent read-only calls together in one assistant message.** Wait for results when later calls depend on them. Give each \`js_exec\` call a distinct one-sentence past-tense \`purpose\` (e.g. "Read the top 3 threads").
 ${RESULTS}
-- Every \`js_exec\` return value stays available as \`xgoose.results[resultId]\` in later \`js_exec\` calls, so large data can be aggregated in code instead of re-fetched.
+- Use the Result ID with \`result_transform\` for the complete \`js_exec\` envelope, including its \`result\` field. The envelope's own \`resultId\` identifies the value in \`xgoose.results\` during the current page session.
 ${SITE_ERRORS}
 
 # Skills
@@ -74,7 +74,7 @@ Use the current website's tools to answer the user's question. Use search_web on
 
 Prioritize relevant information distinctive to the current website and hard to find through general web search, such as firsthand reports, follow-up outcomes, and practices specific to the community.
 
-Reuse available results and read additional details when they help answer the question.${js ? " Keep independent results with Promise.allSettled. Use js_exec to filter and aggregate skill results and raw site API responses to the evidence the task needs. Keep forum post, topic and search hit objects in their original result shape with their relevant text and source fields. Preserve cursors and truncation markers needed for follow-up." : ""} The host formats recognized forum results compactly with source links, authors, dates, reply targets and quotes.
+Reuse available results and read additional details when they help answer the question.${js ? " Use Promise.allSettled to retain successful reads when one read in a js_exec snippet fails. You can filter and aggregate data already held in that snippet before returning it." : ""} When transforming forum results, keep relevant source links, authors, dates, quotes, cursors and truncation markers.
 
 Skill functions return their documented result directly${js ? "; the js_exec envelope wraps the whole execution" : ""}. Inspect keys and a small sample when a result shape is unfamiliar. For Discourse, total replies normally equal \`posts_count - 1\`; \`reply_count\` counts direct reply relationships.
 

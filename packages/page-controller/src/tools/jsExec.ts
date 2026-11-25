@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { boundedModelText, defineTool, detachResultImages, resultImageParts, storeResult, websiteEvidence, type XgooseBuiltTool } from "@xgoose/core";
+import { defineTool, detachResultImages, resultImageParts, type XgooseBuiltTool } from "@xgoose/core";
 import { callBridge } from "../pageRpc";
 
 const DEFAULT_JS_EXEC_TIMEOUT_MS = 30_000;
@@ -7,15 +7,6 @@ const DEFAULT_JS_EXEC_TIMEOUT_MS = 30_000;
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;
   return s.slice(0, n - 1) + "…";
-}
-
-function safeJson(value: unknown): string {
-  try {
-    const s = JSON.stringify(value);
-    return typeof s === "string" ? s : "null";
-  } catch {
-    return String(value);
-  }
 }
 
 export type JsExecToolDeps = {
@@ -32,14 +23,13 @@ export type JsExecToolDeps = {
  *   - Wraps the user's body as `(async () => { … })()` inside the bridge.
  *   - Forwards the agent-run AbortSignal end-to-end: signal abort → tell
  *     the bridge to abort the exec → return `{ ok:false, error:'aborted by user' }`.
- *   - Returns results in full; only a value too large for the model window
- *     is replaced by a stored handle (see `boundedModelText`).
+ *   - Returns the full execution envelope to the agent runtime.
  */
 export function createJsExecTool(deps: JsExecToolDeps): XgooseBuiltTool {
   return defineTool({
     name: "js_exec",
     description:
-      "Run async JavaScript in the page MAIN world. Code body is wrapped in `(async () => { ... })()`. Use `return X` to return JSON. `xgoose.skills.<ns>.*` is available. Skills return their documented data directly: do not unwrap a skill return with `.result` unless its schema includes that field. Only the outer js_exec response has {ok,result,error}. Inspect Object.keys(value) and a small sample after an unexpected shape. Each return value is kept as `xgoose.results[resultId]` for later calls, so loop, filter and aggregate in code and return what the answer needs. Set parallel_safe:true for read-only code.",
+      "Run async JavaScript in the page MAIN world. Code body is wrapped in `(async () => { ... })()`. Use `return X` to return JSON. `xgoose.skills.<ns>.*` is available. Skills return their documented data directly: do not unwrap a skill return with `.result` unless its schema includes that field. Only the outer js_exec response has {ok,result,error}. Inspect Object.keys(value) and a small sample after an unexpected shape. The envelope's resultId identifies its raw page-side value in `xgoose.results`. Use the separate Result ID with result_transform to process the complete envelope locally. Set parallel_safe:true for read-only code.",
     inputSchema: z.object({
       code: z
         .string()
@@ -75,7 +65,7 @@ export function createJsExecTool(deps: JsExecToolDeps): XgooseBuiltTool {
           "Optional JSON array bound to `args` inside `code`. Defaults to [].",
         ),
     }),
-    toModelOutput: jsExecModelOutput,
+    resultAttachments: envelope => resultImageParts(envelope?.result),
     isReadOnly: false,
     isConcurrencySafe: (i) => !!i?.parallel_safe,
     label: (i) => (i?.purpose ? truncate(String(i.purpose), 60) : "Ran JS"),
@@ -141,17 +131,6 @@ export function createJsExecTool(deps: JsExecToolDeps): XgooseBuiltTool {
       if (!res.ok) return res;
       const result = deps.resolveResultImages ? await deps.resolveResultImages(res.result, signal) : res.result;
       return { ...res, result: detachResultImages(result) };
-
     },
   });
-}
-
-/** Only the model-facing representation is bounded; transcript details stay intact. */
-export function jsExecModelOutput(output:unknown) {
-  const envelope=output as {ok?:boolean;result?:unknown;resultId?:unknown}|null;
-  const id=typeof envelope?.resultId==="string"?envelope.resultId:undefined;
-  const shown=envelope?.ok?{...envelope,result:websiteEvidence(envelope.result,location.origin)}:output;
-  if(id&&envelope?.ok)storeResult(id,envelope.result);
-  const text=boundedModelText(envelope?.ok?envelope.result:output,safeJson(shown),{id,pageHandle:!!id});
-  return [{type:"text" as const,text},...resultImageParts(envelope?.result)];
 }
