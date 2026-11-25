@@ -1,7 +1,8 @@
 import {requestContextTokens,estimateTextTokens} from './contextTokens';
 import {requestTextBytes,textBytes,clipBytes,textChunks,omitImageBytes,modelOnlyMessage,collapsedSystem,excerptSummary} from "./contextWindow";
 import {inputTokenBudget,requestByteBudget,OUTPUT_RESERVE_TOKENS} from './contextPolicy';
-import {setResultBudget} from './resultStore';
+import {modelResultText, setResultBudget, ToolResultStore, withoutPreviewHandle} from './resultStore';
+import {resultImageParts} from './resultImages';
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { Agent, type AgentMessage, type StreamFn, type AgentContext } from "@earendil-works/pi-agent-core";
 import { streamSimple as openai } from "@earendil-works/pi-ai/api/openai-completions";
@@ -36,6 +37,7 @@ export interface CreateAgentOpts {
   shouldYield?: () => boolean;
 }
 export type AgentBundle = { agent: PageAgentRuntime; tools: Record<string, XgooseBuiltTool> };
+type ReferencedToolMessage = Extract<AgentMessage, { role: "toolResult" }> & { resultId?: string; resultPresented?: true };
 const LENGTH_CONTINUATION = "Your previous reply was cut off by the output limit. Continue exactly where it stopped, without repeating earlier text.";
 const emptyUsage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
 function capContextImages(messages:AgentMessage[]):AgentMessage[] {
@@ -57,7 +59,20 @@ export function toPiMessages(messages: ChatMessage[], model: Model<Api>): AgentM
     if (m.role === "user") return [{ role: "user", content, timestamp: m.timestamp ?? Date.now() }];
     if (m.role === "system") return [{ role: "system", content: typeof m.content === "string" ? m.content : content.map((p: any) => p.text ?? "").join("\n"),timestamp:m.timestamp??0 } as AgentMessage];
     if (m.role === "assistant") return [{ role: "assistant", content: content.map((p: any) => p.type === "tool-call" ? { type: "toolCall", id: p.toolCallId, name: p.toolName, arguments: p.input, ...(p.thoughtSignature ? {thoughtSignature:p.thoughtSignature} : {}) } : p.type === "reasoning" ? { type: "thinking", thinking: p.text, ...(p.thinkingSignature ? {thinkingSignature:p.thinkingSignature} : {}) } : p), api: m.api ?? model.api, provider: m.provider ?? model.provider, model: m.model ?? model.id, usage: emptyUsage(), stopReason: "stop", timestamp: m.timestamp ?? Date.now() } as AssistantMessage];
-    if (m.role === "tool") return content.map((p: any) => ({ role: "toolResult", toolCallId: p.toolCallId, toolName: p.toolName, content: [{ type: "text", text: typeof p.output?.value === "string" ? p.output.value : JSON.stringify(p.output?.value ?? p.output ?? null) },...(p.images??[])], isError: p.output?.type === "error-text", timestamp: m.timestamp ?? Date.now() }));
+    if (m.role === "tool") {
+      return content.map((part: any): ReferencedToolMessage => {
+        const { value, isError } = readSavedToolOutput(part.output);
+        return {
+          role: "toolResult",
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          resultId: part.resultId ?? part.toolCallId,
+          content: [{ type: "text", text: typeof value === "string" ? value : jsonToolValue(value) }, ...(part.images ?? [])],
+          isError,
+          timestamp: m.timestamp ?? Date.now(),
+        };
+      });
+    }
     return [];
   });
 }
@@ -65,9 +80,92 @@ export function fromPiMessages(messages: AgentMessage[], forModel = false): Chat
   return messages.flatMap((m): ChatMessage[] => {
     if (m.role === "user") return [{ role: "user", content: m.content }];
     if (m.role === "assistant") return [{ role: "assistant", api:m.api, provider:m.provider, model:m.model, content: m.content.map(p => p.type === "toolCall" ? { type: "tool-call", toolCallId: p.id, toolName: p.name, input: p.arguments, ...(p.thoughtSignature ? {thoughtSignature:p.thoughtSignature} : {}) } : p.type === "thinking" ? { type: "reasoning", text: p.thinking, ...(p.thinkingSignature ? {thinkingSignature:p.thinkingSignature} : {}) } : p) }];
-    if (m.role === "toolResult") return [{ role: "tool", content: [{ type: "tool-result", toolCallId: m.toolCallId, toolName: m.toolName, output: { type: m.isError ? "error-text" : "json", value: (!forModel && !m.isError ? m.details : undefined) ?? m.content.map(p => p.type === "text" ? p.text : "[image]").join("\n") },...(m.content.some(p=>p.type==='image')?{images:m.content.filter(p=>p.type==='image')}:{}) }] }];
+    if (m.role === "toolResult") {
+      const { resultId } = m as ReferencedToolMessage;
+      const value = !forModel && !m.isError && m.details !== undefined
+        ? m.details : toolMessageText(m, true);
+      const images = m.content.filter(part => part.type === "image");
+      return [{ role: "tool", content: [{
+        type: "tool-result",
+        toolCallId: m.toolCallId,
+        toolName: m.toolName,
+        ...(resultId ? { resultId } : {}),
+        ...(forModel ? { modelOnly: true } : {}),
+        output: { type: m.isError ? "error-text" : "json", value },
+        ...(images.length ? { images } : {}),
+      }] }];
+    }
     return [];
   });
+}
+
+function readSavedToolOutput(output: unknown): { value: unknown; isError: boolean } {
+  if (output && typeof output === "object") {
+    const envelope = output as { type?: unknown; value?: unknown };
+    const isError = envelope.type === "error-text" || envelope.type === "error-json";
+    const isEnvelope = isError || envelope.type === "json" || envelope.type === "text" || envelope.type === "content" || envelope.type === "execution-denied";
+    if (isEnvelope) return { value: Object.hasOwn(envelope, "value") ? envelope.value : output, isError };
+  }
+  return { value: output ?? null, isError: false };
+}
+
+function jsonToolValue(value: unknown): string {
+  return JSON.stringify(value) ?? "null";
+}
+
+function toolMessageText(message: Pick<ReferencedToolMessage, "content">, includeImageMarkers = false): string {
+  const lines: string[] = [];
+  for (const part of message.content) {
+    if (part.type === "text") lines.push(part.text);
+    else if (includeImageMarkers) lines.push("[image]");
+  }
+  return lines.join("\n");
+}
+
+function restoreToolResults(history: ChatMessage[]): ToolResultStore {
+  const results = new ToolResultStore();
+  for (const message of history) {
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part?.type !== "tool-result" || !part.toolCallId || part.modelOnly) continue;
+      results.add({
+        resultId: part.resultId ?? part.toolCallId,
+        toolName: part.toolName,
+        ...readSavedToolOutput(part.output),
+      });
+    }
+  }
+  return results;
+}
+
+function presentToolResult(message: AgentMessage, results: ToolResultStore): AgentMessage {
+  if (message.role !== "toolResult") return message;
+  const { details, resultId, ...display } = message as ReferencedToolMessage;
+  if (display.resultPresented) return message;
+  const presented: ReferencedToolMessage = { ...display, resultPresented: true };
+  const [data, ...attachments] = message.content;
+  const result = resultId ? results.get(resultId) : undefined;
+  if (!result) {
+    if (data?.type === "text") {
+      presented.content = [{ ...data, text: withoutPreviewHandle(data.text, resultId) }, ...attachments];
+    }
+    return presented;
+  }
+  let text: string;
+  if (details !== undefined && data?.type === "text") {
+    text = data.text;
+  } else if (result.isError && typeof result.value === "string") {
+    text = result.value;
+  } else {
+    text = jsonToolValue(result.value);
+  }
+  presented.resultId = result.resultId;
+  presented.content = [
+    { type: "text", text: modelResultText(result.value, text, result.resultId) },
+    ...attachments,
+    { type: "text", text: `Result ID: ${JSON.stringify(result.resultId)}` },
+  ];
+  return presented;
 }
 
 class EventQueue implements AsyncIterable<RuntimeEvent> {
@@ -92,15 +190,17 @@ export class PageAgentRuntime {
   subscribe(listener: (event: RuntimeEvent) => void | Promise<void>) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   stop() { this.pi?.abort(); }
   snapshot(): RuntimeSnapshot { return { messages: fromPiMessages(this.modelMessages, true), running: this.pi?.state.isStreaming ?? false, error: this.pi?.state.errorMessage }; }
-  async stream(input: { messages: ChatMessage[]; abortSignal?: AbortSignal }) {
+  async stream(input: { messages: ChatMessage[]; resultHistory?: ChatMessage[]; abortSignal?: AbortSignal }) {
     if (this.pi?.signal) throw new Error("This runtime already has an active run");
     input.abortSignal?.throwIfAborted();
     const opts = this.opts, model = createModel(opts.settings), queue = new EventQueue();
     setResultBudget(model.contextWindow);
     const history = toPiMessages(input.messages, model);
+    const results = restoreToolResults(input.resultHistory ?? input.messages);
     this.modelMessages = history;
     let steps = 0, lengthContinuations = 0, continueAfterLength = false, reachedStepLimit = false;
     const completedMessages: AgentMessage[] = [];
+    const completedResultIds = new Map<string, string>();
     const summaryUsage: AssistantMessage[] = [];
     let gatewayBudget=opts.requestBudgetBytes??requestByteBudget(model.contextWindow);
     let tokenBudget=inputTokenBudget(model.contextWindow);
@@ -183,7 +283,7 @@ export class PageAgentRuntime {
             signal?.throwIfAborted();
             if(summaryFailed){summaries.push(clipBytes(chunk,2000));continue;}
             const summaryStream=await rawStream(model,normalizeContext({messages:[{role:"user",timestamp:Date.now(),content:
-              "Summarize this browser-agent history for continuation in at most 1200 words. Preserve the user's goal, findings, titles, IDs, URLs, dates, numeric fields, completed queries, pages/cursors, failed endpoints and actions already performed. Keep the handoff focused on continuing the task from its current state. Current request: "+goal+"\nHistory:\n"+chunk}]}),{signal,apiKey:opts.settings.apiKey,fetch:opts.fetchImpl,maxTokens:2048,maxRetries:0});
+              "Summarize this browser-agent history for continuation in at most 1200 words. Preserve the user's goal, findings, titles, tool result IDs, URLs, dates, numeric fields, completed queries, pages/cursors, failed endpoints and actions already performed. Keep the handoff focused on continuing the task from its current state. Current request: "+goal+"\nHistory:\n"+chunk}]}),{signal,apiKey:opts.settings.apiKey,fetch:opts.fetchImpl,maxTokens:2048,maxRetries:0});
             const result=await summaryStream.result();
             signal?.throwIfAborted();
             const text=result.content.filter(part=>part.type==="text").map(part=>part.text).join("\n");
@@ -268,19 +368,22 @@ export class PageAgentRuntime {
             const parsed = def.inputSchema.parse(args);
             const output = await scheduleTool(!!def.isConcurrencySafe?.(parsed), async () => {
               signal?.throwIfAborted();
-              return def.execute(parsed, { abortSignal: signal, toolCallId: id });
+              return def.execute(parsed, { abortSignal: signal, toolCallId: id, results });
             });
             signal?.throwIfAborted();
-            const parts = def.toModelOutput?.(output, parsed);
-            const content = parts?.length ? parts.map(p => p.type === "text" ? p : { type: "image" as const, data: p.data, mimeType: p.mediaType }) : [{ type: "text" as const, text: typeof output === "string" ? output : JSON.stringify(output ?? null) }];
-            return { content, details: output };
+            const parts = def.resultAttachments?.(output, parsed) ?? resultImageParts(output);
+            const text = jsonToolValue(output);
+            return {
+              content: [{ type: "text" as const, text }, ...parts.map(part => part.type === "text" ? part : { type: "image" as const, data: part.data, mimeType: part.mediaType })],
+              details: typeof output === "string" ? output : JSON.parse(text),
+            };
           },
         })),
       },
       toolExecution: "parallel",
       streamFn: streamProvider,
       prepareRequest: async ({context},signal)=>{
-        const bounded={...context,messages:capContextImages(context.messages)};
+        const bounded={...context,messages:capContextImages(context.messages.map(message => presentToolResult(message, results)))};
         activeContext=bounded;
         const compacted=await compactContext(bounded,signal);
         const chosen=compacted??bounded;
@@ -308,8 +411,22 @@ export class PageAgentRuntime {
         if (e.type === "thinking_end") await emit({ type: "reasoning-end" });
       }
       if (event.type === "tool_execution_start") await emit({ type: "tool-call", toolCallId: event.toolCallId, toolName: event.toolName, input: event.args });
-      if (event.type === "tool_execution_end") await emit({ type: event.isError ? "tool-error" : "tool-result", toolCallId: event.toolCallId, toolName: event.toolName, output: event.result.details ?? event.result, error: event.isError ? event.result.content.filter((p:{type:string})=>p.type==="text").map((p:{text?:string})=>p.text).join("\n") : undefined });
-      if (event.type === "message_end") completedMessages.push(event.message);
+      if (event.type === "tool_execution_end") {
+        const resultId = crypto.randomUUID();
+        const error = event.isError ? toolMessageText(event.result) : undefined;
+        const output = event.isError ? event.result : event.result.details;
+        completedResultIds.set(event.toolCallId, resultId);
+        results.add({ resultId, toolName: event.toolName, value: error ?? output, isError: event.isError });
+        await emit({ type: event.isError ? "tool-error" : "tool-result", toolCallId: event.toolCallId, toolName: event.toolName, resultId, output, error });
+      }
+      if (event.type === "message_end") {
+        const message = event.message;
+        if (message.role === "toolResult") {
+          (message as ReferencedToolMessage).resultId = completedResultIds.get(message.toolCallId);
+          completedResultIds.delete(message.toolCallId);
+        }
+        completedMessages.push(message);
+      }
       if(event.type==='message_end'&&event.message.role==='assistant'&&event.message.stopReason!=='error'){
         const usage=event.message.usage;
         const tokens=usage.input+usage.cacheRead+usage.cacheWrite+usage.output;

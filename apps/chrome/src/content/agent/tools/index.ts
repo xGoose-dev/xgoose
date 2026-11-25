@@ -20,7 +20,7 @@ import {
   invalidateInjectedSkills,
 } from "@/content/skillInjector";
 import { defineTool, type XgooseBuiltTool } from "./buildTool";
-import { boundedModelText, detachResultImages, resultImageParts, websiteEvidence } from "@xgoose/core";
+import { detachResultImages } from "@xgoose/core";
 import { buildPageControllerTools as buildPageControllerCoreTools } from "@xgoose/page-controller";
 import { attachHostImages } from "../hostImages";
 import {capturePageImages} from '../../hostPorts/capturePort';
@@ -309,7 +309,6 @@ const skillCallTool = defineTool({
     if (!result.ok) throw new Error('error' in result ? result.error : JSON.stringify(result));
     return detachResultImages(await attachHostImages(result.result, opts.abortSignal));
   },
-  toModelOutput: result => [{type:"text",text:boundedModelText(result,safeJson(websiteEvidence(result,location.origin)))},...resultImageParts(result)],
 });
 
 /**
@@ -476,7 +475,6 @@ const readImagesTool = defineTool({
   isConcurrencySafe:()=>true,
   label:()=>"Read image pixels",
   execute:async({urls},opts)=>detachResultImages(await attachHostImages({imageContext:{requested:true,delivery:"urls_only_until_host_attaches",images:urls.map(url=>({url}))}},opts.abortSignal)),
-  toModelOutput:result=>[{type:"text",text:safeJson(result)},...resultImageParts(result)],
 });
 
 const screenshotPageTool = defineTool({
@@ -487,7 +485,6 @@ const screenshotPageTool = defineTool({
   isConcurrencySafe: () => false,
   label: () => "See webpage screenshot",
   execute: async (args,opts) => detachResultImages({imageContext: {requested: true, delivery: 'image_parts', images: await capturePageImages(args,opts.abortSignal)}}),
-  toModelOutput: result => [{type: "text", text: safeJson(result)}, ...resultImageParts(result)],
 });
 
 const SKILL_TOOLS: XgooseBuiltTool[] = [
@@ -527,9 +524,4 @@ export function buildLegacyTools(): XgooseBuiltTool[] {
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;
   return s.slice(0, n - 1) + "…";
-}
-
-/** JSON text for the model; a missing return value (`undefined`) becomes "null". */
-function safeJson(value: unknown): string {
-  return JSON.stringify(value) ?? "null";
 }

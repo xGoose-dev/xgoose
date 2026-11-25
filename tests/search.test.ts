@@ -51,7 +51,7 @@ test('paid provider failures are never retried and cancellation is scoped to its
   s.abortSearch(request,{...sender,documentId:'other'});assert.equal(signal.aborted,false);
   s.abortSearch(request,sender);await assert.rejects(pending,/cancelled/);
 });
-test('the one-argument tool respects stop, requires login and retains bounded source output',async()=>{
+test('the one-argument tool respects stop, requires login and returns the source output',async()=>{
   const calls:any[]=[];let release!:(value:any)=>void;
   const sandbox:any={fixture:{send:(kind:string,payload:any)=>{calls.push({kind,payload});return kind==='sw:search_web'?new Promise(r=>release=r):Promise.resolve();}},AbortController,AbortSignal,crypto:webcrypto,TextEncoder,TextDecoder,Error};
   vm.runInNewContext(tool,sandbox);
@@ -63,7 +63,8 @@ test('the one-argument tool respects stop, requires login and retains bounded so
   assert.equal(calls[0].payload.requestId,calls[1].payload.requestId);assert.equal(calls[1].kind,'sw:search_abort');
   assert.equal(search.name,'search_web');assert.equal(search.meta.label({}),'Public web search · Exa');
   const output={provider:'exa',results:[{url:'https://example.org',highlights:['Source evidence']}],charged_micros:7000};
-  assert.deepEqual(JSON.parse(search.definition.toModelOutput(output)[0].text),output);
+  const completed=search.definition.execute({query:'public'},{});release(output);
+  assert.deepEqual(await completed,output);
 });
 test('site-first rules stay small and the tool is present on website and dedicated agent pages',()=>{
   const prompt=readFileSync(path('../packages/core/src/systemPrompt.ts'),'utf8');

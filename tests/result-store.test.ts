@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {boundedModelText, clearStoredResults, resultBudgetBytes, setResultBudget, storeResult} from '../packages/core/src/resultStore.ts';
+import {boundedModelText, clearStoredResults, resultBudgetBytes, setResultBudget, storeResult, ToolResultStore} from '../packages/core/src/resultStore.ts';
 import {createResultQueryTool} from '../packages/core/src/tools/resultQuery.ts';
 
 const posts = Array.from({length: 400}, (_, i) => ({post_number: i + 1, username: `u${i}`, text: `${i % 7 ? 'other' : 'Uber Eats 改 payment'} ${'x'.repeat(400)}`}));
@@ -50,12 +50,12 @@ test('result_query tolerates missing fields and invalid regexes and stays within
 });
 
 test('every successful js_exec result can be queried by its resultId', async () => {
-  Object.assign(globalThis as any, {window: {addEventListener() {}}, location: {origin: 'https://forum.example'}});
-  const {jsExecModelOutput} = await import('../packages/page-controller/src/tools/jsExec.ts');
   setResultBudget(200_000);
-  const shown = JSON.parse(jsExecModelOutput({ok: true, result: {rows: [1, 2, 3]}, resultId: 'small-exec'})[0].text);
-  assert.equal(shown.resultId, 'small-exec');
-  const page = await createResultQueryTool().definition.execute({id: 'small-exec', path: 'rows', offset: 1, limit: 1} as any, {} as any) as any;
+  const value = {ok: true, result: {rows: [1, 2, 3]}, resultId: 'small-exec'};
+  const results = new ToolResultStore();
+  results.add({resultId: 'agent-exec', toolName: 'js_exec', value, isError: false});
+  assert.deepEqual(results.read('agent-exec'), value);
+  const page = await createResultQueryTool().definition.execute({id: 'small-exec', path: 'rows', offset: 1, limit: 1}, {results}) as any;
   assert.deepEqual(page.items, [2]);
 });
 

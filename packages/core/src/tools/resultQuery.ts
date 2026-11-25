@@ -7,7 +7,7 @@ const MISSING = Symbol("missing");
 
 function lookup(value: unknown, path: string): unknown {
   return path.split(".").filter(Boolean).reduce<any>((node, key) =>
-    node !== MISSING && node != null && typeof node === "object" && key in node ? node[key] : MISSING, value);
+    node !== MISSING && node != null && typeof node === "object" && Object.hasOwn(node, key) ? node[key] : MISSING, value);
 }
 
 function atPath(value: unknown, path: string): unknown {
@@ -40,7 +40,7 @@ export function createResultQueryTool(): XgooseBuiltTool {
   return defineTool({
     name: "result_query",
     description:
-      "Query a stored oversized tool result by its resultId. `path` selects a nested value (dot path, e.g. `posts`); arrays are filtered by `match` (case-insensitive regex over each item's JSON, or a literal if the regex is invalid), projected to `fields` (missing fields are omitted) and paged with offset/limit. Without an array at `path` it returns that value, clipped when it is too large.",
+      "Inspect an earlier tool result by its resultId. `path` selects a nested value (dot path, e.g. `posts`); arrays are filtered by `match` (case-insensitive regex over each item's JSON, or a literal if the regex is invalid), projected to `fields` (missing fields are omitted) and paged with offset/limit. Without an array at `path` it returns that value, clipped when it is too large. Use result_transform for local computations on the complete result.",
     inputSchema: z.object({
       id: z.string().min(1),
       path: z.string().default(""),
@@ -52,9 +52,9 @@ export function createResultQueryTool(): XgooseBuiltTool {
     isReadOnly: true,
     isConcurrencySafe: () => true,
     label: (i) => `Queried result ${i?.id ?? ""}${i?.path ? `.${i.path}` : ""}`,
-    execute: async ({ id, path, match, fields, offset, limit }) => {
+    execute: async ({ id, path, match, fields, offset, limit }, { results }) => {
       const pageBudget = Math.floor(resultBudgetBytes() / 2);
-      const target = atPath(storedResult(id), path);
+      const target = atPath(results ? results.read(id) : storedResult(id), path);
       if (!Array.isArray(target)) return { id, path, ...bounded(target, pageBudget) };
       const pattern = match ? matcher(match) : null;
       const matched = pattern ? target.filter(item => pattern.test(JSON.stringify(item) ?? "")) : target;

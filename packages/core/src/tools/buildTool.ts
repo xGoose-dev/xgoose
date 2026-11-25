@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { ToolResultStore } from "../resultStore";
 
 export type XgooseToolContentPart =
   | { type: "text"; text: string }
@@ -9,6 +10,8 @@ export type XgooseToolExecOptions = {
   abortSignal?: AbortSignal;
   /** Tool-call id from the runtime, useful for cancellation bookkeeping. */
   toolCallId?: string;
+  /** Full results available to tools that work with earlier calls. */
+  results?: Pick<ToolResultStore, "read" | "list">;
 };
 
 export type XgooseToolDef<S extends z.ZodTypeAny> = {
@@ -22,7 +25,8 @@ export type XgooseToolDef<S extends z.ZodTypeAny> = {
   isReadOnly?: boolean;
   isConcurrencySafe?: (input: z.infer<S>) => boolean;
   label?: (input: z.infer<S>) => string;
-  toModelOutput?: (
+  /** Additional model attachments. The runtime renders the returned data itself. */
+  resultAttachments?: (
     output: any,
     input: z.infer<S>,
   ) => XgooseToolContentPart[] | null;

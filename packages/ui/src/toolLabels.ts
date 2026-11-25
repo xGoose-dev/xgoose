@@ -35,6 +35,10 @@ export type ToolLabelEntry = {
 // ── built-in labels ───────────────────────────────────────────────────────
 
 const BASE_META: Record<string, ToolLabelEntry> = {
+  result_transform: {
+    label: "Reuse tool results",
+    describe: input => ({ title: input?.sources ? "Transform tool results" : "List tool results", subtitle: "" }),
+  },
   search_web: {
     label: "Public web search · Exa", argKey: "query",
     summarize: output => `${output?.results?.length ?? 0} sources · $${((output?.charged_micros ?? 0)/1e6).toFixed(3)}`,

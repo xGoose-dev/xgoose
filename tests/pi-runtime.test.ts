@@ -7,6 +7,7 @@ import {receivePeerResult} from "../packages/core/src/peerAgents.ts";
 import {setResultBudget,storedResult} from "../packages/core/src/resultStore.ts";
 import { createAgent } from "../packages/core/src/createAgent.ts";
 import { defineTool } from "../packages/core/src/tools/buildTool.ts";
+import { createResultTransformTool } from "../packages/core/src/tools/resultTransform.ts";
 import {createRememberTool,createForgetTool} from '../packages/core/src/tools/memory.ts';
 const settings={provider:"openai-compat" as const,model:"luna",baseUrl:"https://example.test/ai",apiKey:"synthetic",thinking:false};
 function answer(content:any[],reason:"stop"|"toolUse"|"length"="stop"):AssistantMessage {return {role:"assistant",content,api:"openai-completions",provider:"xgoose",model:"luna",timestamp:Date.now(),stopReason:reason,usage:{input:10,output:5,cacheRead:2,cacheWrite:0,totalTokens:17,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}};}
@@ -79,7 +80,7 @@ test("tool failures retain their text in live events and persisted history",asyn
 });
 test('multiple image-reading tools in one turn cannot exceed the provider image cap',async()=>{
  let requests=0;
- const bundle=createAgent({settings,fetchImpl:fetch,tools:[defineTool({name:'images',description:'Image fixture',inputSchema:z.object({}),execute:()=>({attached:3}),toModelOutput:()=>[{type:'text',text:'Source images'},...Array.from({length:3},()=>({type:'file-data' as const,data:'fixture',mediaType:'image/jpeg'}))]})],streamFn:(_m,ctx)=>{
+ const bundle=createAgent({settings,fetchImpl:fetch,tools:[defineTool({name:'images',description:'Image fixture',inputSchema:z.object({}),execute:()=>({attached:3}),resultAttachments:()=>Array.from({length:3},()=>({type:'file-data' as const,data:'fixture',mediaType:'image/jpeg'}))})],streamFn:(_m,ctx)=>{
   requests++;const images=ctx.messages.flatMap(m=>Array.isArray(m.content)?m.content:[]).filter((p:any)=>p.type==='image');assert.ok(images.length<=8);
   if(requests<=3)return stream(answer([{type:'toolCall',id:`image-${requests}`,name:'images',arguments:{}}],'toolUse'));
   assert.equal(images.length,8);return stream(answer([{type:'text',text:'Read the available images'}]));
@@ -105,17 +106,124 @@ test("compaction preserves full output while persisting a separate model context
   assert.ok(!JSON.stringify(saved.modelContext).includes('x'.repeat(1000)));
   assert.equal(history[0].content,'Original question '+ 'x'.repeat(1000));
 });
-test("full tool transcript is separate from bounded model context",async()=>{
- const large={body:'x'.repeat(200000),last:'complete-evidence'};let requests=0;
- const bundle=createAgent({settings,fetchImpl:fetch,contextBudgetChars:10000,tools:[defineTool({name:'large',description:'large fixture',inputSchema:z.object({}),execute:()=>large,toModelOutput:()=>[{type:'text',text:'bounded evidence preview'}]})],streamFn:(_m,ctx)=>{
-  requests++;if(requests===1)return stream(answer([{type:'toolCall',id:'large-1',name:'large',arguments:{}}],'toolUse'));
-  assert.equal(ctx.messages.at(-1)?.content[0].text,'bounded evidence preview');return stream(answer([{type:'text',text:'done'}]));
- }});
- const result=await bundle.agent.stream({messages:[{role:'user',content:'Read large evidence'}]});for await(const _ of result.fullStream){}
- const saved=await result.response;
- assert.equal(requests,2);
- assert.deepEqual(saved.messages.find(m=>m.role==='tool')?.content[0].output.value,large);
- assert.equal(saved.modelContext.find(m=>m.role==='tool')?.content[0].output.value,'bounded evidence preview');
+test("the agent transforms complete results from parallel calls and reuses them after compaction", async () => {
+  const large = {text: "x".repeat(320_000) + "full-tail", next_cursor: "page-2", truncated: true};
+  const small = {posts: [{post_number: 1, text: "📌", amount: 2}, {post_number: 2, text: "Follow-up", amount: 10}]};
+  let sourceCalls = 0;
+  const read = defineTool({
+    name: "read_fixture", description: "Read one fixture", inputSchema: z.object({large: z.boolean()}),
+    isConcurrencySafe: () => true,
+    execute: input => { sourceCalls++; return input.large ? large : small; },
+  });
+  const opts = {settings: {...settings, contextWindowTokens: 128_000}, fetchImpl: fetch, tools: [read, createResultTransformTool()]};
+  const user = {role: "user", content: "Read and combine the two results"};
+  let requests = 0;
+  const first = createAgent({...opts, streamFn: (_model, context) => {
+    if (++requests === 1) return stream(answer([
+      {type: "toolCall", id: "large-read", name: read.name, arguments: {large: true}},
+      {type: "toolCall", id: "small-read", name: read.name, arguments: {large: false}},
+    ], "toolUse"));
+    const refs = Object.fromEntries(context.messages.flatMap(message => {
+      if (message.role !== "toolResult") return [];
+      const text = message.content.filter(part => part.type === "text").map(part => part.text).join("\n");
+      if (message.toolCallId === "large-read") {
+        assert.match(text, /"oversized":true/);
+        assert.doesNotMatch(text, /full-tail/);
+        assert.equal(message.details, undefined);
+      }
+      if (message.toolCallId === "small-read") assert.deepEqual(JSON.parse(text.split("\n")[0]), small);
+      const id = text.match(/Result ID: "([^"]+)"/)?.[1];
+      assert.ok(id);
+      return [[message.toolCallId, id]];
+    }));
+    if (requests === 2) return stream(answer([{type: "toolCall", id: "combined", name: "result_transform", arguments: {
+      sources: {big: refs["large-read"], small: refs["small-read"]},
+      expression: "{tail: ends_with(big.text, 'full-tail'), cursor: big.next_cursor, truncated: big.truncated, total: sum(small.posts[].amount), sorted: sort(small.posts[].amount), length: length(small.posts[0].text)}",
+    }}], "toolUse"));
+    return stream(answer([{type: "text", text: "Combined"}]));
+  }});
+  const run = await first.agent.stream({messages: [user]});
+  for await (const event of run.fullStream) assert.notEqual(event.type, "error", event.error);
+  const {messages, modelContext} = await run.response;
+  const results = messages.filter(message => message.role === "tool").map(message => message.content[0]);
+  assert.deepEqual(results[0].output.value, large);
+  assert.doesNotMatch(modelContext.find(message => message.role === "tool")?.content[0].output.value, /full-tail/);
+  assert.deepEqual(results[2].output.value, {tail: true, cursor: "page-2", truncated: true, total: 12, sorted: [2, 10], length: 1});
+  assert.equal(sourceCalls, 2);
+
+  requests = 0;
+  const second = createAgent({...opts, streamFn: (_model, context) => {
+    if (++requests === 1) return stream(answer([{type: "toolCall", id: "list", name: "result_transform", arguments: {expression: "[?toolName=='read_fixture']"}}], "toolUse"));
+    if (requests === 2) {
+      assert.match(JSON.stringify(context.messages.at(-1)), new RegExp(results[0].resultId));
+      return stream(answer([{type: "toolCall", id: "large-read", name: "result_transform", arguments: {
+        sources: {big: results[0].resultId, combined: results[2].resultId},
+        expression: "{fullLength: length(big.text), total: combined.total}",
+      }}], "toolUse"));
+    }
+    return stream(answer([{type: "text", text: "Reused"}]));
+  }});
+  const followUp = await second.agent.stream({
+    messages: [{role: "user", content: "Earlier context summary: two results were combined."}, {role: "user", content: "How long was the first result?"}],
+    resultHistory: JSON.parse(JSON.stringify([user, ...messages])),
+  });
+  for await (const event of followUp.fullStream) assert.notEqual(event.type, "error", event.error);
+  const saved = (await followUp.response).messages.filter(message => message.role === "tool");
+  assert.deepEqual(saved[1].content[0].output.value, {fullLength: large.text.length, total: 12});
+  assert.notEqual(saved[1].content[0].resultId, results[0].resultId);
+  assert.equal(sourceCalls, 2);
+});
+
+test("restored raw results keep their full shape and previews omit unavailable IDs", async () => {
+  const value = {count: 9, value: [1, 2]};
+  const typed = {type: 42, count: 7};
+  const preview = (resultId: string) => JSON.stringify({oversized: true, resultId, sizeBytes: 500, preview: "Saved evidence", next: `Use ${resultId}`});
+  const toolResult = (toolCallId: string, output: unknown) => ({type: "tool-result", toolCallId, toolName: "lookup", output});
+  const tools = [createResultTransformTool()];
+  let requests = 0;
+  const bundle = createAgent({settings, fetchImpl: fetch, tools, streamFn: (_model, context) => {
+    if (++requests > 1) return stream(answer([{type: "text", text: "Done"}]));
+    const toolTexts = context.messages.flatMap(message => message.role === "toolResult" ? message.content.map(part => part.type === "text" ? part.text : "") : []);
+    assert.ok(toolTexts.includes(JSON.stringify(value)));
+    assert.ok(toolTexts.includes(JSON.stringify(typed)));
+    assert.match(toolTexts.join("\n"), /Saved evidence/);
+    assert.doesNotMatch(toolTexts.join("\n"), /obsolete|missing-id/);
+    return stream(answer([{type: "toolCall", id: "reuse", name: "result_transform", arguments: {
+      sources: {ordinary: "available", typed: "typed"}, expression: "{ordinary: ordinary, typed: typed}",
+    }}], "toolUse"));
+  }});
+  const run = await bundle.agent.stream({
+    messages: [
+      {role: "user", content: "Lookup"},
+      {role: "assistant", content: ["available", "typed", "missing-id"].map(toolCallId => ({type: "tool-call", toolCallId, toolName: "lookup", input: {}}))},
+      {role: "tool", content: [
+        toolResult("available", {type: "json", value: preview("obsolete")}),
+        toolResult("typed", {type: "json", value: typed}),
+        toolResult("missing-id", {type: "json", value: `${preview("missing-id")}\nResult ID: "missing-id"`}),
+      ]},
+      {role: "user", content: "Reuse the available results"},
+    ],
+    resultHistory: [{role: "tool", content: [toolResult("available", value), toolResult("typed", typed)]}],
+  });
+  for await (const event of run.fullStream) assert.notEqual(event.type, "error", event.error);
+  assert.deepEqual((await run.response).messages.find(message => message.role === "tool")?.content[0].output.value, {ordinary: value, typed});
+});
+
+test("model-facing successful results distinguish JSON strings from numbers", async () => {
+  const echo = defineTool({name: "echo", description: "Return the input", inputSchema: z.object({value: z.union([z.string(), z.number()])}), execute: ({value}) => value});
+  let requests = 0;
+  const bundle = createAgent({settings, fetchImpl: fetch, tools: [echo], streamFn: (_model, context) => {
+    if (++requests === 1) return stream(answer([
+      {type: "toolCall", id: "string", name: echo.name, arguments: {value: "42"}},
+      {type: "toolCall", id: "number", name: echo.name, arguments: {value: 42}},
+    ], "toolUse"));
+    const values = context.messages.flatMap(message => message.role === "toolResult" ? [message.content[0]] : []);
+    assert.deepEqual(values, [{type: "text", text: '"42"'}, {type: "text", text: "42"}]);
+    return stream(answer([{type: "text", text: "Done"}]));
+  }});
+  const run = await bundle.agent.stream({messages: [{role: "user", content: "Echo both values"}]});
+  for await (const event of run.fullStream) assert.notEqual(event.type, "error", event.error);
+  assert.deepEqual((await run.response).messages.filter(message => message.role === "tool").map(message => message.content[0].output.value), ["42", 42]);
 });
 test("an answer cut off by the output cap continues instead of ending mid-sentence",async()=>{
   let requests=0;
