@@ -1,17 +1,16 @@
 name: Chrome CI
 on:
   push:
-    branches: ['**']
-  pull_request:
+    branches: [main]
   workflow_dispatch:
   workflow_call:
 permissions:
   contents: read
 concurrency:
   group: chrome-ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   regression:
+    if: github.ref == 'refs/heads/main'
     name: Tests, browser regression and package
     runs-on: ubuntu-24.04
     timeout-minutes: 25

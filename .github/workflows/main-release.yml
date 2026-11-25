@@ -6,7 +6,6 @@ on:
       - package.json
       - apps/chrome/package.json
       - apps/chrome/static/manifest.json
-    tags: ['v*']
   workflow_dispatch:
     inputs:
       dry_run:
@@ -20,6 +19,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   prepare:
+    if: github.ref == 'refs/heads/main'
     name: Validate version and main ancestry
     runs-on: ubuntu-latest
     outputs:
@@ -43,15 +43,7 @@ jobs:
             echo 'Releases must come from a commit already on main.' >&2
             exit 1
           }
-          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
-            [[ "$GITHUB_REF_NAME" == "v$version" ]] || {
-              echo 'Tag and manifest versions differ.' >&2
-              exit 1
-            }
-          elif [[ "$GITHUB_REF" != refs/heads/main ]]; then
-            echo 'Select main to run a manual release.' >&2
-            exit 1
-          elif [[ "$EVENT" == push ]]; then
+          if [[ "$EVENT" == push ]]; then
             # Infrastructure changes alone must not publish a historical version.
             if [[ -z "$BEFORE" || "$BEFORE" =~ ^0+$ ]]; then
               echo 'release=false' >> "$GITHUB_OUTPUT"
@@ -69,7 +61,7 @@ jobs:
     name: Verify release
     needs: prepare
     if: needs.prepare.outputs.release == 'true'
-    uses: ./.github/workflows/ci.yml
+    uses: ./.github/workflows/main-ci.yml
     permissions:
       contents: read
   publish:
@@ -133,4 +125,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: gh workflow run store-publish.yml --ref main -f tag="v$VERSION" -f store=chrome
+        run: gh workflow run main-store-publish.yml --ref main -f tag="v$VERSION" -f store=chrome
