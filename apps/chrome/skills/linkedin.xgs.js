@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         linkedin
 // @namespace    linkedin
-// @version      0.3.2
+// @version      0.3.4
 // @description  LinkedIn profiles, company research, jobs, network, inbox, rich content and staged publishing, messaging and applications.
 // @match        https://www.linkedin.com/*
 // @match        https://linkedin.com/*
@@ -219,9 +219,14 @@ function createClient(site, policy, allowed) {
   }
   function request(input, options = {}) {
     const url = new URL(input, location.href);
-    if (url.protocol !== 'https:' || url.username || url.password || !allowed(url)) throw fault('invalid_endpoint', 'Request is outside the declared read-only site endpoints.');
+    if (url.protocol !== 'https:' || url.username || url.password || !allowed(url)) throw fault('invalid_endpoint', 'Request is outside the declared site endpoints.');
+    const method = options.method ?? 'GET';
+    const invitation = method === 'POST' && options.invitation === true && isConnectionInviteUrl(url);
+    if (method !== 'GET' && !(method === 'POST' && isSduiReadUrl(url)) && !invitation) {
+      throw fault('invalid_endpoint', 'Only the declared LinkedIn operations accept POST.');
+    }
     const cacheKey = `${options.cacheScope ?? 'public'}:${options.type ?? 'json'}:${url.href}`;
-    const ttl = options.ttl ?? 30000;
+    const ttl = invitation ? 0 : options.ttl ?? 30000;
     const cached = state.cache.get(cacheKey);
     if (ttl && cached?.until > Date.now()) return Promise.resolve(structuredClone(cached.value));
     if (ttl && state.pending.has(cacheKey)) return state.pending.get(cacheKey).then(structuredClone);
@@ -229,8 +234,6 @@ function createClient(site, policy, allowed) {
     state.queued++;
     const run = state.tail.catch(() => {}).then(async () => {
       await reserve(options.signal);
-      const method = options.method ?? 'GET';
-      if (method !== 'GET' && !(method === 'POST' && isSduiReadUrl(url))) throw fault('invalid_endpoint','Only the declared read-only LinkedIn search/profile APIs accept POST.');
       const controller = new AbortController();
       const abort = () => controller.abort();
       if (options.signal?.aborted) abort();
@@ -256,7 +259,8 @@ function createClient(site, policy, allowed) {
         }
         if (!response.ok) throw fault(response.status === 429 ? 'rate_limited' : response.status === 401 ? 'login_required' : response.status === 403 ? 'access_denied' : 'http_error',
           `${site} returned HTTP ${response.status}. No automatic retry was made.`, { status: response.status, retryAfterMs: Math.max(0, state.blockedUntil - Date.now()) });
-        const value = options.type === 'text' ? await response.text() : await response.json();
+        const value = invitation ? {status:response.status, id:response.headers.get('x-restli-id'), body:await response.text()}
+          : options.type === 'text' ? await response.text() : await response.json();
         if (ttl) {
           if (state.cache.size >= 80) state.cache.delete(state.cache.keys().next().value);
           state.cache.set(cacheKey, { value, until: Date.now() + ttl });
@@ -303,16 +307,22 @@ function credentialDialog(label, save) {
 // Static paths below are best-effort adapters; query IDs are only reused after
 // the current browser actually observes them. Never embed guessed GraphQL hashes.
 const client=createClient('linkedin',{minIntervalMs:2000,perMinute:15,perHour:120},u=>u.origin===location.origin&&
-  (u.pathname.startsWith('/voyager/api/')||u.pathname.startsWith('/jobs-guest/jobs/api/')||isSduiReadUrl(u)));
+  (u.pathname.startsWith('/voyager/api/')||u.pathname.startsWith('/jobs-guest/jobs/api/')||u.pathname==='/search/results/people/'||isSduiReadUrl(u)));
 const paging={start:offset,count:count(10,20)};
 const slug=z.string().regex(/^[a-zA-Z0-9_%.-]{1,150}$/);
 const numericId=z.union([z.number().int().positive(),z.string().regex(/^\d+$/)]);
-async function voyager(path,params={},a={}) {
+const connectionInvitePath='/voyager/api/voyagerRelationshipsDashMemberRelationships?action=verifyQuotaAndCreateV2';
+function isConnectionInviteUrl(url) {
+  return url.pathname + url.search === connectionInvitePath;
+}
+function voyagerHeaders() {
   const csrf=cookie('JSESSIONID');
   if(!csrf) throw fault('login_required','LinkedIn Voyager requires this tab’s signed-in session. Public job reads and readCurrent remain available.');
+  return {'csrf-token':csrf,'x-restli-protocol-version':'2.0.0',Accept:'application/vnd.linkedin.normalized+json+2.1'};
+}
+async function voyager(path,params={},a={}) {
   return client.request(`/voyager/api/${path}?${new URLSearchParams(params)}`,{
-    headers:{'csrf-token':csrf,'x-restli-protocol-version':'2.0.0',Accept:'application/vnd.linkedin.normalized+json+2.1'},
-    signal:a.signal,ttl:0,
+    headers:voyagerHeaders(),signal:a.signal,ttl:0,
   });
 }
 function liSources(data,options={}) {
@@ -595,7 +605,7 @@ async function searchCurrentApi(a) {
   });
 }
 
-// A JavaScript-only HTML parser keeps downloaded job markup inert. LinkedIn's
+// A JavaScript-only HTML parser keeps downloaded result markup inert. LinkedIn's
 // default Trusted Types policy strips tags passed to DOMParser; the raw API
 // response still contains the result cards. No page policy is changed.
 function parsedAttr(node,name) {return node?.attrs?.find(a=>a.name===name)?.value||'';}
@@ -785,12 +795,65 @@ function nativeSearchUrl(a,type) {
   }
   return url.href;
 }
-async function searchNative(a,type) {
-  const config=type==='posts'?{kind:'post'}:{kind:'profile',selector:'[data-view-name*="people-search-result"], li:has(a[href*="/in/"]), [role="listitem"]:has(a[href*="/in/"])'};
-  // A native page holds one page of results; local slicing starts at its own first entry.
-  const output=await readNativePage(nativeSearchUrl(a,type),type==='posts'?'searchPosts':'searchPeople',{...a,start:0},{...config,matchQuery:true});
+function peopleSearchCards(main, target) {
+  // The native page groups near matches and suggestions separately from its people results.
+  const first = parsedNodes(main, node => parsedAttr(node, 'componentkey') === 'SearchResults_FirstResult_people')[0];
+  const cards = parsedNodes(first?.parentNode ?? main, node => node.tagName === 'li' || parsedAttr(node, 'role') === 'listitem');
+  const matches = new Map();
+  for (const card of cards) {
+    for (const link of parsedNodes(card, node => node.tagName === 'a')) {
+      const href = safeUrl(parsedAttr(link, 'href'), target.href);
+      if (!href) continue;
+      const url = new URL(href);
+      if (url.protocol !== 'https:' || !['linkedin.com', 'www.linkedin.com'].includes(url.hostname) || !/^\/in\/[^/]+\/?$/.test(url.pathname)) continue;
+      url.search = '';
+      url.hash = '';
+      url.pathname = url.pathname.replace(/\/?$/, '/');
+      const title = parsedText(parsedNodes(link, node => node.tagName === 'p')[0] ?? link);
+      if (title) {
+        if (!matches.has(url.href)) matches.set(url.href, {url: url.href, title, text: parsedText(card)});
+        break;
+      }
+    }
+  }
+  return [...matches.values()];
+}
+async function searchPeople(a) {
+  if (!cookie('JSESSIONID')) throw fault('login_required', 'LinkedIn search requires the current signed-in browser session.');
+  const target = new URL(nativeSearchUrl(a, 'people'));
+  const html = await client.request(target.href, {type:'text', ttl:0, signal:a.signal});
+  const main = parsedNodes(parseFragment(html), node => node.tagName === 'main')[0];
+  const matches = main ? peopleSearchCards(main, target) : [];
+  if (!matches.length && (!main || !/\b(?:no results|no matches)\b|未找到|没有找到/i.test(parsedText(main)))) {
+    throw fault('unexpected_search_response', 'LinkedIn returned a people search page without readable results.');
+  }
+  const start = a.start ?? 0;
+  const page = Number(target.searchParams.get('page'));
+  const seen = new Set(a.seenIds ?? []);
+  const sources = [];
+  let index = start % 10;
+  for (; index < matches.length && sources.length < (a.count ?? 10); index++) {
+    const card = matches[index];
+    if (seen.has(card.url)) continue;
+    seen.add(card.url);
+    sources.push(source({...card, kind:'profile', method:'server_search_page', access:'session', scope:'snippet', complete:false}, a));
+  }
+  const hasNextPage = matches.length > 0 && parsedNodes(main, node => {
+    if (!['button', 'a'].includes(node.tagName) || node.attrs.some(attr => attr.name === 'disabled') || parsedAttr(node, 'aria-disabled') === 'true') return false;
+    const label = parsedAttr(node, 'aria-label') || parsedText(node);
+    return /^(?:Next(?: page)?|下一页|下一頁)$/i.test(label) || Number(label.match(/^(?:Page\s+|第\s*)(\d+)\s*页?$/i)?.[1]) === page + 1;
+  }).length > 0;
+  const nextStart = index < matches.length ? (page - 1) * 10 + index : hasNextPage ? page * 10 : null;
+  const {signal, ...args} = a;
+  return result(sources, {status:matches.length ? 'ok' : 'no_results', url:target.href, page, loaded:matches.length, nextStart,
+    nextPage:nextStart === null ? null : {skill:'linkedin', function:'searchPeople', args:{...args, start:nextStart, seenIds:[...seen]}},
+    coverage:'People search cards for the requested page. Read education on the profile to verify attendance or graduation dates.',
+  });
+}
+async function searchPostsOnPage(a) {
+  const output=await readNativePage(nativeSearchUrl(a,'posts'),'searchPosts',{...a,start:0},{kind:'post',matchQuery:true});
   if(output.status==='navigation_required'){output.next.args=a;return output;}
-  return {...output,nextPage:{skill:'linkedin',function:type==='posts'?'searchPosts':'searchPeople',args:{...a,start:(Math.floor((a.start??0)/10)+1)*10}}};
+  return {...output,nextPage:{skill:'linkedin',function:'searchPosts',args:{...a,start:(Math.floor((a.start??0)/10)+1)*10}}};
 }
 async function readDiscussion(a) {
   const url=`/feed/update/urn:li:activity:${a.activityId}/`;
@@ -878,10 +941,28 @@ function fillEditor(el,text){
  el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));
 }
 async function waitValue(read,ms=3000){const end=Date.now()+ms;do{const value=read();if(value)return value;await new Promise(r=>setTimeout(r,100));}while(Date.now()<end);return null;}
-function draftScope(kind){return kind==='post'||kind==='connection'||kind==='application'?document.querySelector('[role="dialog"],dialog[open]'):pageRoot();}
-function actionTarget(kind,a){return kind==='post'?'/feed/':kind==='message'?`/messaging/thread/${a.threadId}/`:kind==='comment'?`/feed/update/urn:li:activity:${a.activityId}/`:kind==='connection'?`/preload/custom-invite/?vanityName=${encodeURIComponent(a.publicId)}`:`/jobs/view/${a.id}/`;}
+function draftScope(kind){return kind==='post'||kind==='application'?document.querySelector('[role="dialog"],dialog[open]'):pageRoot();}
+function actionTarget(kind,a){return kind==='post'?'/feed/':kind==='message'?`/messaging/thread/${a.threadId}/`:kind==='comment'?`/feed/update/urn:li:activity:${a.activityId}/`:`/jobs/view/${a.id}/`;}
 function postRegion(id){return [...(pageRoot()?.querySelectorAll(postSelector)||[])].find(el=>postUrl(el)?.includes(`:${id}/`));}
+async function prepareConnection(a) {
+  const publicId = decodeURIComponent(a.publicId);
+  const profile = await voyager('identity/dash/profiles', {
+    q:'memberIdentity', memberIdentity:publicId,
+    decorationId:'com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-93',
+  }, a);
+  const elements = profile.data?.['*elements'];
+  const memberProfile = Array.isArray(elements) && elements.length === 1 ? elements[0] : null;
+  if (typeof memberProfile !== 'string' || !/^urn:li:fsd_profile:[\w-]+$/.test(memberProfile)) {
+    throw fault('unexpected_profile_response', 'LinkedIn did not resolve a unique invitation recipient.');
+  }
+  const draftId = String(++draftSequence);
+  const target = new URL(`/in/${encodeURIComponent(publicId)}/`, location.origin).href;
+  const text = a.text?.trim() ? a.text : null;
+  drafts.set(draftId, {kind:'connection', memberProfile, target, text, state:'prepared', submitted:false});
+  return {status:'prepared', draftId, kind:'connection', target, text};
+}
 async function prepareAction(a){
+ if(a.kind==='connection')return prepareConnection(a);
  const url=actionTarget(a.kind,a);if(!samePage(url))return continueOnPage(new URL(url,location.origin).href,'prepareAction',a);
  let root=draftScope(a.kind);
  if(a.kind==='post'&&!root){oneButton(pageRoot(),/^(start a post|发起帖子|发布动态)/i).click();root=await waitValue(()=>draftScope('post'));}
@@ -892,7 +973,6 @@ async function prepareAction(a){
  const editors=[...root.querySelectorAll('[contenteditable="true"][role="textbox"],textarea')].filter(shown);
  let editor=editors[0];
  if(a.kind==='comment')editor=editors.find(e=>/comment|评论/i.test(e.getAttribute('aria-label')||e.getAttribute('data-placeholder')||''))||editor;
- if(a.kind==='connection'&&a.text&&!editor){const add=buttons(root,/^(add a note|添加备注)/i);if(add.length===1){add[0].click();editor=await waitValue(()=>root.querySelector('textarea'));}}
  if(a.kind!=='application'&&a.text&&!editor)return {status:'editor_not_loaded'};
  if(a.kind!=='application'&&editors.length>1&&a.kind!=='comment')throw Error('Multiple editors are open; isolate the target composer');
  if(editor&&a.text!==undefined)fillEditor(editor,a.text);
@@ -904,27 +984,51 @@ async function prepareAction(a){
 function applicationFields(root){return [...root.querySelectorAll('input,select,textarea')].filter(el=>shown(el)&&!['hidden','submit','button'].includes(el.type)).map(el=>({label:el.getAttribute('aria-label')||nodeText(el.labels?.[0])||el.name,id:el.id,type:el.type,value:el.type==='checkbox'?el.checked:el.value,required:el.required,options:el.tagName==='SELECT'?[...el.options].map(o=>({label:o.text,value:o.value})):undefined}));}
 function fillApplication(a){const d=drafts.get(a.draftId);if(!d||d.kind!=='application'||d.submitted)throw Error('Application draft is not active');for(const f of a.fields){const el=[...d.root.querySelectorAll('input,select,textarea')].find(el=>el.id===f.label||el.name===f.label||el.getAttribute('aria-label')===f.label||nodeText(el.labels?.[0])===f.label);if(!el)throw Error(`Field not found: ${f.label}`);if(el.type==='checkbox'||el.type==='radio'){if(el.checked!==Boolean(f.value))el.click();}else if(el.tagName==='SELECT'){el.value=String(f.value);el.dispatchEvent(new Event('change',{bubbles:true}));}else fillEditor(el,String(f.value));}return {draftId:a.draftId,fields:applicationFields(d.root)};}
 async function advanceApplication(a){const d=drafts.get(a.draftId);if(!d||d.kind!=='application'||d.submitted)throw Error('Application draft is not active');const before=nodeText(d.root);oneButton(d.root,/^(next|review|继续|下一步|查看申请)/i).click();await waitValue(()=>nodeText(d.root)!==before);return {draftId:a.draftId,fields:applicationFields(d.root),text:nodeText(d.root)};}
-const submitLabels={post:/^(post|发布)$/i,message:/^(send|发送)$/i,comment:/^(post|comment|发布|评论)$/i,connection:/^(send|send invitation|发送|发送邀请)$/i,application:/^(submit application|提交申请)$/i};
-function confirmation(kind){const re=kind==='application'?/application (was )?(sent|submitted)|申请已(发送|提交)/ig:/invitation sent|邀请已发送/ig;return [...nodeText(document.body).matchAll(re)].map(m=>m[0]).join('|');}
+const submitLabels={post:/^(post|发布)$/i,message:/^(send|发送)$/i,comment:/^(post|comment|发布|评论)$/i,application:/^(submit application|提交申请)$/i};
+function applicationConfirmation(){return [...nodeText(document.body).matchAll(/application (was )?(sent|submitted)|申请已(发送|提交)/ig)].map(m=>m[0]).join('|');}
 function actionOutcome(d){
- const all=nodeText(document.body);
- if(['application','connection'].includes(d.kind)&&d.confirmationBefore===confirmation(d.kind))return null;
- if(d.kind==='application')return /application (was )?(sent|submitted)|申请已(发送|提交)/i.test(all)?{status:'submitted',evidence:'application_confirmation'}:null;
- if(d.kind==='connection')return /invitation sent|邀请已发送/i.test(all)?{status:'submitted',evidence:'invitation_confirmation'}:null;
+ if(d.kind==='application'){
+  const confirmation=applicationConfirmation();
+  return confirmation&&confirmation!==d.confirmationBefore?{status:'submitted',evidence:'application_confirmation'}:null;
+ }
  const selector=d.kind==='message'?'[data-view-name="message-list-item"],.msg-s-event-listitem':d.kind==='comment'?commentSelector:postSelector;
  const found=[...document.querySelectorAll(selector)].find(el=>!d.baseline.has(el)&&nodeText(el).includes(d.text)&&((el.getAttribute('data-urn')||el.getAttribute('data-id')||el.getAttribute('data-comment-urn')||el.getAttribute('data-post-urn'))));
  return found?{status:'submitted',evidence:'new_content_record',url:d.kind==='post'?postUrl(found):location.href}:null;
 }
+async function submitConnection(d, a) {
+  const headers = {...voyagerHeaders(), 'content-type':'application/json; charset=UTF-8'};
+  const body = JSON.stringify({invitee:{inviteeUnion:{memberProfile:d.memberProfile}}, ...(d.text ? {customMessage:d.text} : {})});
+  d.submitted = true;
+  d.state = 'submission_unconfirmed';
+  let response;
+  try {
+    response = await client.request(connectionInvitePath, {method:'POST', invitation:true, headers, body, signal:a.signal});
+  } catch (error) {
+    // The client generates these codes before dispatch or on an explicit rate-limit response.
+    if (['aborted', 'queue_full', 'rate_limited'].includes(error.code)) {
+      d.submitted = false;
+      d.state = 'prepared';
+    }
+    throw error;
+  }
+  if (response.status === 201 || response.status === 204 || response.id || /"urn:li:(?:fsd_|fs_)?invitation:[^"\s]+"/i.test(response.body)) {
+    d.state = 'submitted';
+    d.evidence = 'invitation_api_receipt';
+  }
+  return {draftId:a.draftId, status:d.state, evidence:d.evidence};
+}
 async function submitDraft(a){
  const d=drafts.get(a.draftId);if(!d)throw Error('Draft not found');if(d.submitted)return {draftId:a.draftId,status:d.state};
+ if(d.kind==='connection')return submitConnection(d,a);
  if(!samePage(d.target)||!d.root.isConnected)throw Error('Draft target page changed');if(d.editor&&editorText(d.editor)!==d.text)throw Error('Draft text changed');
  d.baseline=new Set(document.querySelectorAll(`${postSelector},${commentSelector},[data-view-name="message-list-item"],.msg-s-event-listitem`));
  const button=oneButton(d.root,submitLabels[d.kind]);if(button.disabled)throw Error('Submit control is disabled');
- d.confirmationBefore=confirmation(d.kind);d.submitted=true;d.state='submission_unconfirmed';button.click();
+ if(d.kind==='application')d.confirmationBefore=applicationConfirmation();
+ d.submitted=true;d.state='submission_unconfirmed';button.click();
  const outcome=await waitValue(()=>actionOutcome(d),a.waitMs??3000);if(outcome)d.state=outcome.status;
  return {draftId:a.draftId,...(outcome||{status:'submission_unconfirmed'})};
 }
-function getDraftStatus(a){const d=drafts.get(a.draftId);if(!d)return {status:'not_found'};const observed=d.submitted?actionOutcome(d):null;if(observed)d.state=observed.status;return {draftId:a.draftId,kind:d.kind,status:d.state,...observed};}
+function getDraftStatus(a){const d=drafts.get(a.draftId);if(!d)return {status:'not_found'};if(d.kind==='connection')return {draftId:a.draftId,kind:d.kind,status:d.state,evidence:d.evidence};const observed=d.submitted?actionOutcome(d):null;if(observed)d.state=observed.status;return {draftId:a.draftId,kind:d.kind,status:d.state,...observed};}
 async function toggleAction(a){
  const url=a.kind==='reaction'?`/feed/update/urn:li:activity:${a.activityId}/`:a.kind==='follow'?`/in/${a.publicId}/`:`/jobs/view/${a.id}/`;
  if(!samePage(url))return continueOnPage(new URL(url,location.origin).href,'toggleAction',a);
@@ -947,8 +1051,8 @@ const skill={
     if(a.type==='jobs')return skill.searchJobs.handler({...a,keywords:a.query});
     return searchCurrentApi(a);
   },[{args:{query:'Two Sigma',type:'people',count:5}}]),
-  searchPeople:siteFn('Search people using native LinkedIn facets: relationship, location, employers, school, industry, language and title. Returns navigation then reads the result page.',z.object({query:z.string(),...peopleFilters,...listOptions}),a=>searchNative(a,'people')),
-  searchPosts:siteFn('Search posts with date, latest/relevance, media type, author/company and mentions using native search pages.',z.object({query:z.string(),...postFilters,...listOptions}),a=>searchNative(a,'posts')),
+  searchPeople:siteFn('Search people without changing the tab. Applies native relationship, school and other people filters. Pass nextPage.args unchanged to continue.',z.object({query:z.string(),...peopleFilters,...listOptions}),searchPeople),
+  searchPosts:siteFn('Search posts with date, latest/relevance, media type, author/company and mentions using native search pages.',z.object({query:z.string(),...postFilters,...listOptions}),searchPostsOnPage),
   readDiscussion:siteFn('Read native post comments and nested replies with original IDs; loadMore requests another comment batch.',z.object({activityId:numericId,expandReplies:z.boolean().default(false),...listOptions}),readDiscussion),
   searchJobs:siteFn('Search public job cards by keywords, location, company and pagination; reads LinkedIn’s guest jobs endpoint.',z.object({
     keywords:z.string().min(1).max(300),location:z.string().max(200).optional(),companyId:numericId.optional(),
@@ -1000,7 +1104,7 @@ const skill={
   prepareAction:siteFn('Prepare a post, message, comment, connection note or Easy Apply form. Returns a draftId; does not submit.',actionSchema,prepareAction),
   fillApplication:siteFn('Fill named fields in an active Easy Apply draft.',z.object({draftId:z.string(),fields:z.array(z.object({label:z.string(),value:z.union([z.string(),z.boolean()])}))}),fillApplication),
   advanceApplication:siteFn('Advance the active Easy Apply form to Next or Review without submitting.',z.object({draftId:z.string()}),advanceApplication),
-  submitDraft:siteFn('Submit a prepared post/message/comment/invitation/application exactly once, then inspect visible outcome.',draftInput,submitDraft),
+  submitDraft:siteFn('Submit a prepared post/message/comment/invitation/application exactly once and report the outcome. Connection invitations use the current session without changing the tab.',draftInput,submitDraft),
   getDraftStatus:siteFn('Read prepared/submitted/unconfirmed state and newly observed outcome of a draft.',z.object({draftId:z.string()}),getDraftStatus),
   toggleAction:siteFn('Set Like, Follow or Save Job to an explicit desired active state; returns actual visible state.',z.object({kind:z.enum(['reaction','follow','save_job']),activityId:numericId.optional(),publicId:slug.optional(),id:numericId.optional(),active:z.boolean(),waitMs:z.number().int().nonnegative().max(10000).optional()}).superRefine((a,c)=>{const key=({reaction:'activityId',follow:'publicId',save_job:'id'})[a.kind];if(!a[key])c.addIssue({code:'custom',message:`${key} is required`});}),toggleAction),
   getCompany:siteFn('Read a company by its /company/slug via the browser’s universal-name lookup.',z.object({slug,...readOptions}),async a=>response(await voyager('organization/companies',{q:'universalName',universalName:a.slug},a),{...a,scope:'body'})),
@@ -1031,4 +1135,4 @@ const skill={
   })),
   getRateLimit:siteFn('Inspect conservative session request budgets and cooldown.',empty,()=>client.status()),
 };
-export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+' LinkedIn uses the page’s existing session and public guest job responses. Search and profile sections use current SDUI APIs. Jobs use a JavaScript-only inert HTML parser so page Trusted Types policies cannot strip result cards. On login, access, rate-limit or protocol errors, preserve the exact error; do not navigate or add a page fallback. Date sorting orders the returned job page only; requestedFilters describes request parameters. Native readers recognize semantic sections and post identities. Use readProfileSection for publications, patents, courses, organizations, test_scores and featured. For navigation_required, open url in the browser then execute next. readProfileSection and activity/company list readers use loaded native pages; start/count paginate loaded entries and loadMore requests additional entries. Write flow: prepareAction returns a draftId, submitDraft submits once, getDraftStatus inspects the outcome. submission_unconfirmed is not a success result. Native account and content functions use navigation continuations.'});
+export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+' LinkedIn uses the page’s existing session and public guest job responses. General search and profile sections use current SDUI APIs. Filtered people search and jobs parse downloaded HTML without changing the tab. Pass people search nextPage.args unchanged to retain all filters. On login, access, rate-limit or protocol errors, preserve the exact error; do not navigate or add a page fallback. Date sorting orders the returned job page only; requestedFilters describes request parameters. Native readers recognize semantic sections and post identities. Use readProfileSection for publications, patents, courses, organizations, test_scores and featured. For navigation_required, open url in the browser then execute next. readProfileSection and activity/company list readers use loaded native pages; start/count paginate loaded entries and loadMore requests additional entries. Write flow: prepareAction returns a draftId, submitDraft submits once, getDraftStatus inspects the outcome. Connection invitations use the existing session without changing the tab. submission_unconfirmed is not a success result. Native account and content functions use navigation continuations.'});
