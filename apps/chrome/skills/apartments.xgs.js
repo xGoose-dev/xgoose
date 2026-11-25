@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name apartments
 // @namespace apartments
-// @version 0.1.1
+// @version 0.1.2
 // @description apartments.com property search and details using the current website session.
 // @match *://www.apartments.com/*
 // @match *://apartments.com/*
@@ -20,21 +20,25 @@ import { fn } from "@xgoose/skill";
 import { z } from "zod";
 var empty = z.object({});
 var urlInput = z.object({ url: z.string().optional() });
-var queue = Promise.resolve();
-var last = 0;
+var startTail = Promise.resolve();
+var lastStart;
+function waitForRequestStart({ minGapMs = 1e3, jitterMs = 0 } = {}) {
+  const start = startTail.then(async () => {
+    const gap = lastStart === void 0 ? 0 : Math.max(0, lastStart + minGapMs - Date.now());
+    const jitter = minGapMs > 0 ? Math.floor(Math.random() * jitterMs) : 0;
+    if (gap + jitter > 0) await new Promise((resolve) => setTimeout(resolve, gap + jitter));
+    lastStart = Date.now();
+  });
+  startTail = start;
+  return start;
+}
 async function request(url) {
   const target = new URL(url, location.origin);
   if (target.origin !== location.origin) throw Error("Open this skill on " + target.origin);
-  const job = queue.then(async () => {
-    await new Promise((r) => setTimeout(r, Math.max(0, 1e3 - (Date.now() - last))));
-    last = Date.now();
-    const response = await fetch(target.href, { credentials: "include" });
-    if (!response.ok) throw Error(`HTTP ${response.status}: ${target.pathname}`);
-    return response.text();
-  });
-  queue = job.catch(() => {
-  });
-  return job;
+  await waitForRequestStart();
+  const response = await fetch(target.href, { credentials: "include" });
+  if (!response.ok) throw Error(`HTTP ${response.status}: ${target.pathname}`);
+  return response.text();
 }
 function json(text2) {
   return JSON.parse(text2.replace(/^\s*\{\}&&/, ""));

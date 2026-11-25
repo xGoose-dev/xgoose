@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        alaska-awards
 // @namespace   alaska
-// @version     0.4.1
+// @version     0.4.2
 // @description Alaska Airlines award/cash flight search. Programmatic equivalent of the AS Enhancer + AS Batch Award Search userscripts (uscardforum topic 492786). Run on www.alaskaair.com.
 // @match       *://www.alaskaair.com/*
 // @detect      location.hostname === 'www.alaskaair.com'
@@ -79,7 +79,7 @@ __name(coerceHour, "coerceHour");
 async function runWithConcurrency(tasks, n) {
   const out = new Array(tasks.length);
   let next = 0;
-  const workers = Array.from({ length: Math.max(1, n) }, async () => {
+  const workers = Array.from({ length: Math.min(tasks.length, Math.max(1, Math.floor(n) || 1)) }, async () => {
     while (true) {
       const idx = next++;
       if (idx >= tasks.length) return;
@@ -474,7 +474,7 @@ const DATE_RANGE_KEYS = [
 async function searchDateRange(p) {
   validateParams("searchDateRange", p, ["from", "to", "start", "end"], DATE_RANGE_KEYS);
   const adults = adultsOf(p);
-  const concurrency = Math.min(8, Math.max(1, p.concurrency ?? 4));
+  const concurrency = p.concurrency ?? 4;
   const mode = p.mode ?? "award";
   const dates = enumerateDateRange(p.start, p.end);
   if (!dates.length) {
@@ -614,7 +614,7 @@ async function batchSearch(p) {
     throw new Error('batchSearch: provide either `months: ["YYYY-MM", ...]` or `start`+`end` date range.');
   }
   const adults = adultsOf(p);
-  const concurrency = Math.min(8, Math.max(1, p.concurrency ?? 4));
+  const concurrency = p.concurrency ?? 4;
   const maxCandidates = p.maxCandidateDates ?? 200;
   const mode = p.mode ?? "award";
   const cabinValues = ["main", "business", "first"].map((k) => p.maxMiles?.[k]).filter((v) => typeof v === "number");
@@ -706,7 +706,7 @@ __name(batchSearch, "batchSearch");
 
 const routeInput = z.object({from:z.string(),to:z.string(),date:z.string(),adults:z.number().int().min(1).max(9).optional(),mode:z.enum(["award","cash"]).optional()});
 const filtersInput = z.object({nonstopOnly:z.boolean().optional(),depAfter:z.union([z.string(),z.number()]).optional(),depBefore:z.union([z.string(),z.number()]).optional(),arriveAfter:z.union([z.string(),z.number()]).optional(),arriveBefore:z.union([z.string(),z.number()]).optional(),carriers:z.array(z.string()).optional(),excludeCarriers:z.array(z.string()).optional(),maxDurationMinutes:z.number().optional(),maxLayoverMinutes:z.number().optional(),minSeats:z.number().int().positive().optional(),bookingCodes:z.array(z.string()).optional(),noMixedCabin:z.boolean().optional(),maxMiles:z.object({main:z.number().optional(),business:z.number().optional(),first:z.number().optional()}).optional(),maxCash:z.number().nonnegative().optional()});
-const rangeInput = routeInput.omit({date:true}).merge(filtersInput).extend({start:z.string(),end:z.string(),concurrency:z.number().int().positive().optional()});
+const rangeInput = routeInput.omit({date:true}).merge(filtersInput).extend({start:z.string(),end:z.string(),concurrency:z.number().int().positive().optional().describe("Choose the number of simultaneous date searches for this call. Defaults to 4.")});
 export default defineSkill({
   batchSearch: fn({
     summary: "multi-route × multi-month scan.",

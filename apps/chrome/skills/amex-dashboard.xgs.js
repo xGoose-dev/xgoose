@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         amex-dashboard
 // @namespace    amexd
-// @version      0.1.1
+// @version      0.1.2
 // @description  American Express dashboard automation. List/sort/search/claim Amex Offers across every card on the account, query enrolled offers by category, read benefit trackers and balances. API-driven (no DOM clicks).
 // @match        *://global.americanexpress.com/*
 // @detect       location.hostname === 'global.americanexpress.com'
@@ -815,7 +815,7 @@ export default defineSkill({
         .optional()
         .describe('Substrings to skip in merchant name (case-insensitive). e.g. ["dell"]'),
       throttleMs: z.number().int().min(0).max(10000).optional(),
-      batchSize: z.number().int().min(1).max(10).optional(),
+      batchSize: z.number().int().positive().optional().describe("Choose how many cards to read together per batch."),
     }),
     examples: [
       { args: {} },
@@ -906,7 +906,7 @@ export default defineSkill({
         .optional(),
       sortOrder: z.enum(['asc', 'desc']).optional(),
       throttleMs: z.number().int().min(0).max(10000).optional(),
-      batchSize: z.number().int().min(1).max(10).optional(),
+      batchSize: z.number().int().positive().optional().describe("Choose how many cards to read together per batch."),
     }),
     examples: [{ args: { sortBy: 'reward', sortOrder: 'desc' } }],
     handler: async (args = {}) => {
@@ -932,7 +932,7 @@ export default defineSkill({
       accountTokens: z.array(z.string()).optional(),
       groupBy: z.enum(['category', 'merchant', 'card', 'none']).optional(),
       throttleMs: z.number().int().min(0).max(10000).optional(),
-      batchSize: z.number().int().min(1).max(10).optional(),
+      batchSize: z.number().int().positive().optional().describe("Choose how many cards to read together per batch."),
     }),
     examples: [{ args: { groupBy: 'category' } }],
     handler: async (args = {}) => {

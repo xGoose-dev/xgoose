@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        hilton-awards
 // @namespace   hilton
-// @version     0.2.1
+// @version     0.2.2
 // @description Hilton Honors property rate search. Same-origin scraper for Hilton's `hotel_shopAvailOptions_shopPropAvail` Apollo GraphQL endpoint with operation-name allowlisting. Anonymous-friendly for cash; points pricing requires Hilton Honors login. Run on www.hilton.com.
 // @match       *://www.hilton.com/*
 // @detect      location.hostname === 'www.hilton.com'
@@ -303,7 +303,7 @@ async function runWithConcurrency(tasks, limit) {
   const out = new Array(tasks.length);
   let next = 0;
   const workers = [];
-  const concurrency = Math.max(1, Math.min(limit | 0 || 1, tasks.length));
+  const concurrency = Math.min(tasks.length, Math.max(1, Math.floor(limit) || 1));
   for (let i = 0; i < concurrency; i++) {
     workers.push(
       (async () => {
@@ -671,7 +671,7 @@ export default defineSkill({
     handler: async ({items, filters}) => filterRooms(items, filters),
   }),
   findAvailability: fn({
-    summary: "★ main entry. Date range → per-night calendar.",
+    summary: "★ main entry. Date range → per-night calendar. Pass {ctyhocn,startDate,endDate,concurrency?}. Choose how many nightly searches to run together (default 4).",
     input: z.any().optional(),
     handler: async (params) => findAvailability(params),
   }),
