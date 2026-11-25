@@ -60,5 +60,8 @@ try{
  assert.equal(posts.at(-1).securitytoken,'fresh');assert.equal(posts.at(-1).titleonly,'1');
  assert.deepEqual({...titles.results[0],last_post:undefined},{id:900,title:'Fixture lounge thread',url:'https://www.flyertalk.com/forum/airport-lounges/900-fixture-lounge.html',starter:'alice',started:'2023-05-26',replies:65,views:26897,pages:2,last_post:undefined,last_poster:'bob',preview:'Chang lounge preview'});
  assert.match(titles.results[0].last_post,/^\d{4}-\d{2}-\d{2}$/);
+ await page.goto('https://www.flyertalk.com/forum/showthread.php?t=900&page=2');
+ await page.waitForFunction(()=>typeof window.xgoose?.skills?.ft?.currentRoute==='function');
+ assert.deepEqual(await page.evaluate(()=>window.xgoose.skills.ft.currentRoute({})),{type:'thread',threadId:900,page:2});
  console.log(JSON.stringify({passed:true,builtinVersion:skill.version,flyertalkVersion:flyertalk.version,latin1Decoded:true,quotesLinkedToFloors:true,postIdLinks:true,largerImageRendition:true,staleTokenRetried:true,relativeLinksResolved:true,syntheticOnly:true}));
 }finally{await context.close();await rm(profile,{recursive:true,force:true});}

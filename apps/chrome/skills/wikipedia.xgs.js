@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         wikipedia
 // @namespace    wikipedia
-// @version      0.2.4
+// @version      0.2.5
 // @description  Wikipedia history and governance API reader: revisions, diffs, protection, logs, contributions, blocks, recent changes and your watchlist through the current wiki session.
 // @match        https://*.wikipedia.org/*
 // @connect      <self>
@@ -262,7 +262,7 @@ function createClient(site, policy, allowed) {
   };
 }
 
-const READING_INSTRUCTIONS = `For discussion summaries, default to the original post plus roughly the first 30 and latest 100 replies, deduplicating overlaps; follow user-specified ranges. Reply in the user's language. Use search/list results to choose sources and read relevant details. Include original URLs, authors, dates and reply links. Choose functions, sorting and pagination for the task. Pass the REPL signal for cancellable requests; getRateLimit reports local quotas.`;
+const READING_INSTRUCTIONS = `For discussion summaries, read the original post and choose relevant replies and pagination based on the question; follow user-specified ranges. Reply in the user's language. Use search/list results to choose sources and read relevant details. Include original URLs, authors, dates and reply links. Choose functions, sorting and pagination for the task. Pass the REPL signal for cancellable requests; getRateLimit reports local quotas.`;
 
 function credentialDialog(label, save) {
   const dialog = document.createElement('dialog');

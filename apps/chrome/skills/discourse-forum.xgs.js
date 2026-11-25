@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discourse-forum
 // @namespace    discourse
-// @version      0.2.17
+// @version      0.2.18
 // @description  Search Discourse forums, read topics and replies, and research community insights.
 // @match        *://meta.discourse.org/*
 // @match        *://*.discourse.org/*
@@ -58,21 +58,63 @@ async function csrfFetch(url, init = {}) {
   return fetch(url, { credentials: 'include', cache: 'no-cache', ...init, headers });
 }
 
-let forumReadQueue=Promise.resolve(), forumReadLastAt=0, forumReadBlockedUntil=0;
-const forumReadPending=new Map();
+const FORUM_READ_INTERVAL_MS = 1100;
+let forumReadLastAt = 0;
+let forumReadBlockedUntil = 0;
+let forumReadTimerPending = false;
+const forumReadQueue = [];
+const forumReadPending = new Map();
+const activeForumReads = new Set();
+
 function getJson(url) {
-  if(forumReadPending.has(url))return forumReadPending.get(url);
-  const pending=forumReadQueue.catch(()=>{}).then(async()=>{
-    if(forumReadBlockedUntil>Date.now())return {status:'rate_limited',httpStatus:429,url,retry_after_ms:forumReadBlockedUntil-Date.now(),message:'Forum cooldown active. Continue after retry_after_ms; no request was sent.'};
-    const delay=Math.max(0,forumReadLastAt+1100-Date.now());
-    if(delay)await new Promise(resolve=>setTimeout(resolve,delay));
-    forumReadLastAt=Date.now();
-    return fetchForumJson(url);
-  });
-  forumReadQueue=pending.then(()=>{},()=>{});
-  forumReadPending.set(url,pending);
-  pending.then(()=>forumReadPending.delete(url),()=>forumReadPending.delete(url));
+  if (forumReadPending.has(url)) return forumReadPending.get(url);
+  const topicId = url.match(/^\/t\/(\d+)(?=[./?]|$)|^\/posts\/by_number\/(\d+)\//)?.slice(1).find(Boolean) ?? null;
+  const pending = new Promise((resolve, reject) => forumReadQueue.push({url, topicId, resolve, reject}));
+  forumReadPending.set(url, pending);
+  const finished = () => { forumReadPending.delete(url); };
+  pending.then(finished, finished);
+  drainForumReads();
   return pending;
+}
+
+function drainForumReads() {
+  if (!forumReadQueue.length) return;
+  const now = Date.now();
+  if (forumReadBlockedUntil > now) {
+    for (const {url, resolve} of forumReadQueue.splice(0)) {
+      resolve({status: 'rate_limited', httpStatus: 429, url, retry_after_ms: forumReadBlockedUntil - now,
+        message: 'Forum cooldown active. Continue after retry_after_ms; no request was sent.'});
+    }
+    return;
+  }
+  if (activeForumReads.size >= 2 || activeForumReads.has(null)) return;
+
+  // Skip busy topics while keeping non-topic reads exclusive and in queue order.
+  const index = forumReadQueue.findIndex(({topicId}) => !activeForumReads.has(topicId));
+  if (index === -1) return;
+  const {url, topicId, resolve, reject} = forumReadQueue[index];
+  if (topicId === null && activeForumReads.size > 0) return;
+
+  const delay = forumReadLastAt + FORUM_READ_INTERVAL_MS - now;
+  if (delay > 0) {
+    if (!forumReadTimerPending) {
+      forumReadTimerPending = true;
+      setTimeout(() => {
+        forumReadTimerPending = false;
+        drainForumReads();
+      }, delay);
+    }
+    return;
+  }
+
+  forumReadQueue.splice(index, 1);
+  forumReadLastAt = now;
+  activeForumReads.add(topicId);
+  fetchForumJson(url).then(resolve, reject).then(() => {
+    activeForumReads.delete(topicId);
+    drainForumReads();
+  });
+  drainForumReads();
 }
 
 async function fetchForumJson(url) {
@@ -81,9 +123,10 @@ async function fetchForumJson(url) {
     if (r.status === 429) {
       const retryAfter=r.headers?.get('retry-after');
       const seconds=retryAfter && /^\d+(?:\.\d+)?$/.test(retryAfter)?Number(retryAfter)*1000:Date.parse(retryAfter || '')-Date.now();
-      const retryMs=Number.isFinite(seconds)?Math.max(1100,seconds):30000;
-      forumReadBlockedUntil=Date.now()+retryMs;
-      return {retry_after_ms:retryMs,
+      const retryMs=Number.isFinite(seconds)?Math.max(FORUM_READ_INTERVAL_MS,seconds):30000;
+      const now = Date.now();
+      forumReadBlockedUntil = Math.max(forumReadBlockedUntil, now + retryMs);
+      return {retry_after_ms:forumReadBlockedUntil - now,
         status: 'rate_limited',
         url,
         httpStatus: r.status,
@@ -669,14 +712,17 @@ export default defineSkill({
 }, {
   instructions: `Find relevant discussions, read key posts and summarize community consensus and actionable data points.
 - Prioritize recent information, helpful topics with high engagement, first-hand experiences and official announcements or policy changes.
+- When researching how something works in practice, look for approaches specific to this forum. Actively seek recent firsthand reports that challenge your initial expectations, including unexpected successes and failures. If the forum's experience differs from public guides, use those reports to explain the steps, conditions and outcomes.
+- For independent reads of different topics, issue the readTopicPosts calls in the same assistant turn.
 - Use provided action-result first. Search snippets locate discussions; read bodies for content claims. Listing/count questions need the requested metadata only.
+- For thread summaries, use the question to choose the reply range. As a reference, consider roughly the earliest 30 and latest 100 replies. For more in-depth questions, read additional relevant replies beyond those windows.
 - Check topic size before choosing reading depth. getTopic and getTopicPosts return five posts. Use readTopicPosts for larger ranges with a bounded limit; follow next_cursor sequentially. If expired, resume from next_post_number. Recover needed truncated text with fromPostNumber, limit:1 and textOffset:next_text_offset.
-- Return skill results as they are, alone or combined in an object or array (including Promise.allSettled). They reach you as one compact line per post with date, likes, other reactions, reply target (↩@user#floor) and inline quotes ([quote @user #floor: text]). Re-mapping posts or a small maxChars drops who is answering whom.
+- When filtering or combining results in js_exec, keep relevant posts in their original shape with text, post links, authors, dates, reactions, reply targets and quotes. Keep cursors and text offsets needed to continue reading.
 - Post text marks pictures as [image N]. When a screenshot, chart or photo matters to the answer, call readPostImages({topicId, postNumber, images:[N]}) to see it; skip decorative ones.
 - Summarize rather than quote whole threads. Describe outcomes, dates, amounts and relevant circumstances; include author, available likes and post links. Follow the user's scope and language.`,
   actions: [
     {label:'Latest topics', prompt:"List the newest topics in action-result by creation time, with a short description and source link for each.",js:"return await xgoose.skills.discourse.getRecentTopics({kind:'new'});"},
-    {label:'Summarize this thread', prompt:"Summarize the original post, first 30 and latest 100 replies, deduplicating overlaps. Summarize community consensus and actionable DPs with authors, dates and sources. Follow user-specified ranges.",js:'return await xgoose.skills.discourse.readTopicForSummary({});'},
+    {label:'Summarize this thread', prompt:"Use discourse.readTopicPosts to read the opening post and relevant replies. Choose reading depth for the question and follow user-specified ranges. Summarize community consensus and actionable data points with authors, dates and post links."},
     {label:'Surprise me randomly', prompt:"Recommend the sampled topics in action-result with a title, reason, update date and source link.",js:"return await xgoose.skills.discourse.getRecentTopics({kind:'random'});"},
   ],
 });

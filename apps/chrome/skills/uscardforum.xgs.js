@@ -1,13 +1,13 @@
 // ==XGooseSkill==
 // @name         uscardforum
 // @namespace    uscf
-// @version      0.2.13
+// @version      0.2.14
 // @description  美卡论坛：搜索信用卡、积分与旅行讨论，汇总社区共识和实测 DP。
 // @match        *://www.uscardforum.com/*
 // @match        *://uscardforum.com/*
 // @detect       location.hostname.endsWith('uscardforum.com')
 // @run-at       document_idle
-// @require      discourse-forum@0.2.14
+// @require      discourse-forum@0.2.18
 // @primary      searchInCategory
 // @keyword      uscardforum
 // @keyword      美卡论坛
@@ -86,28 +86,7 @@ function currentRouteImpl() {
   return { type: 'unknown' };
 }
 
-async function recentDeals() {
-  const results = await Promise.allSettled(['羊毛','offer','优惠'].map(query=>discourse().searchTopics({query,order:'latest'})));
-  const found=results.flatMap(r=>r.status==='fulfilled' ? r.value.topics || [] : []);
-  const candidates=[...new Map(found.filter(t=>!t.pinned && t.archetype!=='private_message').map(t=>[t.id,t])).values()];
-  if (!candidates.length) throw new Error('未获取到最新羊毛搜索结果。');
-  candidates.sort((a,b)=>Date.parse(b.last_posted_at || b.created_at)-Date.parse(a.last_posted_at || a.created_at));
-  const topics=[];
-  for(const item of candidates.slice(0,8)) {
-    try {
-      const detail=await discourse().getTopic({id:item.id,maxChars:2500});
-      topics.push({id:item.id,title:item.title,url:`${location.origin}/t/${item.id}`,created_at:item.created_at,last_posted_at:item.last_posted_at,posts:detail.posts || [],read_error:detail.httpStatus ? detail.message : undefined});
-    } catch(error) { topics.push({id:item.id,title:item.title,url:`${location.origin}/t/${item.id}`,read_error:String(error)}); }
-  }
-  return {kind:'deals',topics,hint:'每帖仅前五楼预览；按需读取后续 DP，附原帖链接。'};
-}
-
 export default defineSkill({
-  getRecentDeals: fn({
-    summary: 'Find recent deals; returns up to eight topics with five-post previews and source links.',
-    input: z.object({}),
-    handler: async () => recentDeals(),
-  }),
   searchInCategory: fn({
     summary: 'Search topics within a specific 美卡论坛 category. ★ primary entry.',
     input: z.object({
@@ -177,13 +156,10 @@ export default defineSkill({
   }),
 }, {
   instructions: `美卡论坛是美国信用卡、银行、积分、里程与财务优化社区。使用中文回复。
-- 搜索相关讨论，优先阅读近期（尽可能近 6 个月）、点赞和回复较多的有用帖子，关注真实用户经历、官方公告及政策变化，汇总社区共识与可操作的 DP。
-- 查找 DP 时重点关注近 3–6 个月，提取发生了什么、日期、金额、相关条件和用户情况；附作者、主题 ID、楼层链接及可用的点赞数，展示规律和趋势。
-- 用户问“怎么撸”、玩法或羊毛时，按社区实际在用的做法从基础到进阶完整列出（包括改 payment、叠加等），每种写清步骤、收益和对应 DP，按社区采用度和 DP 排序。
-- 搜索词用中文和论坛黑话（如“撸”“DP”“改 payment”），再配合英文卡名或商户名。
+- 查玩法时，用英文卡名、商户名配合「撸」「叠加」「改 payment」等论坛用语找实测 DP，沿相关长帖追最新回帖和结果更新。
+- 主动寻找与初步判断不一致的近期亲历报告，特别留意意外成功和意外失败的案例。论坛经验与公开指南有出入时，用这些报告讲清楚实际步骤、适用条件和结果。
+- 写清每种玩法的步骤、收益、日期、金额和适用条件，附作者、楼层链接及可用的点赞数。
+- 补读时可在同一轮并行调用 discourse.readTopicPosts 读取不同主题。遇到超时后，逐个发出剩余的读帖调用。同一主题按 next_cursor 顺序逐页读。
 - 比较信用卡时，结合社区反馈说明开卡奖励与要求、年费、权益、积分价值、适合人群及申请策略。
 - 总结长帖内容，读取与分页遵循 discourse-forum。`,
-  actions: [
-    {label:'最近羊毛', prompt:'根据 action-result 总结近期有用的羊毛和 offer，说明适用条件、社区反馈与实测 DP，附日期和原帖链接；关键正文不足时补读。',js:'return await xgoose.skills.uscf.getRecentDeals({});'},
-  ],
 });

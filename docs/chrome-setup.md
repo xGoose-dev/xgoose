@@ -28,8 +28,8 @@ Implemented in the Chrome host on 2026-10-23.
   only after the skill bar becomes visible. Installed skill management
   stays collapsed in Settings. Discover more skills opens https://xgoose.org/skills/
   directly in a new tab.
-- Discourse owns three reusable English shortcuts: Latest topics, Summarize this
-  thread, and Surprise me randomly. The uscardforum layer adds only 最近羊毛.
+- Discourse provides the Latest topics, Summarize this thread, and Surprise me randomly
+  shortcuts on supported forums, including USCardForum.
   Discourse detection also supports custom domains. Skill chips, launcher visibility, shortcut merging and model context use the
   skills actually installed after their @detect checks. This preserves Substack
   custom domains and generic Discourse detection while ordinary pages show

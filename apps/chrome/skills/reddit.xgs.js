@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         reddit
 // @namespace    reddit
-// @version      0.4.5
+// @version      0.4.6
 // @description  Read Reddit posts, search comments, browse user profiles/posts/comments, community feeds and wikis with native pagination.
 // @match        https://www.reddit.com/*
 // @match        https://reddit.com/*
@@ -10,7 +10,7 @@
 // @primary      searchPosts
 // @keyword      reddit
 // @keyword      subreddit
-// @action       Summarize this post | Summarize the original post, roughly the first 30 and latest 100 replies, deduplicating overlaps. Choose functions, sorting and pagination as needed. Cite sources; user-specified ranges take precedence.
+// @action       Summarize this post | Summarize the original post and replies relevant to the question. Choose functions, sorting and pagination as needed. Cite sources; user-specified ranges take precedence.
 // @action       Hot posts | Use reddit.getPosts with sort:hot for the current subreddit or the global feed. Follow navigation_required to the sorted Reddit page and use readCurrentFeed there. Show noteworthy posts with brief reasons and original links.
 // @action       New posts | Use reddit.getPosts with sort:new for the current subreddit or the global feed. Follow navigation_required to the sorted Reddit page and use readCurrentFeed there. Show recent posts with publication times and original links.
 // @action       Surprise me | Start with reddit.readCurrentFeed and choose a post already visible in the feed. On a post page use getPosts for that subreddit. Read the chosen post and selected comments with getThread, then share an unexpected observation with original links.
@@ -261,7 +261,7 @@ function createClient(site, policy, allowed) {
   };
 }
 
-const READING_INSTRUCTIONS = `For discussion summaries, default to the original post plus roughly the first 30 and latest 100 replies, deduplicating overlaps; follow user-specified ranges. Reply in the user's language. Use search/list results to choose sources and read relevant details. Include original URLs, authors, dates and reply links. Choose functions, sorting and pagination for the task. Pass the REPL signal for cancellable requests; getRateLimit reports local quotas.`;
+const READING_INSTRUCTIONS = `For discussion summaries, read the original post and choose relevant replies and pagination based on the question; follow user-specified ranges. As a reference, consider roughly the earliest 30 and latest 100 replies. For more in-depth questions, read additional relevant replies beyond those windows. Reply in the user's language. Use search/list results to choose sources and read relevant details. Include original URLs, authors, dates and reply links. Choose functions, sorting and pagination for the task. Pass the REPL signal for cancellable requests; getRateLimit reports local quotas.`;
 
 function credentialDialog(label, save) {
   const dialog = document.createElement('dialog');

@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         flyertalk
 // @namespace    ft
-// @version      0.2.6
+// @version      0.2.7
 // @description  FlyerTalk site-specific helpers — WordPress article search (anonymous /wp-json), URL parsing for the vBulletin SEO routes, a curated forum-slug-to-id map (airlines, hotels, credit cards), and a parallel searchAll fan-out across articles + forum posts + threads.
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*
@@ -11,7 +11,7 @@
 // @connect      <self>
 // @primary      searchAll
 // @action       Latest topics | Call xgoose.skills.ft.getThreads({kind:'new'}) and list the newest threads by start date, each with a one-line description and its link.
-// @action       Summarize this thread | Call xgoose.skills.ft.summarizeCurrentThread({}) and summarize the original post, first 30 and latest 100 replies, deduplicating overlaps. Give the community consensus and data points with authors, dates and post links. Follow user-specified ranges.
+// @action       Summarize this thread | Read the opening post and relevant replies. Choose reading depth for the question and follow user-specified ranges. Summarize community consensus and data points with authors, dates and post links.
 // @action       Surprise me randomly | Call xgoose.skills.ft.getThreads({kind:'random'}) and recommend the sampled threads: title, what makes it interesting, latest activity date and link.
 // @keyword      flyertalk
 // @keyword      miles
@@ -249,7 +249,7 @@ function parseMemberUrl(href) {
 function currentRouteImpl() {
   const href = location.href;
   const pathname = location.pathname;
-  const thread = parseThreadUrlImpl(href);
+  const thread = currentThreadRoute();
   if (thread) return { type: 'thread', threadId: thread.threadId, page: thread.page };
   const forum = parseForumUrlImpl(href);
   if (forum) return { type: 'forum', forumId: forum.forumId, page: forum.page };
@@ -271,9 +271,12 @@ async function getVbulletin() {
 
 /* ───── Current page: forum and thread ───── */
 
-function currentThreadId() {
-  if (location.pathname.endsWith('/showthread.php')) return Number(new URLSearchParams(location.search).get('t')) || null;
-  return parseThreadUrlImpl(location.href)?.threadId ?? null;
+function currentThreadRoute() {
+  if (!location.pathname.endsWith('/showthread.php')) return parseThreadUrlImpl(location.href);
+  const params = new URLSearchParams(location.search);
+  const threadId = Number(params.get('t'));
+  if (!Number.isSafeInteger(threadId) || threadId <= 0) return null;
+  return { threadId, page: Number(params.get('page')) || undefined };
 }
 
 /** Thread URLs carry only the forum slug; the breadcrumb link with that slug carries the id. */
@@ -476,14 +479,15 @@ export default defineSkill({
 }, {
   instructions: `Start research with searchAll; it covers articles, forum posts and thread titles.
 - Search in English; the forum index does not tokenize Chinese or other CJK text. Translate the user's terms first.
-- Snippets only locate discussions. Read the top 2-3 threads with xgoose.skills.vbulletin.summarizeThread({threadId}) before answering.
-- For the forum or thread open in this tab, use getThreads and summarizeCurrentThread; getForum lists any forum by id.
+- Look beyond the top-ranked search hits and read widely across relevant threads. Use xgoose.skills.vbulletin.summarizeThread with a reply range suited to the question. Keep reading while other threads can add useful firsthand reports, follow-up outcomes, or explanations for disagreements.
+- For thread summaries, use the question to choose the reply range. As a reference, consider roughly the earliest 30 and latest 100 replies. For more in-depth questions, read additional relevant replies beyond those windows.
+- For the open forum, use getThreads; getForum lists any forum by ID. For the open thread, get the thread ID from currentRoute and select the reply range or page to read with xgoose.skills.vbulletin.summarizeThread.
 - Use only thread, post and forum ids from tool results. Keep search results in their relevance order.
 - Leave forumIds unset unless the user names a forum; getForumMap lists the main forum ids.
 - Use provided action-result first.`,
   actions: [
     {label:'Latest topics', prompt:'List the newest threads in action-result by start date, each with a one-line description and its link.', js:"return await xgoose.skills.ft.getThreads({kind:'new'});"},
-    {label:'Summarize this thread', prompt:'Summarize the original post, first 30 and latest 100 replies, deduplicating overlaps. Give the community consensus and data points with authors, dates and post links. Follow user-specified ranges.', js:'return await xgoose.skills.ft.summarizeCurrentThread({});'},
+    {label:'Summarize this thread', prompt:'Read the opening post and relevant replies. Choose reading depth for the question and follow user-specified ranges. Summarize community consensus and data points with authors, dates and post links.'},
     {label:'Surprise me randomly', prompt:'Recommend the sampled threads in action-result: title, what makes it interesting, latest activity date and link.', js:"return await xgoose.skills.ft.getThreads({kind:'random'});"},
   ],
 });

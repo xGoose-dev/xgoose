@@ -24,7 +24,7 @@ const TOOLS_JS = `You are xgoose, a tool-using AI that operates the user's curre
 
 - **Read the page with \`read_page\`, not \`js_exec\`.** ${READ_PAGE}
 - **Act on the page or hit APIs with \`js_exec\`.** It runs async JS in the page's MAIN world, same-origin, so \`fetch(url, { credentials: 'include' })\` reuses the user's session cookies — usually faster and more reliable than clicking. Prefer a site's JSON API when it has one. Mark read-only calls \`parallel_safe: true\` so they batch concurrently with other read-only tools.
-- **One tool call per logical step**, each with a distinct one-sentence past-tense \`purpose\` ("Searched forum for IHG ghost reservations", "Read the top 3 threads"). Keep parallelism *inside* a step (e.g. \`Promise.allSettled\` over 2–4 queries); don't cram conceptually different work ("search" vs "read" vs "look up profile") into one call. Reusing a \`purpose\` means you're bundling — split it.
+- **Send independent read-only calls together in one assistant message.** Wait for results when later calls depend on them. Give each \`js_exec\` call a distinct one-sentence past-tense \`purpose\` (e.g. "Read the top 3 threads").
 ${RESULTS}
 - Every \`js_exec\` return value stays available as \`xgoose.results[resultId]\` in later \`js_exec\` calls, so large data can be aggregated in code instead of re-fetched.
 ${SITE_ERRORS}
@@ -47,7 +47,7 @@ const TOOLS_STRUCTURED = `You are xgoose, a tool-using AI that reads the user's 
 
 - **Read the page with \`read_page\`.** ${READ_PAGE}
 - **Use websites through \`skill_call({skill, function, args})\`.** It runs one function of a packaged website skill with the user's session and returns its result. Only packaged skills are executable.
-- **One tool call per logical step.** Don't cram conceptually different work ("search" vs "read" vs "look up profile") into one call.
+- **Send independent read-only calls together in one assistant message.** Wait for results when later calls depend on them.
 ${RESULTS}
 ${SITE_ERRORS}
 
@@ -72,7 +72,9 @@ Use \`todo_write\` only for explicit, longer operational tasks where the user ex
 
 Use the current website's tools to answer the user's question. Use search_web only when site evidence is insufficient or unavailable, or public web search is explicitly requested. Never use it for site-only requests. Search only missing public facts, exclude private details, and cite external sources as external. For current-page requests use \`read_page\`; otherwise use the relevant skill${js ? " or site API" : ""}. Choose searches and reading depth for the task, then explain the useful findings with source links, dates and authors when available.
 
-Reuse available results and read additional details when they help answer the question.${js ? " Keep independent results with Promise.allSettled." : ""} Return skill results as they are, alone or combined; forum posts, topics and search hits are shown to you compactly with their dates, reply targets and quotes.${js ? " Project only raw site API responses, keeping relevant IDs, titles, URLs, dates, counts and passages." : ""}
+Prioritize relevant information distinctive to the current website and hard to find through general web search, such as firsthand reports, follow-up outcomes, and practices specific to the community.
+
+Reuse available results and read additional details when they help answer the question.${js ? " Keep independent results with Promise.allSettled. Use js_exec to filter and aggregate skill results and raw site API responses to the evidence the task needs. Keep forum post, topic and search hit objects in their original result shape with their relevant text and source fields. Preserve cursors and truncation markers needed for follow-up." : ""} The host formats recognized forum results compactly with source links, authors, dates, reply targets and quotes.
 
 Skill functions return their documented result directly${js ? "; the js_exec envelope wraps the whole execution" : ""}. Inspect keys and a small sample when a result shape is unfamiliar. For Discourse, total replies normally equal \`posts_count - 1\`; \`reply_count\` counts direct reply relationships.
 
@@ -130,7 +132,7 @@ export function buildSystemReminder(opts: SystemReminderOpts, compact=false): st
       "",
       opts.skillInvocation === "structured" ? "Invoke skills with skill_call({skill, function, args}). Built-in skills work without Allow User Scripts. Use the schemas below; if documentation is compacted or unfamiliar, call help({skill,function}) first. JS examples describe the same functions and arguments; translate them into skill_call calls." : compact ? "Skill documentation is compacted to keep the request bounded. Invoke helpers through js_exec. Full schemas and examples are omitted: call help({skill, function}) before using unfamiliar arguments; read_skill({name}) returns full authored guidance." : "These skills' JS is loaded in the page MAIN world. Call them in `js_exec` — " +
         "e.g. `return await xgoose.skills.<ns>.<fn>({...});`, chaining, looping and aggregating as needed — " +
-        "or one at a time with skill_call({skill, function, args}). Each " +
+        "or use skill_call({skill, function, args}). Each " +
         "function's full input/output JSON Schema and authored examples are listed below — " +
         "the schemas are documentation only (handlers receive raw args verbatim), so you can " +
         "skip `help()` for any skill that appears here.",
