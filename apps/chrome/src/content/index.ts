@@ -322,7 +322,7 @@ async function bootstrap(): Promise<void> {
     priorText: string;
     toolNames: Map<string, string>;
     toolInputs: Map<string, unknown>;
-    toolOutputs: Map<string, { output?: unknown; error?: string; resultId?: string }>;
+    toolOutputs: Map<string, CapturedToolOutput>;
     navigatedTo: string | null;
   };
   let inFlight: InFlightTurn | null = null;
@@ -1710,11 +1710,13 @@ function extractNavigatedUrl(output: unknown): string | null {
 // can hand us its own `response.messages` array. Returns the synthesised
 // messages so the caller can push them onto its own conversation array
 // (the array lives in the closure of bootstrap()).
+type CapturedToolOutput = { output?: unknown; error?: string; resultId?: string };
+
 function buildCapturedAssistantTurn(args: {
   text: string;
   toolNames: Map<string, string>;
   toolInputs: Map<string, unknown>;
-  toolOutputs: Map<string, { output?: unknown; error?: string; resultId?: string }>;
+  toolOutputs: Map<string, CapturedToolOutput>;
 }): any[] {
   const { text, toolNames, toolInputs, toolOutputs } = args;
   const out: any[] = [];
@@ -1733,28 +1735,21 @@ function buildCapturedAssistantTurn(args: {
   }
   const toolContent: any[] = [];
   for (const [callId, res] of toolOutputs) {
-    const name = toolNames.get(callId) ?? "tool";
+    let output: ReturnType<typeof normalizeToolOutput>;
     if (res.error !== undefined) {
-      // v5 schema has no `tool-error` part — errors live inside a
-      // `tool-result` whose `output` is `{ type: 'error-text', value }`.
-      toolContent.push({
-        type: "tool-result",
-        toolCallId: callId,
-        toolName: name,
-        resultId: res.resultId,
-        output: { type: "error-text", value: String(res.error) },
-      });
+      output = { type: "error-text", value: res.error };
+    } else if (res.resultId) {
+      output = { type: "json", value: res.output };
     } else {
-      // Stream's raw `tool-result.output` value (a string / object / etc.)
-      // must be wrapped into the v5 `{ type, value }` discriminated union.
-      toolContent.push({
-        type: "tool-result",
-        toolCallId: callId,
-        toolName: name,
-        resultId: res.resultId,
-        output: res.resultId ? { type: "json", value: res.output } : normalizeToolOutput(res.output),
-      });
+      output = normalizeToolOutput(res.output);
     }
+    toolContent.push({
+      type: "tool-result",
+      toolCallId: callId,
+      toolName: toolNames.get(callId) ?? "tool",
+      resultId: res.resultId,
+      output,
+    });
   }
   if (toolContent.length) {
     out.push({ role: "tool", content: toolContent });

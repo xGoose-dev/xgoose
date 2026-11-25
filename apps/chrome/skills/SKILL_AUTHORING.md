@@ -103,20 +103,11 @@ Schemas are documentation. The runtime passes the agent's raw arguments to the h
 
 ---
 
-## Dehydration: what the model sees of a result
+## Tool result data
 
-The handler's return value is kept intact in the local history and transcript. The model gets a projection of it:
+The model sees the same JSON fields and types that the agent can access by Result ID. Large results show a preview. The agent can use `result_transform` with the ID to filter or aggregate the complete tool output in the current conversation. Keep pagination and truncation fields in the returned data so the agent knows when it needs another page.
 
-1. **`websiteEvidence`** turns recognised shapes into one compact line per item (also inside arrays, objects and `Promise.allSettled` entries, up to four levels deep):
-   - **Forum thread** — `{url, posts: [{post_number, username, created_at, like_count, reactions: [{id, count}], reply_to_post_number, reply_to_username, text, text_truncated, next_text_offset}]}` becomes `#68 @LeeKuanYew 2026-10-26 ♥3 :troll:×2 ↩@Rummy#66: text`. The date is shown when it changes; the reply target is omitted when it is the line directly above.
-   - **Search** — `{topics: [{id, title, posts_count, views, like_count, created_at, last_posted_at, tags}], posts: [{topic_id, post_number, username, created_at, like_count, blurb}]}`.
-   - **Topic list** — `{topic_list: {topics: [...]}}`.
-
-   A thread is recognised when every post has an integer `post_number` and a string `text`; other per-post fields are not shown (post links come from a `post_url` template). Top-level fields stay as JSON beside the lines, minus noise (`status: 'ok'`, empty arrays, nulls). If your data is a thread, a search or a list, return these field names and the compaction is free.
-2. **Images** in the `{type: 'image', ...}` shape become image parts (see *Images*).
-3. **Size bound.** A result larger than about 15% of the model's context window (at least 60 KB) is stored; the model gets its shape, a preview and a handle to read it with `js_exec`. Design results so this never happens on a normal call.
-
-Every other shape reaches the model as the JSON you return, so the skill does the dehydrating:
+Image bytes become model attachments with metadata in the JSON (see *Images*). Keep each response focused on fields the agent uses:
 
 - **Return what an answer uses**: IDs, titles, URLs or a URL template, authors, dates, counts, amounts with currency, and the text. Use the site's identifiers so the agent can call the next function.
 - **Drop everything else**: avatars, user tables, raw HTML, CSS classes, tracking fields, duplicated values, internal flags, nulls.

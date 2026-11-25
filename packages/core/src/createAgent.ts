@@ -1,7 +1,7 @@
 import {requestContextTokens,estimateTextTokens} from './contextTokens';
 import {requestTextBytes,textBytes,clipBytes,textChunks,omitImageBytes,modelOnlyMessage,collapsedSystem,excerptSummary} from "./contextWindow";
 import {inputTokenBudget,requestByteBudget,OUTPUT_RESERVE_TOKENS} from './contextPolicy';
-import {modelResultText, setResultBudget, ToolResultStore} from './resultStore';
+import {modelResultText, setResultBudget, ToolResultStore, withoutPreviewHandle} from './resultStore';
 import {resultImageParts} from './resultImages';
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { Agent, type AgentMessage, type StreamFn, type AgentContext } from "@earendil-works/pi-agent-core";
@@ -37,7 +37,7 @@ export interface CreateAgentOpts {
   shouldYield?: () => boolean;
 }
 export type AgentBundle = { agent: PageAgentRuntime; tools: Record<string, XgooseBuiltTool> };
-type ReferencedToolMessage = Extract<AgentMessage, { role: "toolResult" }> & { resultId?: string };
+type ReferencedToolMessage = Extract<AgentMessage, { role: "toolResult" }> & { resultId?: string; resultPresented?: true };
 const LENGTH_CONTINUATION = "Your previous reply was cut off by the output limit. Continue exactly where it stopped, without repeating earlier text.";
 const emptyUsage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
 function capContextImages(messages:AgentMessage[]):AgentMessage[] {
@@ -59,7 +59,20 @@ export function toPiMessages(messages: ChatMessage[], model: Model<Api>): AgentM
     if (m.role === "user") return [{ role: "user", content, timestamp: m.timestamp ?? Date.now() }];
     if (m.role === "system") return [{ role: "system", content: typeof m.content === "string" ? m.content : content.map((p: any) => p.text ?? "").join("\n"),timestamp:m.timestamp??0 } as AgentMessage];
     if (m.role === "assistant") return [{ role: "assistant", content: content.map((p: any) => p.type === "tool-call" ? { type: "toolCall", id: p.toolCallId, name: p.toolName, arguments: p.input, ...(p.thoughtSignature ? {thoughtSignature:p.thoughtSignature} : {}) } : p.type === "reasoning" ? { type: "thinking", thinking: p.text, ...(p.thinkingSignature ? {thinkingSignature:p.thinkingSignature} : {}) } : p), api: m.api ?? model.api, provider: m.provider ?? model.provider, model: m.model ?? model.id, usage: emptyUsage(), stopReason: "stop", timestamp: m.timestamp ?? Date.now() } as AssistantMessage];
-    if (m.role === "tool") return content.map((p: any): ReferencedToolMessage => ({ role: "toolResult", toolCallId: p.toolCallId, toolName: p.toolName, resultId: p.resultId ?? p.toolCallId, content: [{ type: "text", text: typeof p.output?.value === "string" ? p.output.value : JSON.stringify(savedToolValue(p.output)) },...(p.images??[])], isError: p.output?.type === "error-text", timestamp: m.timestamp ?? Date.now() }));
+    if (m.role === "tool") {
+      return content.map((part: any): ReferencedToolMessage => {
+        const { value, isError } = readSavedToolOutput(part.output);
+        return {
+          role: "toolResult",
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          resultId: part.resultId ?? part.toolCallId,
+          content: [{ type: "text", text: typeof value === "string" ? value : jsonToolValue(value) }, ...(part.images ?? [])],
+          isError,
+          timestamp: m.timestamp ?? Date.now(),
+        };
+      });
+    }
     return [];
   });
 }
@@ -71,18 +84,42 @@ export function fromPiMessages(messages: AgentMessage[], forModel = false): Chat
       const { resultId } = m as ReferencedToolMessage;
       const value = !forModel && !m.isError && m.details !== undefined
         ? m.details : toolMessageText(m, true);
-      return [{ role: "tool", content: [{ type: "tool-result", toolCallId: m.toolCallId, toolName: m.toolName, ...(resultId ? { resultId } : {}), output: { type: m.isError ? "error-text" : "json", value },...(m.content.some(p=>p.type==='image')?{images:m.content.filter(p=>p.type==='image')}:{}) }] }];
+      const images = m.content.filter(part => part.type === "image");
+      return [{ role: "tool", content: [{
+        type: "tool-result",
+        toolCallId: m.toolCallId,
+        toolName: m.toolName,
+        ...(resultId ? { resultId } : {}),
+        ...(forModel ? { modelOnly: true } : {}),
+        output: { type: m.isError ? "error-text" : "json", value },
+        ...(images.length ? { images } : {}),
+      }] }];
     }
     return [];
   });
 }
 
-function savedToolValue(output: any): unknown {
-  return output && typeof output === "object" && Object.hasOwn(output, "value") ? output.value : output ?? null;
+function readSavedToolOutput(output: unknown): { value: unknown; isError: boolean } {
+  if (output && typeof output === "object") {
+    const envelope = output as { type?: unknown; value?: unknown };
+    const isError = envelope.type === "error-text" || envelope.type === "error-json";
+    const isEnvelope = isError || envelope.type === "json" || envelope.type === "text" || envelope.type === "content" || envelope.type === "execution-denied";
+    if (isEnvelope) return { value: Object.hasOwn(envelope, "value") ? envelope.value : output, isError };
+  }
+  return { value: output ?? null, isError: false };
+}
+
+function jsonToolValue(value: unknown): string {
+  return JSON.stringify(value) ?? "null";
 }
 
 function toolMessageText(message: Pick<ReferencedToolMessage, "content">, includeImageMarkers = false): string {
-  return message.content.map(part => part.type === "text" ? part.text : includeImageMarkers ? "[image]" : null).filter(part => part !== null).join("\n");
+  const lines: string[] = [];
+  for (const part of message.content) {
+    if (part.type === "text") lines.push(part.text);
+    else if (includeImageMarkers) lines.push("[image]");
+  }
+  return lines.join("\n");
 }
 
 function restoreToolResults(history: ChatMessage[]): ToolResultStore {
@@ -90,8 +127,12 @@ function restoreToolResults(history: ChatMessage[]): ToolResultStore {
   for (const message of history) {
     if (!Array.isArray(message.content)) continue;
     for (const part of message.content) {
-      if (part?.type !== "tool-result" || !part.toolCallId) continue;
-      results.add({ resultId: part.resultId ?? part.toolCallId, toolName: part.toolName, value: savedToolValue(part.output), isError: part.output?.type?.startsWith("error-") ?? false });
+      if (part?.type !== "tool-result" || !part.toolCallId || part.modelOnly) continue;
+      results.add({
+        resultId: part.resultId ?? part.toolCallId,
+        toolName: part.toolName,
+        ...readSavedToolOutput(part.output),
+      });
     }
   }
   return results;
@@ -99,24 +140,32 @@ function restoreToolResults(history: ChatMessage[]): ToolResultStore {
 
 function presentToolResult(message: AgentMessage, results: ToolResultStore): AgentMessage {
   if (message.role !== "toolResult") return message;
-  const id = (message as ReferencedToolMessage).resultId;
-  const result = id ? results.get(id) : undefined;
-  const display = modelOnlyMessage(message);
-  if (!result) return display;
-  const reference = `Result ID: ${JSON.stringify(result.resultId)}`;
-  const text = toolMessageText(message);
-  if (text.endsWith(`\n${reference}`) || text === reference) return display;
-  const [value, ...attachments] = message.content;
-  if (value?.type !== "text") return display;
-  return {
-    ...message,
-    details: undefined,
-    content: [
-      { type: "text", text: modelResultText(result.value, value.text, result.resultId) },
-      ...attachments,
-      { type: "text", text: reference },
-    ],
-  };
+  const { details, resultId, ...display } = message as ReferencedToolMessage;
+  if (display.resultPresented) return message;
+  const presented: ReferencedToolMessage = { ...display, resultPresented: true };
+  const [data, ...attachments] = message.content;
+  const result = resultId ? results.get(resultId) : undefined;
+  if (!result) {
+    if (data?.type === "text") {
+      presented.content = [{ ...data, text: withoutPreviewHandle(data.text, resultId) }, ...attachments];
+    }
+    return presented;
+  }
+  let text: string;
+  if (details !== undefined && data?.type === "text") {
+    text = data.text;
+  } else if (result.isError && typeof result.value === "string") {
+    text = result.value;
+  } else {
+    text = jsonToolValue(result.value);
+  }
+  presented.resultId = result.resultId;
+  presented.content = [
+    { type: "text", text: modelResultText(result.value, text, result.resultId) },
+    ...attachments,
+    { type: "text", text: `Result ID: ${JSON.stringify(result.resultId)}` },
+  ];
+  return presented;
 }
 
 class EventQueue implements AsyncIterable<RuntimeEvent> {
@@ -323,7 +372,7 @@ export class PageAgentRuntime {
             });
             signal?.throwIfAborted();
             const parts = def.resultAttachments?.(output, parsed) ?? resultImageParts(output);
-            const text = typeof output === "string" ? output : JSON.stringify(output) ?? "null";
+            const text = jsonToolValue(output);
             return {
               content: [{ type: "text" as const, text }, ...parts.map(part => part.type === "text" ? part : { type: "image" as const, data: part.data, mimeType: part.mediaType })],
               details: typeof output === "string" ? output : JSON.parse(text),

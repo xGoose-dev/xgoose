@@ -1,8 +1,8 @@
-import { search } from "jmespath";
+import { search } from "@jmespath-community/jmespath";
 import { z } from "zod";
-import { defineTool } from "./buildTool";
+import { defineTool, type XgooseBuiltTool } from "./buildTool";
 
-export function createResultTransformTool() {
+export function createResultTransformTool(): XgooseBuiltTool {
   return defineTool({
     name: "result_transform",
     description: "Transform complete results from earlier tool calls locally using JMESPath. Bind each result ID to a name in sources and reference it in the expression. For example, {sources:{thread:'<result ID>'}, expression:'{count: length(thread.posts), authors: thread.posts[].username}'}. Use this to select, filter, sort, combine or aggregate data without repeating source calls. Call with {} to list result IDs, or pass only an expression to filter or slice that list.",

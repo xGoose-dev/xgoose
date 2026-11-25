@@ -81,6 +81,25 @@ export function modelResultText(value: unknown, text: string, id: string, pageHa
   });
 }
 
+/** Keep saved preview evidence when its full result is unavailable. */
+export function withoutPreviewHandle(text: string, id?: string): string {
+  const marker = `Result ID: ${JSON.stringify(id)}`;
+  if (id && text === marker) return "";
+  const evidence = id && text.endsWith(`\n${marker}`) ? text.slice(0, -marker.length - 1) : text;
+  if (!evidence.startsWith('{"oversized":true,')) return evidence;
+  const newline = evidence.indexOf("\n");
+  const end = newline < 0 ? evidence.length : newline;
+  try {
+    const { resultId, next: _next, ...preview } = JSON.parse(evidence.slice(0, end));
+    if (typeof resultId === "string" && typeof preview.preview === "string" && typeof preview.sizeBytes === "number") {
+      return JSON.stringify(preview) + evidence.slice(end);
+    }
+  } catch {
+    // A partial excerpt may no longer contain a complete preview envelope.
+  }
+  return evidence;
+}
+
 /** Handles results produced by host actions outside the agent tool loop. */
 export function boundedModelText(value: unknown, text: string, opts: { id?: string; pageHandle?: boolean } = {}): string {
   const id = opts.id ?? Math.random().toString(36).slice(2, 10);
