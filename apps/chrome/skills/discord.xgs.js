@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discord
 // @namespace    discord
-// @version      0.1.7
+// @version      0.1.8
 // @description  Search Discord messages using the signed-in web client; read channels, threads, message context, attachments and profiles.
 // @match        https://discord.com/*
 // @match        https://canary.discord.com/*
@@ -52,11 +52,18 @@ async function get(path, query = {}) {
     for (const item of Array.isArray(value) ? value : [value]) url.searchParams.append(key,String(item));
   }
   const response = await fetch(url.href,{method:'GET',credentials:'include',headers,redirect:'error'});
+  if (response.status === 429) {
+    const retryAfter = response.headers.get('retry-after');
+    const seconds = Number(retryAfter);
+    const retryMs = retryAfter && Number.isFinite(seconds)
+      ? seconds * 1000
+      : Date.parse(retryAfter) - Date.now();
+    blockedUntil = Math.max(blockedUntil, Date.now() + Math.max(1000, retryMs || 0));
+  }
   const body = await response.json();
   if (response.status === 429) {
-    const header = response.headers.get('retry-after');
-    const retryMs = Number(body.retry_after ?? header ?? 1) * 1000;
-    blockedUntil = Math.max(blockedUntil, Date.now() + retryMs);
+    const seconds = Number(body.retry_after);
+    if (Number.isFinite(seconds)) blockedUntil = Math.max(blockedUntil, Date.now() + seconds * 1000);
   }
   if (!response.ok) throw Object.assign(new Error(`Discord HTTP ${response.status}: ${body.message ?? JSON.stringify(body)}`),{status:response.status,body});
   if (response.status === 202) return {indexing:true,retry_after:body.retry_after,payload:body};

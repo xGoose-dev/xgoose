@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name realtor
 // @namespace realtor
-// @version 0.1.2
+// @version 0.1.3
 // @description realtor.com property search and details using the current website session.
 // @match *://www.realtor.com/*
 // @match *://realtor.com/*
@@ -20,16 +20,18 @@ import { fn } from "@xgoose/skill";
 import { z } from "zod";
 var empty = z.object({});
 var urlInput = z.object({ url: z.string().optional() });
-var startTail = Promise.resolve();
-var lastStart;
+var requestStarts = globalThis[Symbol.for("xgoose.real-estate.request-starts")] ??= {
+  tail: Promise.resolve(),
+  last: globalThis.webagent?.skills?.zillow?.__limiter?.lastStart || void 0
+};
 function waitForRequestStart({ minGapMs = 1e3, jitterMs = 0 } = {}) {
-  const start = startTail.then(async () => {
-    const gap = lastStart === void 0 ? 0 : Math.max(0, lastStart + minGapMs - Date.now());
+  const start = requestStarts.tail.then(async () => {
+    const gap = requestStarts.last === void 0 ? 0 : Math.max(0, requestStarts.last + minGapMs - Date.now());
     const jitter = minGapMs > 0 ? Math.floor(Math.random() * jitterMs) : 0;
     if (gap + jitter > 0) await new Promise((resolve) => setTimeout(resolve, gap + jitter));
-    lastStart = Date.now();
+    requestStarts.last = Date.now();
   });
-  startTail = start;
+  requestStarts.tail = start;
   return start;
 }
 async function request(url) {

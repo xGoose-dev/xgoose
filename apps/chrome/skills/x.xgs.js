@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         x
 // @namespace    x
-// @version      0.2.8
+// @version      0.2.9
 // @description  Search and read posts, conversations, profiles and timelines with X’s browser-session GraphQL API.
 // @match        https://x.com/*
 // @match        https://www.x.com/*
@@ -197,7 +197,14 @@ function createClient(site, policy, allowed) {
       state.times.push(start); save();
     };
     // Reserve request starts serially. Network I/O runs after releasing the lock.
-    if (globalThis.navigator?.locks) return navigator.locks.request(key, operation);
+    if (globalThis.navigator?.locks) {
+      try {
+        return await navigator.locks.request(key, { signal }, operation);
+      } catch (error) {
+        if (signal?.aborted) throw fault('aborted', 'Request cancelled.');
+        throw error;
+      }
+    }
     const start = (state.startTail ??= Promise.resolve()).then(operation, operation);
     state.startTail = start;
     return start;
@@ -209,13 +216,19 @@ function createClient(site, policy, allowed) {
     const ttl = options.ttl ?? 30000;
     const cached = state.cache.get(cacheKey);
     if (ttl && cached?.until > Date.now()) return Promise.resolve(structuredClone(cached.value));
-    if (ttl && state.pending.has(cacheKey)) return state.pending.get(cacheKey).then(structuredClone);
+    if (ttl && state.pending.has(cacheKey)) {
+      return state.pending.get(cacheKey).then(structuredClone, error => {
+        // A cancelled leader can release the request for a still-active caller.
+        if (error.code === 'aborted' && !options.signal?.aborted) return request(input, options);
+        throw error;
+      });
+    }
     state.queued++;
     const start = reserve(options.signal).finally(() => { state.queued--; });
     const run = start.then(async () => {
       const controller = new AbortController();
       const abort = () => controller.abort();
-      if (options.signal?.aborted) abort();
+      if (options.signal?.aborted) throw fault('aborted', 'Request cancelled.');
       options.signal?.addEventListener('abort', abort, { once: true });
       const timer = setTimeout(abort, 15000);
       try {
@@ -244,6 +257,9 @@ function createClient(site, policy, allowed) {
           state.cache.set(cacheKey, { value, until: Date.now() + ttl });
         }
         return structuredClone(value);
+      } catch (error) {
+        if (options.signal?.aborted) throw fault('aborted', 'Request cancelled.');
+        throw error;
       } finally {
         clearTimeout(timer); options.signal?.removeEventListener('abort', abort);
       }
@@ -483,10 +499,18 @@ function requestFromLoadedClient(operation, changes) {
 async function query(operation,changes={},a={}) {
   if(!operations.includes(operation))throw fault('invalid_operation','Only explicitly allowlisted read operations are available.');
   const csrf = cookie('ct0');
-  const request = csrf && jsonPostReads.has(operation)
-    ? requestFromLoadedClient(operation, changes)
-    : capturedRequest(operation, changes);
-  if (!request) throw fault('operation_not_observed', 'Open the matching X page to observe its ' + operation + ' request.');
+  let request;
+  let unavailable;
+  if (csrf && jsonPostReads.has(operation)) {
+    try {
+      request = requestFromLoadedClient(operation, changes);
+    } catch (error) {
+      if (error.code !== 'operation_not_observed') throw error;
+      unavailable = error;
+    }
+  }
+  request ??= capturedRequest(operation, changes);
+  if (!request) throw unavailable ?? fault('operation_not_observed', 'Open the matching X page to observe its ' + operation + ' request.');
   const {url, headers, method, body} = request;
   if (csrf) headers.set('x-csrf-token', csrf);
   const data=await client.request(url.href,{headers,method,body,signal:a.signal,ttl:0});
@@ -507,7 +531,7 @@ function nativePage(operation, variables, missing) {
   }
   if (!url) throw fault('operation_not_observed', 'Open the matching X page to observe its ' + operation + ' request.');
   return {status:'navigation_required', operation, url:url.href, ...(missing ? {missing} : {}),
-    instruction:'Keep this tab open. Use spawn_agent with this URL in a background tab. Ask the peer to call x.readObserved with the same operation and variables and return the API result. Use wait_agents to retrieve it. The peer should report failure if X remains unavailable.'};
+    instruction:'Open this URL in another tab and call x.readObserved there with the same operation and variables. With peer tools, spawn_agent can open the tab and wait_agents can retrieve the result.'};
 }
 
 async function readX(operation, variables, options) {

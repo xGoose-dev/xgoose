@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        zillow
 // @namespace   zillow
-// @version     0.2.2
+// @version     0.2.3
 // @description Zillow search-results scraper. Reads listings, region info, filters, and pagination from the page's hydrated `__NEXT_DATA__` blob. Includes session SSR searches and property detail/history reads.
 // @match       *://www.zillow.com/*
 // @match       *://zillow.com/*
@@ -33,16 +33,18 @@ import { fn } from "@xgoose/skill";
 import { z } from "zod";
 var empty = z.object({});
 var urlInput = z.object({ url: z.string().optional() });
-var startTail = Promise.resolve();
-var lastStart;
+var requestStarts = globalThis[Symbol.for("xgoose.real-estate.request-starts")] ??= {
+  tail: Promise.resolve(),
+  last: globalThis.webagent?.skills?.zillow?.__limiter?.lastStart || void 0
+};
 function waitForRequestStart({ minGapMs = 1e3, jitterMs = 0 } = {}) {
-  const start = startTail.then(async () => {
-    const gap = lastStart === void 0 ? 0 : Math.max(0, lastStart + minGapMs - Date.now());
+  const start = requestStarts.tail.then(async () => {
+    const gap = requestStarts.last === void 0 ? 0 : Math.max(0, requestStarts.last + minGapMs - Date.now());
     const jitter = minGapMs > 0 ? Math.floor(Math.random() * jitterMs) : 0;
     if (gap + jitter > 0) await new Promise((resolve) => setTimeout(resolve, gap + jitter));
-    lastStart = Date.now();
+    requestStarts.last = Date.now();
   });
-  startTail = start;
+  requestStarts.tail = start;
   return start;
 }
 async function request(url) {
@@ -215,7 +217,9 @@ function mergeConfig(base, patch) {
   };
 }
 __name(mergeConfig, "mergeConfig");
-var rateLimit = DEFAULT_LIMIT;
+var rateLimit = globalThis[Symbol.for("xgoose.zillow.rate-limit")] ??= {
+  config: mergeConfig(DEFAULT_LIMIT, globalThis.webagent?.skills?.zillow?.__limiter?.getConfig?.())
+};
 var NEXT_DATA_RE = /<script[^>]+id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/;
 var PX_DENY_RE = /Access to this page has been denied|px-captcha/i;
 var STATUS_TYPES = /* @__PURE__ */ new Set(["FOR_RENT", "FOR_SALE", "SOLD", "PENDING"]);
@@ -469,7 +473,7 @@ async function searchByPath(params) {
   const target = injectPageSegment(params.urlPath, params.page);
   const url = absolutize(target);
   for (let attempt = 0; ; attempt++) {
-    await waitForRequestStart(mergeConfig(rateLimit, params.rateLimit));
+    await waitForRequestStart(mergeConfig(rateLimit.config, params.rateLimit));
     const r = await fetch(url, {
       method: "GET",
       credentials: "include",
@@ -495,11 +499,11 @@ async function searchByPath(params) {
 }
 __name(searchByPath, "searchByPath");
 function setRateLimit(config) {
-  rateLimit = mergeConfig(rateLimit, config);
+  rateLimit.config = mergeConfig(rateLimit.config, config);
 }
 __name(setRateLimit, "setRateLimit");
 function getRateLimit() {
-  return { ...rateLimit };
+  return { ...rateLimit.config };
 }
 __name(getRateLimit, "getRateLimit");
 function buildSearchUrl(params) {

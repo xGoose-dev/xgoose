@@ -207,7 +207,14 @@ function createClient(site, policy, allowed) {
       state.times.push(start); save();
     };
     // Reserve request starts serially. Network I/O runs after releasing the lock.
-    if (globalThis.navigator?.locks) return navigator.locks.request(key, operation);
+    if (globalThis.navigator?.locks) {
+      try {
+        return await navigator.locks.request(key, { signal }, operation);
+      } catch (error) {
+        if (signal?.aborted) throw fault('aborted', 'Request cancelled.');
+        throw error;
+      }
+    }
     const start = (state.startTail ??= Promise.resolve()).then(operation, operation);
     state.startTail = start;
     return start;
@@ -219,13 +226,19 @@ function createClient(site, policy, allowed) {
     const ttl = options.ttl ?? 30000;
     const cached = state.cache.get(cacheKey);
     if (ttl && cached?.until > Date.now()) return Promise.resolve(structuredClone(cached.value));
-    if (ttl && state.pending.has(cacheKey)) return state.pending.get(cacheKey).then(structuredClone);
+    if (ttl && state.pending.has(cacheKey)) {
+      return state.pending.get(cacheKey).then(structuredClone, error => {
+        // A cancelled leader can release the request for a still-active caller.
+        if (error.code === 'aborted' && !options.signal?.aborted) return request(input, options);
+        throw error;
+      });
+    }
     state.queued++;
     const start = reserve(options.signal).finally(() => { state.queued--; });
     const run = start.then(async () => {
       const controller = new AbortController();
       const abort = () => controller.abort();
-      if (options.signal?.aborted) abort();
+      if (options.signal?.aborted) throw fault('aborted', 'Request cancelled.');
       options.signal?.addEventListener('abort', abort, { once: true });
       const timer = setTimeout(abort, 15000);
       try {
@@ -254,6 +267,9 @@ function createClient(site, policy, allowed) {
           state.cache.set(cacheKey, { value, until: Date.now() + ttl });
         }
         return structuredClone(value);
+      } catch (error) {
+        if (options.signal?.aborted) throw fault('aborted', 'Request cancelled.');
+        throw error;
       } finally {
         clearTimeout(timer); options.signal?.removeEventListener('abort', abort);
       }

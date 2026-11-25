@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         amex-dashboard
 // @namespace    amexd
-// @version      0.1.2
+// @version      0.1.3
 // @description  American Express dashboard automation. List/sort/search/claim Amex Offers across every card on the account, query enrolled offers by category, read benefit trackers and balances. API-driven (no DOM clicks).
 // @match        *://global.americanexpress.com/*
 // @detect       location.hostname === 'global.americanexpress.com'
@@ -793,6 +793,8 @@ function summarize(cards, offers) {
   };
 }
 
+const batchSizeInput = z.number().int().positive().optional().describe('Choose how many cards to read together per batch.');
+
 export default defineSkill({
   getDashboard: fn({
     summary:
@@ -815,7 +817,7 @@ export default defineSkill({
         .optional()
         .describe('Substrings to skip in merchant name (case-insensitive). e.g. ["dell"]'),
       throttleMs: z.number().int().min(0).max(10000).optional(),
-      batchSize: z.number().int().positive().optional().describe("Choose how many cards to read together per batch."),
+      batchSize: batchSizeInput,
     }),
     examples: [
       { args: {} },
@@ -835,8 +837,8 @@ export default defineSkill({
       if (args.includeBenefits) {
         const trackers = await inBatches(
           cards.filter(isAccountActive),
-          DEFAULTS.fetchBatchSize,
-          DEFAULTS.fetchBatchDelayMs,
+          args.batchSize ?? DEFAULTS.fetchBatchSize,
+          args.throttleMs ?? DEFAULTS.fetchBatchDelayMs,
           async (c) => ({
             account_token: c.account_token,
             cardEnding: c.cardEnding,
@@ -906,7 +908,7 @@ export default defineSkill({
         .optional(),
       sortOrder: z.enum(['asc', 'desc']).optional(),
       throttleMs: z.number().int().min(0).max(10000).optional(),
-      batchSize: z.number().int().positive().optional().describe("Choose how many cards to read together per batch."),
+      batchSize: batchSizeInput,
     }),
     examples: [{ args: { sortBy: 'reward', sortOrder: 'desc' } }],
     handler: async (args = {}) => {
@@ -932,7 +934,7 @@ export default defineSkill({
       accountTokens: z.array(z.string()).optional(),
       groupBy: z.enum(['category', 'merchant', 'card', 'none']).optional(),
       throttleMs: z.number().int().min(0).max(10000).optional(),
-      batchSize: z.number().int().positive().optional().describe("Choose how many cards to read together per batch."),
+      batchSize: batchSizeInput,
     }),
     examples: [{ args: { groupBy: 'category' } }],
     handler: async (args = {}) => {
@@ -1032,6 +1034,7 @@ export default defineSkill({
         .enum(['reward', 'threshold', 'percentage', 'expiry_date', 'category', 'name', 'eligibleCount'])
         .optional(),
       sortOrder: z.enum(['asc', 'desc']).optional(),
+      batchSize: batchSizeInput,
     }),
     examples: [{ args: { query: 'hilton', status: 'eligible', sortBy: 'reward' } }],
     handler: async (args) => {
@@ -1039,7 +1042,7 @@ export default defineSkill({
       const { offers } = await refreshOffersAcrossCards({
         cards,
         throttleMs: DEFAULTS.fetchBatchDelayMs,
-        batchSize: DEFAULTS.fetchBatchSize,
+        batchSize: args.batchSize ?? DEFAULTS.fetchBatchSize,
       });
       const status = args.status || 'any';
       const filtered = offers.filter((o) => {
@@ -1063,6 +1066,7 @@ export default defineSkill({
         .enum(['reward', 'threshold', 'percentage', 'expiry_date', 'category', 'name', 'eligibleCount'])
         .optional(),
       sortOrder: z.enum(['asc', 'desc']).optional(),
+      batchSize: batchSizeInput,
     }),
     examples: [
       { args: { category: 'Dining', status: 'eligible' } },
@@ -1073,7 +1077,7 @@ export default defineSkill({
       const { offers } = await refreshOffersAcrossCards({
         cards,
         throttleMs: DEFAULTS.fetchBatchDelayMs,
-        batchSize: DEFAULTS.fetchBatchSize,
+        batchSize: args.batchSize ?? DEFAULTS.fetchBatchSize,
       });
       const status = args.status || 'any';
       const filtered = offers.filter((o) => {
@@ -1264,6 +1268,7 @@ export default defineSkill({
       'Platinum/Gold credit trackers per card via ReadBestLoyaltyBenefitsTrackers.v1. Returns BenefitRow[] = { benefitName, category, tracker.{targetAmount, spentAmount, remainingAmount}, periodEndDate, status }.',
     input: z.object({
       accountTokens: z.array(z.string()).optional(),
+      batchSize: batchSizeInput,
     }),
     examples: [{ args: {} }],
     handler: async (args = {}) => {
@@ -1273,7 +1278,7 @@ export default defineSkill({
         const want = new Set(args.accountTokens);
         cards = cards.filter((c) => want.has(c.account_token));
       }
-      return inBatches(cards, DEFAULTS.fetchBatchSize, DEFAULTS.fetchBatchDelayMs, async (c) => ({
+      return inBatches(cards, args.batchSize ?? DEFAULTS.fetchBatchSize, DEFAULTS.fetchBatchDelayMs, async (c) => ({
         account_token: c.account_token,
         cardEnding: c.cardEnding,
         description: c.description,
