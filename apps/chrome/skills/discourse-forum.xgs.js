@@ -59,41 +59,62 @@ async function csrfFetch(url, init = {}) {
 }
 
 const FORUM_READ_INTERVAL_MS = 1100;
-let forumReadStartQueue = Promise.resolve();
 let forumReadLastAt = 0;
 let forumReadBlockedUntil = 0;
+let forumReadTimerPending = false;
+const forumReadQueue = [];
 const forumReadPending = new Map();
-const activeForumReads = new Map();
+const activeForumReads = new Set();
 
 function getJson(url) {
   if (forumReadPending.has(url)) return forumReadPending.get(url);
   const topicId = url.match(/^\/t\/(\d+)(?=[./?]|$)|^\/posts\/by_number\/(\d+)\//)?.slice(1).find(Boolean) ?? null;
-  const start = forumReadStartQueue.then(async () => {
-    const blockedByActiveRead = () => topicId === null ? activeForumReads.size > 0
-      : activeForumReads.size >= 2 || activeForumReads.has(null) || activeForumReads.has(topicId);
-    while (forumReadBlockedUntil <= Date.now() && blockedByActiveRead()) {
-      await Promise.race(activeForumReads.values());
-    }
-    const now = Date.now();
-    const delay = forumReadLastAt + FORUM_READ_INTERVAL_MS - now;
-    if (forumReadBlockedUntil <= now && delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
-    const startedAt = Date.now();
-    if (forumReadBlockedUntil > startedAt) {
-      return {response: {status: 'rate_limited', httpStatus: 429, url, retry_after_ms: forumReadBlockedUntil - startedAt, message: 'Forum cooldown active. Continue after retry_after_ms; no request was sent.'}};
-    }
-    forumReadLastAt = startedAt;
-    const response = fetchForumJson(url);
-    const finished = () => { activeForumReads.delete(topicId); };
-    activeForumReads.set(topicId, response.then(finished, finished));
-    // The start queue advances while the response is still in flight.
-    return {response};
-  });
-  forumReadStartQueue = start.then(() => {}, () => {});
-  const pending = start.then(({response}) => response);
+  const pending = new Promise((resolve, reject) => forumReadQueue.push({url, topicId, resolve, reject}));
   forumReadPending.set(url, pending);
   const finished = () => { forumReadPending.delete(url); };
   pending.then(finished, finished);
+  drainForumReads();
   return pending;
+}
+
+function drainForumReads() {
+  if (!forumReadQueue.length) return;
+  const now = Date.now();
+  if (forumReadBlockedUntil > now) {
+    for (const {url, resolve} of forumReadQueue.splice(0)) {
+      resolve({status: 'rate_limited', httpStatus: 429, url, retry_after_ms: forumReadBlockedUntil - now,
+        message: 'Forum cooldown active. Continue after retry_after_ms; no request was sent.'});
+    }
+    return;
+  }
+  if (activeForumReads.size >= 2 || activeForumReads.has(null)) return;
+
+  // Skip busy topics while keeping non-topic reads exclusive and in queue order.
+  const index = forumReadQueue.findIndex(({topicId}) => !activeForumReads.has(topicId));
+  if (index === -1) return;
+  const {url, topicId, resolve, reject} = forumReadQueue[index];
+  if (topicId === null && activeForumReads.size > 0) return;
+
+  const delay = forumReadLastAt + FORUM_READ_INTERVAL_MS - now;
+  if (delay > 0) {
+    if (!forumReadTimerPending) {
+      forumReadTimerPending = true;
+      setTimeout(() => {
+        forumReadTimerPending = false;
+        drainForumReads();
+      }, delay);
+    }
+    return;
+  }
+
+  forumReadQueue.splice(index, 1);
+  forumReadLastAt = now;
+  activeForumReads.add(topicId);
+  fetchForumJson(url).then(resolve, reject).then(() => {
+    activeForumReads.delete(topicId);
+    drainForumReads();
+  });
+  drainForumReads();
 }
 
 async function fetchForumJson(url) {
@@ -695,7 +716,7 @@ export default defineSkill({
 - For independent reads of different topics, issue the readTopicPosts calls in the same assistant turn.
 - Use provided action-result first. Search snippets locate discussions; read bodies for content claims. Listing/count questions need the requested metadata only.
 - Check topic size before choosing reading depth. getTopic and getTopicPosts return five posts. Use readTopicPosts for larger ranges with a bounded limit; follow next_cursor sequentially. If expired, resume from next_post_number. Recover needed truncated text with fromPostNumber, limit:1 and textOffset:next_text_offset.
-- Return skill results as they are, alone or combined in an object or array (including Promise.allSettled). They reach you as one compact line per post with date, likes, other reactions, reply target (↩@user#floor) and inline quotes ([quote @user #floor: text]). Re-mapping posts or a small maxChars drops who is answering whom.
+- When filtering or combining results in js_exec, keep relevant posts in their original shape with text, post links, authors, dates, reactions, reply targets and quotes. Keep cursors and text offsets needed to continue reading.
 - Post text marks pictures as [image N]. When a screenshot, chart or photo matters to the answer, call readPostImages({topicId, postNumber, images:[N]}) to see it; skip decorative ones.
 - Summarize rather than quote whole threads. Describe outcomes, dates, amounts and relevant circumstances; include author, available likes and post links. Follow the user's scope and language.`,
   actions: [

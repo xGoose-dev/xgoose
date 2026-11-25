@@ -72,6 +72,8 @@ Use \`todo_write\` only for explicit, longer operational tasks where the user ex
 
 Use the current website's tools to answer the user's question. Use search_web only when site evidence is insufficient or unavailable, or public web search is explicitly requested. Never use it for site-only requests. Search only missing public facts, exclude private details, and cite external sources as external. For current-page requests use \`read_page\`; otherwise use the relevant skill${js ? " or site API" : ""}. Choose searches and reading depth for the task, then explain the useful findings with source links, dates and authors when available.
 
+Prioritize relevant information distinctive to the current website and hard to find through general web search, such as firsthand reports, follow-up outcomes, and practices specific to the community.
+
 Reuse available results and read additional details when they help answer the question.${js ? " Keep independent results with Promise.allSettled. Use js_exec to filter and aggregate skill results and raw site API responses to the evidence the task needs. Keep forum post, topic and search hit objects in their original result shape with their relevant text and source fields. Preserve cursors and truncation markers needed for follow-up." : ""} The host formats recognized forum results compactly with source links, authors, dates, reply targets and quotes.
 
 Skill functions return their documented result directly${js ? "; the js_exec envelope wraps the whole execution" : ""}. Inspect keys and a small sample when a result shape is unfamiliar. For Discourse, total replies normally equal \`posts_count - 1\`; \`reply_count\` counts direct reply relationships.
