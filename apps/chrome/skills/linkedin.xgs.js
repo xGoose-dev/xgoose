@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         linkedin
 // @namespace    linkedin
-// @version      0.3.6
+// @version      0.3.7
 // @description  LinkedIn profiles, company research, jobs, network, inbox, rich content and staged publishing, messaging and applications.
 // @match        https://www.linkedin.com/*
 // @match        https://linkedin.com/*
@@ -83,6 +83,7 @@ function fault(code, message, extra = {}) {
 }
 
 function safeUrl(value, base = globalThis.location?.href) {
+  if (typeof value !== 'string' || !value.trim()) return null;
   try {
     if (String(value).length > 4096) return null;
     const url = new URL(String(value), base);
@@ -131,8 +132,9 @@ function source(data, options = {}) {
   };
 }
 
-function result(sources = [], extra = {}) {
-  const output = { readerVersion: READER_VERSION, sources, ...extra };
+function result(sources = [], extra = {}, fullPayload = false) {
+  // The host uses readerVersion to compact source cards for the model.
+  const output = { ...(fullPayload ? {} : {readerVersion: READER_VERSION}), sources, ...extra };
   // Keep the envelope parseable under js_exec's 30 KB character cap. Truncating
   // whole JSON there would destroy source cards and continuation information.
   let size = JSON.stringify(output).length;
@@ -143,7 +145,7 @@ function result(sources = [], extra = {}) {
         s.text = s.text.slice(0, Math.max(100, Math.floor(s.text.length * 0.6)));
         s.complete = false; s.nextOffset = s.offset + s.text.length; changed = true;
       }
-      if (s.excerpt.length > 100) s.excerpt = s.excerpt.slice(0, 100);
+      if (s.excerpt?.length > 100) s.excerpt = s.excerpt.slice(0, 100);
     }
     size = JSON.stringify(output).length;
     if (!changed) break;
@@ -283,8 +285,14 @@ function createClient(site, policy, allowed) {
           typeof globalThis.__xgoose?.publicReaderFetch === 'function';
         const response = usePublicRelay ? await globalThis.__xgoose.publicReaderFetch(url.href, { signal: controller.signal }) : await fetch(url.href, {
           method, ...(options.body?{body:options.body}:{}), credentials: url.origin === location.origin ? 'include' : 'omit',
-          headers: options.headers, signal: controller.signal, redirect: 'error',
+          headers: options.headers, signal: controller.signal, redirect: options.followCanonical ? 'follow' : 'error',
         });
+        if (options.followCanonical && response.url) {
+          const canonical = new URL(response.url);
+          if (canonical.origin !== url.origin || !/^\/(?:company|school)\/[^/]+(?:\/(?:home|posts|about))?\/?$/.test(canonical.pathname)) {
+            throw fault('unexpected_redirect', 'LinkedIn redirected outside the organization page.');
+          }
+        }
         const retry = response.headers.get('retry-after');
         const reset = response.headers.get('x-rate-limit-reset') || response.headers.get('x-ratelimit-reset');
         const remaining = response.headers.get('x-rate-limit-remaining') ?? response.headers.get('x-ratelimit-remaining');
@@ -345,7 +353,9 @@ function credentialDialog(label, save) {
 // Static paths below are best-effort adapters; query IDs are only reused after
 // the current browser actually observes them. Never embed guessed GraphQL hashes.
 const client=createClient('linkedin',{minIntervalMs:2000,perMinute:15,perHour:120},u=>u.origin===location.origin&&
-  (u.pathname.startsWith('/voyager/api/')||u.pathname.startsWith('/jobs-guest/jobs/api/')||u.pathname==='/search/results/people/'||isSduiReadUrl(u)));
+  (u.pathname.startsWith('/voyager/api/')||u.pathname.startsWith('/jobs-guest/jobs/api/')||
+    u.pathname==='/jobs/search-results/'||/^\/search\/results\/(?:people|schools|companies)\/$/.test(u.pathname)||
+    /^\/(?:company|school)\/[^/]+\/$/.test(u.pathname)||isSduiReadUrl(u)));
 const paging={start:offset,count:count(10,20)};
 const slug=z.string().regex(/^[a-zA-Z0-9_%.-]{1,150}$/);
 const numericId=z.union([z.number().int().positive(),z.string().regex(/^\d+$/)]);
@@ -358,9 +368,9 @@ function voyagerHeaders() {
   if(!csrf) throw fault('login_required','LinkedIn Voyager requires this tab’s signed-in session. Public job reads and readCurrent remain available.');
   return {'csrf-token':csrf,'x-restli-protocol-version':'2.0.0',Accept:'application/vnd.linkedin.normalized+json+2.1'};
 }
-async function voyager(path,params={},a={}) {
+async function voyager(path,params={},a={},ttl=0) {
   return client.request(`/voyager/api/${path}?${new URLSearchParams(params)}`,{
-    headers:voyagerHeaders(),signal:a.signal,ttl:0,
+    headers:voyagerHeaders(),signal:a.signal,ttl,cacheScope:'session',
   });
 }
 function liSources(data,options={}) {
@@ -657,21 +667,55 @@ function parsedText(node) {
   if(node.nodeName==='#text')return node.value||'';
   return (node.childNodes||[]).map(parsedText).join(' ').replace(/\s+/g,' ').trim();
 }
-function jobCards(html,count) {
+function jobWorkplace(location) {
+  const label=location.match(/\((on-site|remote|hybrid)\)\s*$/i)?.[1].toLowerCase();
+  return label==='on-site'?'onsite':label;
+}
+function jobCards(html,count,args) {
   const root=parseFragment(html);
   const cards=parsedNodes(root,n=>n.tagName==='li').filter(card=>parsedNodes(card,n=>n.tagName==='a'&&parsedAttr(n,'href').includes('/jobs/view/')).length);
-  if(!cards.length && html.includes('/jobs/view/'))throw fault('unexpected_job_response','LinkedIn returned job links without readable job cards.');
+  if(!cards.length && html.trim() && !/no (?:matching )?(?:jobs|results)/i.test(parsedText(root)))throw fault('unexpected_job_response','LinkedIn returned a response without readable job cards.');
   return {total:cards.length,sources:cards.slice(0,count).map(card=>{
     const link=parsedNodes(card,n=>n.tagName==='a'&&parsedAttr(n,'href').includes('/jobs/view/'))[0];
     const title=parsedText(parsedNodes(card,n=>n.tagName==='h3')[0])||parsedText(link);
-    const company=parsedText(parsedNodes(card,n=>n.tagName==='h4')[0]);
+    const company=parsedNodes(card,n=>n.tagName==='h4')[0];
+    const companyRef=entityFromUrl(parsedAttr(parsedNodes(company,n=>n.tagName==='a')[0],'href'),'company')?.url;
+    const jobLocation=parsedText(parsedNodes(card,n=>parsedAttr(n,'class').split(/\s+/).includes('job-search-card__location'))[0]);
     const urn=parsedAttr(parsedNodes(card,n=>!!parsedAttr(n,'data-entity-urn'))[0],'data-entity-urn');
     const id=urn.match(/jobPosting:(\d+)/)?.[1]||parsedAttr(link,'href').split('?')[0].match(/(?:\/|\-)(\d+)\/?$/)?.[1];
-    return source({id,kind:'job',title,
-      url:parsedAttr(link,'href').split('?')[0],author:company,text:parsedText(card),publishedAt:parsedAttr(parsedNodes(card,n=>n.tagName==='time')[0],'datetime'),
+    const workplace=jobWorkplace(jobLocation);
+    const item=searchCard({id,kind:'job',title,
+      url:parsedAttr(link,'href').split('?')[0],author:parsedText(company),text:parsedText(card),
+      publishedAt:parsedAttr(parsedNodes(card,n=>n.tagName==='time')[0],'datetime'),
       scope:'snippet',complete:false,method:'guest_api',access:'public',
-    },{maxChars:700});
+    },{...args,maxChars:args.fullPayload?8000:420});
+    return {...item,...(companyRef?{companyRef}:{}),...(jobLocation?{location:jobLocation}:{}),
+      ...(workplace?{workplace}:{})};
   })};
+}
+const nativeJobsPageSize=25;
+function nativeJobCards(html,start,count,args) {
+  const root=parseFragment(html);
+  const cards=new Map();
+  for(const node of parsedNodes(root,n=>parsedAttr(n,'role')==='button')){
+    const id=parsedAttr(node,'componentkey').match(/^job-card-component-ref-(\d+)$/)?.[1];
+    if(!id||cards.has(id))continue;
+    const fields=parsedNodes(node,n=>n.tagName==='p').map(parsedText).filter(Boolean);
+    const [name,company,location]=fields;
+    if(!name)continue;
+    const title=name.replace(/^Selected,\s*/i,'').replace(/\s*\(Verified job\)\s*$/i,'');
+    const workplace=jobWorkplace(location??'');
+    const card=searchCard({id,title,kind:'job',url:`https://www.linkedin.com/jobs/view/${id}/`,
+      author:company,text:parsedText(node),method:'native_search_page',access:'session',scope:'snippet',complete:false},
+      {...args,maxChars:args.fullPayload?8000:420});
+    const postedText=fields.find(field=>/^Posted\s+/i.test(field));
+    cards.set(id,{...card,location:location??null,...(postedText?{postedText}:{}),...(workplace?{workplace}:{})});
+  }
+  if(!cards.size && !/no (?:matching )?(?:jobs|results)/i.test(parsedText(root))){
+    throw fault('unexpected_job_response','LinkedIn did not return readable jobs for this saved search URL.');
+  }
+  const offset=start%nativeJobsPageSize;
+  return {total:cards.size,sources:[...cards.values()].slice(offset,offset+count)};
 }
 function jobDescription(html,id,options) {
   const root=parseFragment(html);
@@ -700,13 +744,18 @@ function jobDescription(html,id,options) {
 const sectionRoutes={about:'',experience:'details/experience/',education:'details/education/',skills:'details/skills/',certifications:'details/certifications/',languages:'details/languages/',projects:'details/projects/',volunteering:'details/volunteering-experiences/',honors:'details/honors/',interests:'details/interests/',recommendations:'details/recommendations/',contact_info:'overlay/contact-info/',publications:'details/publications/',patents:'details/patents/',courses:'details/courses/',organizations:'details/organizations/',test_scores:'details/test-scores/',featured:'details/featured/'};
 const profileSection=z.enum(Object.keys(sectionRoutes));
 function addJobFilters(params,a) {
-  if(a.geoId)params.set('geoId',String(a.geoId));if(a.distance)params.set('distance',String(a.distance));
-  for(const [key,param]of Object.entries({companyIds:'f_C',industryIds:'f_I',jobFunctions:'f_F'}))if(a[key]?.length)params.set(param,a[key].join(','));
-  if(a.fewApplicants!==undefined)params.set('f_EA',String(a.fewApplicants));
-  if(a.datePosted)params.set('f_TPR',({past_hour:'r3600',past_24_hours:'r86400',past_week:'r604800',past_month:'r2592000'})[a.datePosted]);
-  const maps={jobType:['f_JT',{full_time:'F',part_time:'P',contract:'C',temporary:'T',volunteer:'V',internship:'I',other:'O'}],experienceLevel:['f_E',{internship:'1',entry:'2',associate:'3',mid_senior:'4',director:'5',executive:'6'}]};
-  for(const [key,[param,map]]of Object.entries(maps))if(a[key]?.length)params.set(param,a[key].map(v=>map[v]).join(','));
-  if(a.easyApply!==undefined)params.set('f_AL',String(a.easyApply));
+  for(const key of ['location','geoId','distance','fewApplicants','easyApply']){
+    if(a[key]!==undefined)params.set(jobFacetParams[key],String(a[key]));
+  }
+  const companies=[...new Set([a.companyId,...(a.companyIds??[])].filter(Boolean).map(String))];
+  for(const [key,values] of Object.entries({companyIds:companies,industryIds:a.industryIds,jobFunctions:a.jobFunctions})){
+    if(values?.length)params.set(jobFacetParams[key],values.join(','));
+  }
+  if(a.datePosted)params.set('f_TPR',jobDateCodes[a.datePosted]);
+  for(const [key,map] of Object.entries({jobType:jobTypeCodes,experienceLevel:jobExperienceCodes})){
+    if(a[key]?.length)params.set(jobFacetParams[key],a[key].map(value=>map[value]).join(','));
+  }
+  if(a.remote)params.set('f_WT',jobRemoteCodes[a.remote]);
   if(a.sortBy)params.set('sortBy',a.sortBy==='date'?'DD':'R');
 }
 function continueOnPage(url,fn,args) {
@@ -816,16 +865,67 @@ const listOptions={seenIds:z.array(z.string()).default([]),...paging,...readOpti
 const profileList=z.object({publicId:slug,...listOptions});
 const companyList=z.object({slug,...listOptions});
 const idList=z.array(z.string()).optional();
-const peopleFilters={connectionDegrees:z.array(z.enum(['1st','2nd','3rd'])).optional(),locationIds:idList,currentCompanyIds:idList,pastCompanyIds:idList,schoolIds:idList,industryIds:idList,profileLanguages:idList,title:z.string().optional(),firstName:z.string().optional(),lastName:z.string().optional()};
+const peopleFilters={connectionDegrees:z.array(z.enum(['1st','2nd','3rd'])).optional(),locationIds:idList,currentCompanyIds:idList,pastCompanyIds:idList,schoolIds:idList,industryIds:idList,profileLanguages:idList,title:z.string().optional(),firstName:z.string().optional(),lastName:z.string().optional(),connectionsOfId:z.string().optional(),followersOfIds:idList,serviceCategoryIds:idList,openToVolunteering:z.boolean().optional(),companyText:z.string().optional(),schoolText:z.string().optional()};
 const postFilters={sortBy:z.enum(['relevance','latest']).optional(),datePosted:z.enum(['past_24_hours','past_week','past_month']).optional(),contentType:z.enum(['videos','images','documents','job_posts','live_videos']).optional(),fromMemberIds:idList,fromCompanyIds:idList,mentioningMemberIds:idList,mentioningCompanyIds:idList};
+const networkCodes={'1st':'F','2nd':'S','3rd':'O'};
+const peopleListParams={locationIds:'geoUrn',currentCompanyIds:'currentCompany',pastCompanyIds:'pastCompany',schoolIds:'schoolFilter',industryIds:'industry',profileLanguages:'profileLanguage',followersOfIds:'followerOf',serviceCategoryIds:'serviceCategory'};
+const peopleTextParams={title:'title',firstName:'firstName',lastName:'lastName',companyText:'company',schoolText:'schoolFreetext'};
+const jobDateCodes={past_hour:'r3600',past_24_hours:'r86400',past_week:'r604800',past_month:'r2592000'};
+const jobTypeCodes={full_time:'F',part_time:'P',contract:'C',temporary:'T',volunteer:'V',internship:'I',other:'O'};
+const jobExperienceCodes={internship:'1',entry:'2',associate:'3',mid_senior:'4',director:'5',executive:'6'};
+const jobRemoteCodes={onsite:'1',remote:'2',hybrid:'3'};
+const entityType=z.enum(['person','school','company','location','industry','service']);
+const entityRef=z.union([z.string().trim().min(1).max(2048),z.object({type:entityType,id:z.string().trim().min(1).max(500)})]);
+const entityValues=z.union([entityRef,z.array(entityRef).min(1).max(10)]);
+const payloadOptions={fullPayload:z.boolean().default(false).describe('Return full structured records for this page instead of compact cards.')};
+const searchTarget=z.enum(['people','jobs']);
+const peopleSearchFilters=z.object({
+  ...peopleFilters,school:entityValues.optional(),currentCompany:entityValues.optional(),pastCompany:entityValues.optional(),
+  location:entityValues.optional(),industry:entityValues.optional(),connectionsOf:entityRef.optional(),followersOf:entityValues.optional(),
+  serviceCategory:entityValues.optional(),
+}).strict();
+const jobSearchFilters=z.object({
+  location:z.string().max(200).optional(),companyId:numericId.optional(),geoId:numericId.optional(),distance:z.number().int().positive().optional(),
+  companyIds:z.array(numericId).optional(),industryIds:z.array(numericId).optional(),jobFunctions:z.array(z.string()).optional(),
+  remote:z.enum(Object.keys(jobRemoteCodes)).optional(),datePosted:z.enum(Object.keys(jobDateCodes)).optional(),
+  jobType:z.array(z.enum(Object.keys(jobTypeCodes))).optional(),experienceLevel:z.array(z.enum(Object.keys(jobExperienceCodes))).optional(),
+  fewApplicants:z.boolean().optional(),easyApply:z.boolean().optional(),sortBy:z.enum(['date','relevance']).optional(),
+});
+const jobStructuredFilters=jobSearchFilters.extend({
+  location:entityValues.optional(),company:entityValues.optional(),industry:entityValues.optional(),
+}).strict();
+const nativeSearchInput={nativeUrl:z.string().url().max(5000).optional(),...payloadOptions};
+const filterFields={
+  people:{school:'school',location:'location',currentCompany:'company',pastCompany:'company',industry:'industry',
+    connectionsOf:'person',followersOf:'person',serviceCategory:'service'},
+  jobs:{location:'location',company:'company',industry:'industry'},
+};
+const filterChoices={
+  people:{connectionDegrees:Object.keys(networkCodes),profileLanguages:['en','zh','es','fr','de','ja','pt','ko'],openToVolunteering:[true,false]},
+  jobs:{remote:Object.keys(jobRemoteCodes),datePosted:Object.keys(jobDateCodes),jobType:Object.keys(jobTypeCodes),
+    experienceLevel:Object.keys(jobExperienceCodes),easyApply:[true,false],fewApplicants:[true,false],sortBy:['relevance','date']},
+};
+function searchFilterCatalog({searchType:type}) {
+  const manual=type==='people'?['title','firstName','lastName','companyText','schoolText']:['distance','jobFunctions'];
+  return {searchType:type,filters:[
+    ...Object.entries(filterFields[type]).map(([filter,entityType])=>({filter,entityType,
+      accepts:['industry','service'].includes(entityType)?['id','native_url']:['name','id','native_url'],
+      lookup:{function:'findFilterValues',args:{searchType:type,filter}},
+    })),
+    ...Object.entries(filterChoices[type]).map(([filter,values])=>({filter,values})),
+    ...manual.map(filter=>({filter})),
+  ],nativeUrl:true};
+}
 function nativeSearchUrl(a,type) {
   const url=new URL(`/search/results/${type==='posts'?'content':'people'}/`,location.origin);
-  const p=url.searchParams;p.set('keywords',a.query);p.set('page',String(Math.floor((a.start??0)/10)+1));p.set('origin','FACETED_SEARCH');
-  const mapping=type==='people'?{locationIds:'geoUrn',currentCompanyIds:'currentCompany',pastCompanyIds:'pastCompany',schoolIds:'schoolFilter',industryIds:'industry',profileLanguages:'profileLanguage'}:{fromMemberIds:'fromMember',fromCompanyIds:'fromOrganization',mentioningMemberIds:'mentionsMember',mentioningCompanyIds:'mentionsOrganization'};
+  const p=url.searchParams;if(a.query)p.set('keywords',a.query);p.set('page',String(Math.floor((a.start??0)/10)+1));p.set('origin','FACETED_SEARCH');
+  const mapping=type==='people'?peopleListParams:{fromMemberIds:'fromMember',fromCompanyIds:'fromOrganization',mentioningMemberIds:'mentionsMember',mentioningCompanyIds:'mentionsOrganization'};
   for(const [key,param]of Object.entries(mapping))if(a[key]?.length)p.set(param,JSON.stringify(a[key]));
   if(type==='people') {
-    if(a.connectionDegrees?.length)p.set('network',JSON.stringify(a.connectionDegrees.map(d=>({'1st':'F','2nd':'S','3rd':'O'})[d])));
-    for(const key of ['title','firstName','lastName'])if(a[key])p.set(key,a[key]);
+    if(a.connectionDegrees?.length)p.set('network',JSON.stringify(a.connectionDegrees.map(degree=>networkCodes[degree])));
+    for(const [key,param] of Object.entries(peopleTextParams))if(a[key])p.set(param,a[key]);
+    if(a.connectionsOfId)p.set('connectionOf',JSON.stringify([a.connectionsOfId]));
+    if(a.openToVolunteering!==undefined)p.set('openToVolunteer',JSON.stringify([String(a.openToVolunteering)]));
   } else {
     if(a.sortBy==='latest')p.set('sortBy',JSON.stringify(['date_posted']));
     if(a.datePosted)p.set('datePosted',JSON.stringify([({past_24_hours:'past-24h',past_week:'past-week',past_month:'past-month'})[a.datePosted]]));
@@ -833,40 +933,377 @@ function nativeSearchUrl(a,type) {
   }
   return url.href;
 }
-function peopleSearchCards(main, target) {
+
+const linkedinEntityPaths={person:'in',company:'company',school:'school'};
+function linkedinUrl(value) {
+  const href=safeUrl(value);
+  const u=href&&new URL(href);
+  return u && u.protocol==='https:' && ['www.linkedin.com','linkedin.com'].includes(u.hostname) ? u : null;
+}
+function entityFromUrl(value, expected) {
+  const url=linkedinUrl(value);
+  const match=url?.pathname.match(/^\/(in|company|school)\/([^/]+)\/?$/);
+  if (!match || ['setup','login','signup'].includes(match[2])) return null;
+  const type=match[1]==='in'?'person':match[1];
+  if (expected && type!==expected && !(expected==='school' && type==='company')) return null;
+  if(!/^(?:[\p{L}\p{N}_-]|%[\dA-Fa-f]{2}|\.)+$/u.test(match[2]))return null;
+  let id;
+  try {id=decodeURIComponent(match[2]);} catch {return null;}
+  if(!/^[\p{L}\p{N}_.-]+$/u.test(id) || id==='.' || id==='..')return null;
+  const path=`/${match[1]}/${encodeURIComponent(id)}/`;
+  return {type:expected??type,id,url:new URL(path,location.origin).href};
+}
+function entityIdentifier(type,value) {
+  const namespaces={person:['profile'],company:['company','organization'],school:['company','organization','school'],location:['geo'],industry:['industry'],service:['service']};
+  const urn=String(value).match(/^urn:li:(?:fsd_)?(\w+):([\w-]+)$/);
+  if(urn && !namespaces[type].includes(urn[1]))return null;
+  const id=urn?.[2]??String(value);
+  return (type==='person'?/^ACo[A-Za-z0-9_-]+$/:/^\d+$/).test(id)?id:null;
+}
+function parseEntityRef(ref, expected) {
+  if (typeof ref==='object') {
+    if (expected && expected!==ref.type) throw fault('invalid_entity', `Expected a ${expected} reference.`);
+    const url=/^(https:\/\/|\/)/i.test(ref.id)?entityFromUrl(ref.id,ref.type):null;
+    return url??ref;
+  }
+  const url=/^(https:\/\/|\/)/i.test(ref)?entityFromUrl(ref,expected):null;
+  if (url) return url;
+  const urn=ref.match(/^urn:li:(?:fsd_)?(profile|organization|company|school|geo|industry):([\w-]+)$/);
+  const type=urn&&({profile:'person',organization:'company',geo:'location'}[urn[1]]??urn[1]);
+  if (type && (!expected || type===expected || (expected==='school'&&type==='company'))) return {type:expected??type,id:ref};
+  if (expected && !/^(?:https?:|urn:|\/)/i.test(ref)) return {type:expected,id:ref};
+  throw fault('invalid_entity', 'Use a LinkedIn entity URL, a typed reference, or an entity URN.');
+}
+function canonicalEntityUrl(ref) {
+  const path=linkedinEntityPaths[ref.type];
+  if(ref.url || !path)return ref.url??null;
+  const id=entityIdentifier(ref.type,ref.id)??ref.id;
+  return new URL(`/${path}/${encodeURIComponent(id)}/`,location.origin).href;
+}
+function nativeFilterValues(value) {
+  if(!value)return [];
+  if(value.startsWith('[')){
+    try {const array=JSON.parse(value);return Array.isArray(array)?array.map(String):[];} catch {return [];}
+  }
+  return value.split(',');
+}
+function organizationEntity(root, ref, fullPayload) {
+  const meta=key=>parsedAttr(parsedNodes(root,n=>n.tagName==='meta'&&parsedAttr(n,'property')===key)[0],'content');
+  const main=parsedNodes(root,n=>n.tagName==='main')[0];
+  const top=parsedNodes(main??root,n=>/^pages\.section\.StickyTopCard\.\d+$/.test(parsedAttr(n,'componentkey')))[0];
+  const heading=parsedText(parsedNodes(main,n=>n.tagName==='h1')[0]);
+  const cardName=parsedText(parsedNodes(top,n=>n.tagName==='p'&&!!parsedText(n))[0]);
+  const name=cardName||heading||meta('og:title').replace(/\s*(?::\s*(?:Overview|Posts|Alumni|Jobs|People|About))?\s*\|\s*LinkedIn\s*$/i,'');
+  const nav=parsedNodes(top,n=>n.tagName==='a').map(n=>linkedinUrl(parsedAttr(n,'href')))
+    .find(url=>/^\/(?:company|school)\/[^/]+\/home\/?$/.test(url?.pathname??''));
+  const canonical=nav?.pathname.replace(/home\/?$/,'');
+  const url=entityFromUrl(canonical,ref.type)?.url??entityFromUrl(meta('og:url'),ref.type)?.url??canonicalEntityUrl(ref);
+  const organizationId=parsedAttr(top,'componentkey').split('.').at(-1)||null;
+  if(!name || (!heading&&!organizationId&&!entityFromUrl(meta('og:url'),ref.type)))throw fault('unexpected_entity_response','LinkedIn did not return a readable organization page.');
+  const candidates=new Map();
+  for(const a of parsedNodes(root,n=>n.tagName==='a')){
+    const u=linkedinUrl(parsedAttr(a,'href'));
+    if(!u || !/^\/(?:search\/results\/people|jobs\/search(?:-results)?)\/?$/.test(u.pathname))continue;
+    for(const [key,param] of Object.entries({school:'schoolFilter',currentCompany:'currentCompany',jobsCompany:'f_C'})){
+      const values=nativeFilterValues(u.searchParams.get(param));
+      if(values.length===1 && /^\d+$/.test(values[0])){
+        const ids=candidates.get(key)??new Set();ids.add(values[0]);candidates.set(key,ids);
+      }
+    }
+  }
+  const filterIds={};
+  for(const [key,ids] of candidates){
+    const [id]=ids;
+    if(organizationId ? ids.has(organizationId) : ids.size===1 && key==='school' && ref.type==='school')filterIds[key]=organizationId??id;
+  }
+  if(organizationId){
+    filterIds.currentCompany??=organizationId;
+    filterIds.jobsCompany??=organizationId;
+  }
+  const type=ref.type==='school'||filterIds.school?'school':'company';
+  return {type,ref:url??ref,name,url,ids:{...(organizationId?{organization:organizationId}:{})},filterIds,
+    ...(fullPayload?{description:meta('og:description')||null}:{})};
+}
+function dateParts(value) {
+  return Number.isInteger(value?.year)?{year:value.year,...(value.month?{month:value.month}:{}),...(value.day?{day:value.day}:{})}:null;
+}
+function profileEntity(data, ref, args) {
+  const included=Array.isArray(data.included)?data.included:[];
+  const linked=Array.isArray(data.data?.['*elements'])?data.data['*elements']:[];
+  const profile=included.find(row=>linked.includes(row.entityUrn) && /\.Profile$/.test(row.$type??'')) ??
+    (linked.length===1?included.find(row=>row.entityUrn===linked[0]):null) ??
+    (data.data?.entityUrn?data.data:null);
+  const urn=profile?.entityUrn??(linked.length===1?linked[0]:null);
+  const profileId=entityIdentifier('person',urn);
+  if(!profileId)throw fault('unexpected_entity_response','LinkedIn did not return a single readable member identity.');
+  const url=canonicalEntityUrl({...ref,url:profile?.publicIdentifier?undefined:ref.url,id:profile?.publicIdentifier??ref.id});
+  const result={type:'person',ref:url??{type:'person',id:urn},name:[profile?.firstName,profile?.lastName].filter(Boolean).join(' ')||null,
+    url,ids:{profileId,profileUrn:urn},headline:profile?.headline??null};
+  if(args.sections?.includes('education') || args.fullPayload){
+    const schools=new Map(included.filter(row=>/\.(?:School|Company)$/.test(row.$type??'')).map(row=>[row.entityUrn,row]));
+    result.education=included.filter(row=>/\.Education$/.test(row.$type??'') &&
+      (!row.entityUrn||row.entityUrn.includes(`(${profileId},`))).map(row=>{
+      const school=schools.get(row.schoolUrn)??schools.get(row.companyUrn)??schools.get(row['*company']);
+      const organizationId=entityIdentifier('company',row.companyUrn??row['*company']);
+      return {school:row.schoolName??school?.name??null,schoolRef:organizationId?{type:'school',id:organizationId}:null,
+        schoolUrn:row.schoolUrn??null,organizationId,
+        start:dateParts(row.dateRange?.start),end:dateParts(row.dateRange?.end),
+        ...(args.fullPayload?{degree:row.degreeName??null,fieldOfStudy:row.fieldOfStudy??null,description:row.description??null}:{})};
+    });
+    const collection=profile?.profileEducations??profile?.education??profile?.['*profileEducations'];
+    if(fullEducationCount(collection)>result.education.length)result.educationPartial=true;
+  }
+  if(args.fullPayload)result.profile={publicIdentifier:profile?.publicIdentifier??null,summary:profile?.summary??null,location:profile?.locationName??null};
+  return result;
+}
+function fullEducationCount(collection) {
+  return typeof collection==='object' && collection ? collection.paging?.total??0 : 0;
+}
+async function readEntity(ref,args) {
+  if(ref.type==='person'){
+    if(!ref.url && !entityIdentifier('person',ref.id) && !/^[\p{L}\p{N}_%.-]+$/u.test(ref.id))throw fault('invalid_entity','Use a member profile URL, slug or profile URN.');
+    const memberIdentity=decodeURIComponent(entityIdentifier('person',ref.id)??ref.id);
+    const data=await voyager('identity/dash/profiles',{q:'memberIdentity',memberIdentity,
+      decorationId:'com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-87'},args,120000);
+    return profileEntity(data,ref,args);
+  }
+  if(ref.type==='school'||ref.type==='company'){
+    if(!ref.url && !entityIdentifier(ref.type,ref.id) && !/^[\p{L}\p{N}_%.-]+$/u.test(ref.id))throw fault('invalid_entity','Use an organization URL, slug or typed organization ID.');
+    const requestUrl=ref.type==='school' && entityIdentifier('school',ref.id) && !ref.id.includes('fsd_school:')
+      ? new URL(`/company/${entityIdentifier('school',ref.id)}/`,location.origin).href : canonicalEntityUrl(ref);
+    if(ref.type==='school' && /:(?:fsd_)?school:/.test(ref.id)){
+      throw fault('entity_lookup_unavailable','A school education URN alone does not identify its organization page. Use the school page URL or the school search-filter ID.');
+    }
+    const html=await client.request(requestUrl,{type:'text',ttl:120000,cacheScope:'session',followCanonical:true,signal:args.signal});
+    return organizationEntity(parseFragment(html),{...ref,url:requestUrl},args.fullPayload);
+  }
+  const id=entityIdentifier(ref.type,ref.id);
+  if(!id)throw fault('entity_lookup_unavailable',`Use a ${ref.type} ID from LinkedIn's filter options.`);
+  return {type:ref.type,ref:{type:ref.type,id},name:null,ids:{filter:id}};
+}
+async function getEntity(args) {
+  if(args.ref!=null)return readEntity(parseEntityRef(args.ref),args);
+  const {signal,...next}=args;
+  const entities=[];
+  let size=0;
+  function continuation(index) {
+    return {skill:'linkedin',function:'getEntity',args:{...next,refs:args.refs.slice(index)}};
+  }
+  for(const [index,ref] of args.refs.entries()){
+    let entity;
+    try {entity=await readEntity(parseEntityRef(ref),args);}
+    catch(error){
+      if(error.code==='rate_limited'){
+        return {status:'rate_limited',entities,retryAfterMs:error.retryAfterMs,nextPage:continuation(index)};
+      }
+      if(error.status===404)entity={ref,status:'not_found'};
+      else if(error.status===403)entity={ref,status:'access_denied'};
+      else if(error.code==='entity_lookup_unavailable')entity={ref,status:error.code,message:error.message};
+      else throw error;
+    }
+    size+=JSON.stringify(entity).length;
+    if(entities.length && size>22000)return {status:'partial',entities,nextPage:continuation(index)};
+    entities.push(entity);
+  }
+  return {status:'ok',entities};
+}
+function entitySearchCards(main, target, type) {
   // The native page groups near matches and suggestions separately from its people results.
-  const first = parsedNodes(main, node => parsedAttr(node, 'componentkey') === 'SearchResults_FirstResult_people')[0];
+  const first = parsedNodes(main, node => parsedAttr(node, 'componentkey') === 'SearchResults_FirstResult_'+target.pathname.split('/')[3])[0];
   const cards = parsedNodes(first?.parentNode ?? main, node => node.tagName === 'li' || parsedAttr(node, 'role') === 'listitem');
   const matches = new Map();
+  if(type!=='person'){
+    // LinkedIn can render an exact company match above the results list.
+    for(const link of parsedNodes(main,n=>n.tagName==='a')){
+      const section=link.parentNode?.parentNode;
+      const heading=parsedNodes(link,n=>n.tagName==='p')[0];
+      const title=parsedText(heading);
+      const entity=entityFromUrl(parsedAttr(link,'href'),type);
+      if(!entity||!title||/^Page by /i.test(title))continue;
+      let ancestor=section;
+      while(ancestor&&ancestor!==main&&ancestor.tagName!=='aside')ancestor=ancestor.parentNode;
+      if(ancestor===main&&!matches.has(entity.url))matches.set(entity.url,{url:entity.url,title,text:parsedText(link)});
+    }
+  }
   for (const card of cards) {
     for (const link of parsedNodes(card, node => node.tagName === 'a')) {
-      const href = safeUrl(parsedAttr(link, 'href'), target.href);
-      if (!href) continue;
-      const url = new URL(href);
-      if (url.protocol !== 'https:' || !['linkedin.com', 'www.linkedin.com'].includes(url.hostname) || !/^\/in\/[^/]+\/?$/.test(url.pathname)) continue;
-      url.search = '';
-      url.hash = '';
-      url.pathname = url.pathname.replace(/\/?$/, '/');
+      const entity = entityFromUrl(parsedAttr(link,'href'),type);
+      if (!entity) continue;
       const title = parsedText(parsedNodes(link, node => node.tagName === 'p')[0] ?? link);
       if (title) {
-        if (!matches.has(url.href)) matches.set(url.href, {url: url.href, title, text: parsedText(card)});
+        if (!matches.has(entity.url)) matches.set(entity.url,{url:entity.url,title,text:parsedText(card)});
         break;
       }
     }
   }
   return [...matches.values()];
 }
+const peopleFacetParams={
+  ...peopleListParams, ...peopleTextParams, connectionDegrees:'network',connectionsOfId:'connectionOf',openToVolunteering:'openToVolunteer',
+};
+const jobFacetParams={
+  location:'location',geoId:'geoId',distance:'distance',companyIds:'f_C',industryIds:'f_I',jobFunctions:'f_F',
+  remote:'f_WT',datePosted:'f_TPR',jobType:'f_JT',experienceLevel:'f_E',fewApplicants:'f_EA',easyApply:'f_AL',sortBy:'sortBy',
+};
+function nativeSearchParams(value,type) {
+  const url=linkedinUrl(value);
+  const route=type==='people'?/^\/search\/results\/people\/?$/:/^\/jobs\/search(?:-results)?\/?$/;
+  if(!url || !route.test(url.pathname))throw fault('invalid_search_url',`Use a LinkedIn ${type} search URL.`);
+  const context=type==='jobs' && url.pathname.replace(/\/$/,'')==='/jobs/search-results' && url.searchParams.has('referralSearchId');
+  const allowed=new Set(['keywords',...(type==='people'?['page','origin']:['start']),...Object.values(type==='people'?peopleFacetParams:jobFacetParams)]);
+  if(context)for(const key of ['origin','referralSearchId','f_SAL'])allowed.add(key);
+  for(const key of [...url.searchParams.keys()]){
+    if(allowed.has(key) || (context && /^f_[A-Z]+$/.test(key)))continue;
+    if(!['trackingId','refId','trk','sid','currentJobId','position','pageNum','refresh','lipi','eBP','origin'].includes(key))throw fault('unsupported_filter',`The ${type} search does not support ${key}.`);
+    url.searchParams.delete(key);
+  }
+  return url.searchParams;
+}
+function filterReport(type,params) {
+  return Object.entries(type==='people'?peopleFacetParams:jobFacetParams).flatMap(([filter,key])=>{
+    const value=params.get(key);
+    const values=value && (filter==='location'||Object.hasOwn(peopleTextParams,filter))?[value]:nativeFilterValues(value);
+    return values.length?[{filter,values,verification:'request_parameter'}]:[];
+  });
+}
+function searchCard(card,args) {
+  const item=source(card,args.fullPayload?args:{...args,maxChars:Math.min(args.maxChars??420,420)});
+  if(args.fullPayload)return item;
+  const {excerpt,method,access,...compact}=item;
+  return compact;
+}
+function emptySearch(main) {
+  return main && /\b(?:no results|no matches)\b|未找到|没有找到/i.test(parsedText(main));
+}
+// This is the persisted GEO request confirmed against LinkedIn's live browser.
+const geoTypeaheadQuery='voyagerSearchDashReusableTypeahead.4c7caa85341b17b470153ad3d1a29caf';
+async function findLocations(query, a) {
+  const prefix='voyagerSearchDashReusableTypeahead.';
+  const observed=observedRequests(prefix).map(request=>{
+    const url=linkedinUrl(request.url);
+    if(url?.pathname!=='/voyager/api/graphql')return null;
+    return url.searchParams.get('queryId');
+  }).find(id=>id?.startsWith(prefix));
+  const keyword=encodeURIComponent(query).replace(/[!'()*]/g,char=>'%'+char.charCodeAt(0).toString(16).toUpperCase());
+  const geoTypes='POSTCODE_1,POSTCODE_2,POPULATED_PLACE,ADMIN_DIVISION_1,ADMIN_DIVISION_2,COUNTRY_REGION,MARKET_AREA,COUNTRY_CLUSTER';
+  const variables=`(keywords:${keyword},query:(typeaheadFilterQuery:(geoSearchTypes:List(${geoTypes})),typeaheadUseCase:JOBS),type:GEO)`;
+  const data=await client.request(`/voyager/api/graphql?variables=${variables}&queryId=${observed??geoTypeaheadQuery}`,{
+    headers:{...voyagerHeaders(),Accept:'application/json'},signal:a.signal,ttl:120000,cacheScope:'session',
+  });
+  const rows=(data.data?.data??data.data)?.searchDashReusableTypeaheadByType?.elements;
+  if(!Array.isArray(rows))throw fault('unexpected_search_response','LinkedIn did not return readable location candidates.');
+  return rows.flatMap(row=>{
+    const id=entityIdentifier('location',row.trackingUrn);
+    return id&&row.title?.text?[{type:'location',id,name:row.title.text,value:{type:'location',id}}]:[];
+  }).slice(0,a.count??5);
+}
+async function findFilterValues(a) {
+  const type=filterFields[a.searchType][a.filter];
+  if(!type)return {status:'unsupported_filter',filter:a.filter};
+  const query=a.query?.trim();
+  if(query && /^(https:\/\/|\/|urn:li:|\d+$)/i.test(query)){
+    const ref=parseEntityRef(query,type);
+    const id=entityIdentifier(type,ref.id);
+    if(!ref.url && !id)return {status:'lookup_unavailable',filter:a.filter};
+    if(type==='school' && /:(?:fsd_)?school:/.test(ref.id))return {status:'filter_id_unavailable',filter:a.filter};
+    return {status:'ok',filter:a.filter,candidates:[{type,value:ref.url??{type,id},...(ref.url?{url:ref.url}:{id})}]};
+  }
+  if(a.nativeUrl){
+    const params=nativeSearchParams(a.nativeUrl,a.searchType);
+    const key=searchBindings[a.searchType][a.filter]?.[0];
+    const param=(a.searchType==='people'?peopleFacetParams:jobFacetParams)[key];
+    const ids=nativeFilterValues(params.get(param));
+    if(ids.length)return {status:'ok',filter:a.filter,candidates:ids.map(id=>({type,id,value:{type,id}}))};
+    const locationText=a.searchType==='jobs'&&a.filter==='location'?params.get('location'):null;
+    if(locationText)return {status:'ok',filter:a.filter,candidates:[{type,name:locationText,value:locationText}]};
+  }
+  if(query && type==='location' && (a.searchType!=='jobs'||cookie('JSESSIONID'))){
+    const candidates=await findLocations(query,a);
+    return {status:candidates.length?'ok':'no_results',filter:a.filter,candidates};
+  }
+  if(query && type==='location' && a.searchType==='jobs')return {status:'ok',filter:a.filter,candidates:[{type,name:query,value:query}]};
+  if(!query || !linkedinEntityPaths[type])return {status:'lookup_unavailable',filter:a.filter};
+  if(!cookie('JSESSIONID'))throw fault('login_required','LinkedIn search requires the current signed-in browser session.');
+  const target=new URL(`/search/results/${type==='person'?'people':type==='company'?'companies':'schools'}/`,location.origin);
+  target.searchParams.set('keywords',query);
+  const html=await client.request(target.href,{type:'text',ttl:0,signal:a.signal});
+  const main=parsedNodes(parseFragment(html),node=>node.tagName==='main')[0];
+  const matches=entitySearchCards(main,target,type);
+  if(!matches.length && !emptySearch(main))throw fault('unexpected_search_response','LinkedIn did not return readable filter candidates.');
+  return {status:matches.length?'ok':'no_results',filter:a.filter,candidates:matches.slice(0,a.count??5).map(({url,title,text})=>({
+    type,name:title,value:url,url,...(a.fullPayload?{text}:{}),
+  }))};
+}
+const searchBindings={
+  people:{school:['schoolIds','school'],location:['locationIds','filter'],currentCompany:['currentCompanyIds','currentCompany'],
+    pastCompany:['pastCompanyIds','currentCompany'],industry:['industryIds','filter'],connectionsOf:['connectionsOfId','profileId'],
+    followersOf:['followersOfIds','profileId'],serviceCategory:['serviceCategoryIds','filter']},
+  jobs:{location:['geoId','filter'],company:['companyIds','jobsCompany'],industry:['industryIds','filter']},
+};
+function plainEntityName(value) {
+  return typeof value==='string' && !/^(?:https?:|urn:|\/)/i.test(value) && !/^(?:\d+|ACo[\w-]+)$/.test(value);
+}
+async function resolveSearchFilters(type,a) {
+  const {filters={},signal}=a;
+  const output={...a};
+  for(const [key,value] of Object.entries(filters))if(!Object.hasOwn(searchBindings[type],key))output[key]=value;
+  for(const [filter,[key,idKey]] of Object.entries(searchBindings[type])){
+    if(filters[filter]==null)continue;
+    const values=Array.isArray(filters[filter])?filters[filter]:[filters[filter]];
+    if(type==='jobs' && filter==='location' && values.length===1 && plainEntityName(values[0])){
+      output.location=values[0];
+      continue;
+    }
+    const entityType=filterFields[type][filter];
+    const ids=[];
+    for(let value of values){
+      if(plainEntityName(value)){
+        const lookup=await findFilterValues({searchType:type,filter,query:value,signal});
+        if(lookup.status!=='ok')return {issue:{...lookup,query:value}};
+        const exact=lookup.candidates.filter(candidate=>candidate.name.toLowerCase()===value.toLowerCase());
+        const matches=exact.length?exact:lookup.candidates;
+        if(matches.length!==1)return {issue:{status:'ambiguous_filter',filter,query:value,candidates:matches}};
+        value=matches[0].value;
+      }
+      const ref=parseEntityRef(value,entityType);
+      let id=entityIdentifier(entityType,ref.id);
+      if(entityType==='school' && /:(?:fsd_)?school:/.test(ref.id))return {issue:{status:'filter_id_unavailable',filter,ref:value}};
+      if(!id){
+        if(!linkedinEntityPaths[entityType])return {issue:{status:'lookup_unavailable',filter,ref:value}};
+        const entity=await readEntity(ref,{signal});
+        id=entity.filterIds?.[idKey]??entity.ids?.[idKey];
+      }
+      if(!id)return {issue:{status:'filter_id_unavailable',filter,ref:value}};
+      ids.push(id);
+    }
+    if(key==='geoId' || key==='connectionsOfId'){
+      if(new Set(ids).size!==1)return {issue:{status:'invalid_filter',filter,reason:'LinkedIn accepts one value for this filter.'}};
+      output[key]=ids[0];
+    }else output[key]=[...new Set([...(output[key]??[]).map(String),...ids])];
+  }
+  return {args:output};
+}
 async function searchPeople(a) {
   if (!cookie('JSESSIONID')) throw fault('login_required', 'LinkedIn search requires the current signed-in browser session.');
-  const target = new URL(nativeSearchUrl(a, 'people'));
+  const resolved=await resolveSearchFilters('people',a);
+  if(resolved.issue)return {...resolved.issue,sources:[]};
+  const target=new URL(nativeSearchUrl(resolved.args,'people'));
+  if(a.nativeUrl){
+    const native=nativeSearchParams(a.nativeUrl,'people');
+    for(const [key,value] of native){
+      if(key==='page' || (key==='keywords' && a.query))continue;
+      if(!target.searchParams.has(key) || key==='keywords' || key==='origin')target.searchParams.set(key,value);
+    }
+    if(!a.start && /^[1-9]\d{0,3}$/.test(native.get('page')??''))target.searchParams.set('page',native.get('page'));
+  }
   const html = await client.request(target.href, {type:'text', ttl:0, signal:a.signal});
   const main = parsedNodes(parseFragment(html), node => node.tagName === 'main')[0];
-  const matches = main ? peopleSearchCards(main, target) : [];
+  const matches = entitySearchCards(main,target,'person');
   if (!matches.length && (!main || !/\b(?:no results|no matches)\b|未找到|没有找到/i.test(parsedText(main)))) {
     throw fault('unexpected_search_response', 'LinkedIn returned a people search page without readable results.');
   }
   const start = a.start ?? 0;
-  const page = Number(target.searchParams.get('page'));
+  const page = Math.max(1,Number(target.searchParams.get('page'))||1);
   const seen = new Set(a.seenIds ?? []);
   const sources = [];
   let index = start % 10;
@@ -874,7 +1311,8 @@ async function searchPeople(a) {
     const card = matches[index];
     if (seen.has(card.url)) continue;
     seen.add(card.url);
-    sources.push(source({...card, kind:'profile', method:'server_search_page', access:'session', scope:'snippet', complete:false}, a));
+    const degree=card.text.match(/(?:^|[·•]\s*)(1st|2nd|3rd)(?=\b)/i)?.[1]??null;
+    sources.push({...searchCard({...card,kind:'profile',method:'server_search_page',access:'session',scope:'snippet',complete:false},a),ref:card.url,...(degree?{connectionDegree:degree}:{})});
   }
   const hasNextPage = matches.length > 0 && parsedNodes(main, node => {
     if (!['button', 'a'].includes(node.tagName) || node.attrs.some(attr => attr.name === 'disabled') || parsedAttr(node, 'aria-disabled') === 'true') return false;
@@ -882,11 +1320,14 @@ async function searchPeople(a) {
     return /^(?:Next(?: page)?|下一页|下一頁)$/i.test(label) || Number(label.match(/^(?:Page\s+|第\s*)(\d+)\s*页?$/i)?.[1]) === page + 1;
   }).length > 0;
   const nextStart = index < matches.length ? (page - 1) * 10 + index : hasNextPage ? page * 10 : null;
-  const {signal, ...args} = a;
-  return result(sources, {status:matches.length ? 'ok' : 'no_results', url:target.href, page, loaded:matches.length, nextStart,
+  const {signal,filters,...args}=resolved.args;
+  const facets=filterReport('people',target.searchParams);
+  const degrees=facets.find(facet=>facet.filter==='connectionDegrees');
+  if(degrees && sources.length && sources.every(card=>card.connectionDegree && degrees.values.includes(networkCodes[card.connectionDegree])))degrees.verification='matched_result_cards';
+  return result(sources, {filters:facets,status:matches.length ? 'ok' : 'no_results', url:target.href, page, loaded:matches.length, nextStart,
     nextPage:nextStart === null ? null : {skill:'linkedin', function:'searchPeople', args:{...args, start:nextStart, seenIds:[...seen]}},
     coverage:'People search cards for the requested page. Read education on the profile to verify attendance or graduation dates.',
-  });
+  },a.fullPayload);
 }
 async function searchPostsOnPage(a) {
   const output=await readNativePage(nativeSearchUrl(a,'posts'),'searchPosts',{...a,start:0},{kind:'post',matchQuery:true});
@@ -1076,8 +1517,90 @@ async function toggleAction(a){
  if(active()===a.active)return {status:'already_set',active:a.active};button.click();const changed=await waitValue(()=>active()===a.active,a.waitMs??3000);return {status:changed?'updated':'change_unconfirmed',active:active()};
 }
 
+async function searchJobs(a) {
+  const resolved=await resolveSearchFilters('jobs',a);
+  if(resolved.issue)return {...resolved.issue,sources:[]};
+  const input=resolved.args;
+  const params=a.nativeUrl?nativeSearchParams(a.nativeUrl,'jobs'):new URLSearchParams();
+  const native=params.has('referralSearchId');
+  if(native&&!cookie('JSESSIONID'))throw fault('login_required','Open LinkedIn in the signed-in session that generated the search URL.');
+  const requested=new URLSearchParams();
+  if(a.keywords)requested.set('keywords',a.keywords);
+  addJobFilters(requested,input);
+  for(const [key,value] of requested){
+    if(!native)params.set(key,value);
+    else if(key!=='f_WT' && params.get(key)!==value){
+      throw fault('conflicting_search_filters','Use the saved jobs URL as-is, or run a new search with structured filters.');
+    }
+  }
+  const nativeStart=params.get('start');
+  const start=a.start||(/^\d{1,5}$/.test(nativeStart??'')?Number(nativeStart):0);
+  const count=a.count??10;
+  params.set('start',String(native?Math.floor(start/nativeJobsPageSize)*nativeJobsPageSize:start));
+  const path=native?'/jobs/search-results/':'/jobs-guest/jobs/api/seeMoreJobPostings/search';
+  const html=await client.request(`${path}?${params}`,{type:'text',signal:a.signal,ttl:30000,cacheScope:native?'session':'public'});
+  const cards=native?nativeJobCards(html,start,count,a):jobCards(html,count,a);
+  const dates=cards.sources.map(item=>Date.parse(item.publishedAt));
+  const dateSorted=params.get('sortBy')==='DD';
+  const serverOrderMatched=dates.length>0&&dates.every((date,i)=>Number.isFinite(date)&&(i===0||dates[i-1]>=date));
+  if(dateSorted)cards.sources.sort((left,right)=>(Date.parse(right.publishedAt)||0)-(Date.parse(left.publishedAt)||0));
+  const seen=new Set(a.seenIds??[]);
+  const sources=cards.sources.filter(item=>{
+    if(seen.has(item.id))return false;
+    seen.add(item.id);
+    return true;
+  });
+  const nativeEnd=native&&start%nativeJobsPageSize+cards.sources.length>=cards.total&&cards.total<nativeJobsPageSize;
+  const nextStart=cards.sources.length&&!nativeEnd?start+cards.sources.length:null;
+  const verificationParams=new URLSearchParams(params);
+  if(native && requested.has('f_WT'))verificationParams.set('f_WT',requested.get('f_WT'));
+  const filters=filterReport('jobs',verificationParams);
+  const duration=params.get('f_TPR');
+  const dateFilter=filters.find(item=>item.filter==='datePosted');
+  const workplaceFilter=filters.find(item=>item.filter==='remote');
+  if(workplaceFilter){
+    workplaceFilter.verification=sources.length && sources.every(item=>workplaceFilter.values.includes(jobRemoteCodes[item.workplace]))
+      ? 'matched_result_cards':'unverified';
+  }
+  const companyFilter=filters.find(item=>item.filter==='companyIds');
+  if(companyFilter && sources.length && sources.every(item=>{
+    const id=entityFromUrl(item.companyRef,'company')?.id;
+    return id && companyFilter.values.includes(id);
+  }))companyFilter.verification='matched_result_cards';
+  // Guest cards provide calendar dates without times. A boundary date can
+  // support a calendar-day check but cannot verify a precise hourly window.
+  const windowMs=Number(duration?.slice(1))*1000;
+  if(dateFilter && windowMs>=86400000 && dates.length && dates.every(date=>
+    Number.isFinite(date) && date<=Date.now() && date+86400000>Date.now()-windowMs)){
+    dateFilter.verification='matched_result_calendar_dates';
+  }
+  const {signal,filters:structured,...next}=input;
+  const status=!cards.total?'no_results':workplaceFilter?.verification==='unverified'?'filter_unverified':'ok';
+  return result(sources,{status,filters,method:native?'native_search_page':'guest_api',
+    order:{requested:dateSorted?'date':'relevance',scope:dateSorted?'returned_page':'server',serverOrderMatched:dateSorted?serverOrderMatched:null},
+    requestedFilters:{datePosted:input.datePosted,jobType:input.jobType,experienceLevel:input.experienceLevel,remote:input.remote,easyApply:input.easyApply},
+    filterVerification:'request_parameters',returnedByServer:cards.total,nextStart,
+    nextPage:nextStart===null?null:{skill:'linkedin',function:'searchJobs',args:{...next,start:nextStart,seenIds:[...seen]}},
+    instruction:'Pass nextPage.args unchanged for the next batch. Use getJob with the source ID to read responsibilities and requirements.',
+  },a.fullPayload);
+}
+const peopleSearchInput=z.object({query:z.string().max(300).optional(),...peopleFilters,...listOptions,filters:peopleSearchFilters.optional(),...nativeSearchInput});
+const jobsSearchInput=jobSearchFilters.extend({
+  keywords:z.string().trim().min(1).max(300).optional(),filters:jobStructuredFilters.optional(),
+  seenIds:z.array(z.string()).default([]),...paging,...nativeSearchInput,
+});
 const searchType=z.enum(['all','people','companies','posts','jobs']);
-const searchInput=z.object({query:z.string().min(1).max(300),type:searchType.default('all'),...paging});
+const searchInput=z.object({query:z.string().max(300).optional(),type:searchType.default('all'),...paging,
+  filters:z.union([peopleSearchFilters,jobStructuredFilters]).optional(),...nativeSearchInput,
+}).superRefine((a,c)=>{
+  if(!a.query?.trim()&&!a.nativeUrl&&!a.filters)c.addIssue({code:'custom',message:'Supply a query, filters, or nativeUrl.'});
+  if(!['people','jobs'].includes(a.type)&&(a.filters||a.nativeUrl))c.addIssue({code:'custom',message:'Structured filters and nativeUrl require type people or jobs.'});
+  if(a.filters && !(a.type==='people'?peopleSearchFilters:jobStructuredFilters).safeParse(a.filters).success)c.addIssue({code:'custom',message:`Invalid ${a.type} filters.`});
+});
+const entityReadInput=z.union([
+  z.object({ref:entityRef,sections:z.array(z.literal('education')).optional(),...payloadOptions}),
+  z.object({refs:z.array(entityRef).min(1).max(10),sections:z.array(z.literal('education')).optional(),...payloadOptions}),
+]);
 const actionSchema=z.object({kind:z.enum(['post','message','comment','connection','application']),text:z.string().optional(),threadId:z.string().regex(/^[A-Za-z0-9_=-]+$/).optional(),activityId:numericId.optional(),publicId:slug.optional(),id:numericId.optional()}).superRefine((a,c)=>{
  const key=({message:'threadId',comment:'activityId',connection:'publicId',application:'id'})[a.kind];
  if(key&&!a[key])c.addIssue({code:'custom',message:`${key} is required`});
@@ -1085,34 +1608,21 @@ const actionSchema=z.object({kind:z.enum(['post','message','comment','connection
 });
 const draftInput=z.object({draftId:z.string(),waitMs:z.number().int().nonnegative().max(10000).optional()});
 const skill={
-  search:siteFn('Search people, companies and posts through LinkedIn’s current SDUI search API. Jobs use the guest jobs API. No page navigation or deprecated search/blended request.',searchInput,async a=>{
-    if(a.type==='jobs')return skill.searchJobs.handler({...a,keywords:a.query});
+  search:siteFn('Search people, companies, posts or jobs. Use type people or jobs for structured filters or a native LinkedIn search URL.',searchInput,async a=>{
+    if(a.type==='jobs')return searchJobs({...a,keywords:a.query});
+    if(a.type==='people' && (a.filters||a.nativeUrl||a.fullPayload))return searchPeople(a);
     return searchCurrentApi(a);
   },[{args:{query:'Two Sigma',type:'people',count:5}}]),
-  searchPeople:siteFn('Search people without changing the tab. Applies native relationship, school and other people filters. Pass nextPage.args unchanged to continue.',z.object({query:z.string(),...peopleFilters,...listOptions}),searchPeople),
+  searchPeople:siteFn('Search people without changing the tab. Filters accept entity URLs, IDs, or names. Pass nextPage.args unchanged to continue.',peopleSearchInput,searchPeople,
+    [{args:{filters:{school:'Shanghai Qibao Dwight High School',connectionDegrees:['2nd']},count:10}}]),
+  getSearchFilters:siteFn('List supported people or job filters and how to look up their values.',z.object({searchType:searchTarget}),searchFilterCatalog),
+  findFilterValues:siteFn('Find schools, companies or people to use as filters, look up locations, or extract selected values from a native search URL. Pass a candidate value into searchPeople or searchJobs.',z.object({
+    searchType:searchTarget,filter:z.string(),query:z.string().max(2048).optional(),count:count(5,10),...nativeSearchInput,
+  }),findFilterValues,[{args:{searchType:'jobs',filter:'location',query:'Chicago'}}]),
+  getEntity:siteFn('Read people, schools or companies by LinkedIn URL, typed ID or URN. Use sections:[education] for structured school and date records, and refs for batch reads.',entityReadInput,getEntity),
   searchPosts:siteFn('Search posts with date, latest/relevance, media type, author/company and mentions using native search pages.',z.object({query:z.string(),...postFilters,...listOptions}),searchPostsOnPage),
   readDiscussion:siteFn('Read native post comments and nested replies with original IDs; loadMore requests another comment batch.',z.object({activityId:numericId,expandReplies:z.boolean().default(false),...listOptions}),readDiscussion),
-  searchJobs:siteFn('Search public job cards by keywords, location, company and pagination; reads LinkedIn’s guest jobs endpoint.',z.object({
-    keywords:z.string().min(1).max(300),location:z.string().max(200).optional(),companyId:numericId.optional(),
-    remote:z.enum(['onsite','remote','hybrid']).optional(),
-    datePosted:z.enum(['past_hour','past_24_hours','past_week','past_month']).optional(),
-    jobType:z.array(z.enum(['full_time','part_time','contract','temporary','volunteer','internship','other'])).optional(),
-    experienceLevel:z.array(z.enum(['internship','entry','associate','mid_senior','director','executive'])).optional(),
-    geoId:numericId.optional(),distance:z.number().int().positive().optional(),companyIds:z.array(numericId).optional(),industryIds:z.array(numericId).optional(),jobFunctions:z.array(z.string()).optional(),fewApplicants:z.boolean().optional(),
-    easyApply:z.boolean().optional(),sortBy:z.enum(['date','relevance']).optional(),...paging,
-  }),async a=>{
-    const params=new URLSearchParams({keywords:a.keywords,start:a.start});
-    if(a.location)params.set('location',a.location);if(a.companyId)params.set('f_C',String(a.companyId));
-    if(a.remote)params.set('f_WT',({onsite:'1',remote:'2',hybrid:'3'})[a.remote]);
-    addJobFilters(params,a);
-    const html=await client.request(`/jobs-guest/jobs/api/seeMoreJobPostings/search?${params}`,{type:'text',signal:a.signal,ttl:30000});
-    const cards=jobCards(html,a.count);
-    const dates=cards.sources.map(item=>Date.parse(item.publishedAt));
-    const serverOrderMatched=dates.every((date,i)=>Number.isFinite(date)&&(i===0||dates[i-1]>=date));
-    if(a.sortBy==='date')cards.sources.sort((left,right)=>(Date.parse(right.publishedAt)||0)-(Date.parse(left.publishedAt)||0));
-    return result(cards.sources,{order:{requested:a.sortBy??'relevance',scope:a.sortBy==='date'?'returned_page':'server',serverOrderMatched:a.sortBy==='date'?serverOrderMatched:null},requestedFilters:{datePosted:a.datePosted,jobType:a.jobType,experienceLevel:a.experienceLevel,remote:a.remote,easyApply:a.easyApply},filterVerification:'request_parameters',returnedByServer:cards.total,nextStart:cards.total?a.start+Math.min(a.count,cards.total):null,
-      instruction:'nextStart advances by cards consumed. These are public job snippets in sources. Pass sources[i].id to getJob to read responsibilities and requirements.'});
-  }),
+  searchJobs:siteFn('Search job cards without changing the tab. Accepts structured company, location, workplace, date, and experience filters or an already filtered LinkedIn jobs URL. Pass nextPage.args unchanged. A filter_unverified status means the cards do not confirm the requested workplace.',jobsSearchInput,searchJobs),
   getJob:siteFn('Read a public job description, including requirements and original job link.',z.object({id:numericId,...readOptions}),async a=>{
     const html=await client.request(`/jobs-guest/jobs/api/jobPosting/${a.id}`,{type:'text',signal:a.signal,ttl:30000});
     return jobDescription(html,a.id,a);
@@ -1173,4 +1683,4 @@ const skill={
   })),
   getRateLimit:siteFn('Inspect conservative session request budgets and cooldown.',empty,()=>client.status()),
 };
-export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+' LinkedIn uses the page’s existing session and public guest job responses. General search and profile sections use current SDUI APIs. Filtered people search and jobs parse downloaded HTML without changing the tab. Pass people search nextPage.args unchanged to retain all filters. On login, access, rate-limit or protocol errors, preserve the exact error; do not navigate or add a page fallback. Date sorting orders the returned job page only; requestedFilters describes request parameters. Native readers recognize semantic sections and post identities. Use readProfileSection for publications, patents, courses, organizations, test_scores and featured. For navigation_required, open url in the browser then execute next. readProfileSection and activity/company list readers use loaded native pages; start/count paginate loaded entries and loadMore requests additional entries. Write flow: prepareAction returns a draftId, submitDraft submits once, getDraftStatus inspects the outcome. Connection invitations use the existing session without changing the tab. submission_unconfirmed is not a success result. Native account and content functions use navigation continuations.'});
+export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+' LinkedIn uses the page’s existing session and public guest job responses. General search and profile sections use current SDUI APIs. Filtered people search and jobs parse downloaded HTML without changing the tab. Use getSearchFilters to discover available filters, findFilterValues when a name needs disambiguation, and pass its value into searchPeople or searchJobs. Read people education with getEntity({refs, sections:["education"]}). Pass search nextPage.args unchanged to retain filters. Searches return compact records by default. Use fullPayload for the complete structured records returned for that page. On login, access, rate-limit or protocol errors, preserve the exact error; do not navigate or add a page fallback. Date sorting orders the returned job page only; requestedFilters describes request parameters. Native readers recognize semantic sections and post identities. Use readProfileSection for publications, patents, courses, organizations, test_scores and featured. For navigation_required, open url in the browser then execute next. readProfileSection and activity/company list readers use loaded native pages; start/count paginate loaded entries and loadMore requests additional entries. Write flow: prepareAction returns a draftId, submitDraft submits once, getDraftStatus inspects the outcome. Connection invitations use the existing session without changing the tab. submission_unconfirmed is not a success result. Native account and content functions use navigation continuations.'});
