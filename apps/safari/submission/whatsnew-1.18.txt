@@ -1,0 +1,4 @@
+Read independent website results in parallel while respecting each site’s request limits.
+Reuse earlier tool results in the same conversation to filter and combine information with fewer repeated requests.
+Updated built-in skills for US Card Forum, Reddit, Discord, LinkedIn and other sites.
+Updated the LinkedIn skill to match the current online version.
