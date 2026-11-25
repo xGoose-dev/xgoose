@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         x
 // @namespace    x
-// @version      0.2.5
+// @version      0.2.6
 // @description  Search and read posts, conversations, profiles and timelines with X’s browser-session GraphQL API.
 // @match        https://x.com/*
 // @match        https://www.x.com/*
@@ -289,6 +289,7 @@ const client=createClient('x',{minIntervalMs:1500,perMinute:20,perHour:200},u=>u
 const jsonPostReads = new Set(['SearchTimeline', 'TweetDetail']);
 const searchFilters = {Latest: 'live', People: 'user', Photos: 'image', Videos: 'video', Top: 'top'};
 const loadedOperations = new Map();
+let webAuthorization;
 let featureSwitch;
 function postId(value) {
   const id=String(value).match(/^(?:https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/(?:[^/]+\/status|i\/web\/status)\/)?(\d+)(?:[/?#].*)?$/)?.[1];
@@ -395,16 +396,21 @@ function capturedRequest(operation, changes) {
 }
 
 function findLoadedOperation(operation) {
-  if (loadedOperations.has(operation)) return loadedOperations.get(operation);
+  if (webAuthorization && loadedOperations.has(operation)) return loadedOperations.get(operation);
   for (const [, modules] of globalThis.webpackChunk_twitter_responsive_web ?? []) {
     for (const factory of Object.values(modules ?? {})) {
       if (typeof factory !== 'function') continue;
       const source = Function.prototype.toString.call(factory);
+      // This constant identifies X's web application. The browser supplies the user's session.
+      if (!webAuthorization && source.includes('"responsive_web"')) {
+        webAuthorization = source.match(/"(Bearer A{10,}[\w%.~-]{45,})"/)?.[1];
+      }
       const match = source.match(/queryId:"([\w-]+)",operationName:"(SearchTimeline|TweetDetail)",operationType:"query",metadata:\{featureSwitches:(\[[^\]]*\]),fieldToggles:(\[[^\]]*\])/);
-      if (!match) continue;
-      const [, id, name, features, toggles] = match;
-      loadedOperations.set(name, {id, features:JSON.parse(features), toggles:JSON.parse(toggles)});
-      if (name === operation) return loadedOperations.get(name);
+      if (match) {
+        const [, id, name, features, toggles] = match;
+        loadedOperations.set(name, {id, features:JSON.parse(features), toggles:JSON.parse(toggles)});
+      }
+      if (webAuthorization && loadedOperations.has(operation)) return loadedOperations.get(operation);
     }
   }
 }
@@ -412,34 +418,28 @@ function findLoadedOperation(operation) {
 function pageFeatureSwitch() {
   if (featureSwitch) return featureSwitch;
   // X removes its global state after initialization, but keeps the inline JSON.
-  const prefix = 'window.__INITIAL_STATE__=';
-  const script = [...document.scripts].find(script => script.textContent.startsWith(prefix))?.textContent;
-  const end = script?.indexOf(';window.__META_DATA__') ?? -1;
-  if (end < 0) return;
+  const state = globalThis.__INITIAL_STATE__?.featureSwitch;
+  if (state) return state;
+  const prefix = /^\s*window\.__INITIAL_STATE__\s*=\s*/;
+  const script = [...document.scripts].find(script => prefix.test(script.textContent))?.textContent;
+  const end = script?.search(/;\s*window\.__META_DATA__\s*=/) ?? -1;
+  if (end === -1) return;
   try {
-    featureSwitch = JSON.parse(script.slice(prefix.length, end)).featureSwitch;
+    featureSwitch = JSON.parse(script.slice(0, end).replace(prefix, '')).featureSwitch;
     return featureSwitch;
   } catch {
     // Fall back to opening the native page if X changes its bootstrap format.
   }
 }
 
-function sessionHeaders() {
-  for (const request of xRequests().reverse()) {
-    if (request.status < 200 || request.status >= 300 || !URL.canParse(request.url, location.href) ||
-        new URL(request.url, location.href).origin !== location.origin) continue;
-    const headers = observedHeaders(request);
-    if (headers.has('authorization')) return headers;
-  }
-}
-
 function requestFromLoadedClient(operation, changes) {
-  if (!jsonPostReads.has(operation)) return;
-  const headers = sessionHeaders();
-  if (!headers) return;
   const descriptor = findLoadedOperation(operation);
   const config = pageFeatureSwitch();
-  if (!descriptor || !config) return;
+  const missing = [];
+  if (!descriptor) missing.push('operation_definition');
+  if (!config) missing.push('feature_configuration');
+  if (!webAuthorization) missing.push('web_application_header');
+  if (missing.length) throw fault('operation_not_observed', 'The current X page has not loaded the web client data for ' + operation + '.', {missing});
   const flag = name => config.customOverrides?.[name]?.value ?? config.user?.config?.[name]?.value ?? config.defaultConfig?.[name]?.value ?? false;
   const product = changes.product ?? 'Latest';
   const defaults = operation === 'SearchTimeline' ? {
@@ -466,17 +466,25 @@ function requestFromLoadedClient(operation, changes) {
     };
     payload.fieldToggles = Object.fromEntries(Object.entries(toggles).filter(([name]) => descriptor.toggles.includes(name)));
   }
-  headers.set('content-type','application/json');
+  const headers = new Headers({
+    authorization:webAuthorization,
+    'content-type':'application/json',
+    'x-twitter-auth-type':'OAuth2Session',
+    'x-twitter-active-user':'yes',
+    'x-twitter-client-language':document.documentElement?.lang || 'en',
+  });
   const url = new URL(`/i/api/graphql/${descriptor.id}/${operation}`, location.origin);
   return {url, headers, method:'POST', body:JSON.stringify(payload)};
 }
 
 async function query(operation,changes={},a={}) {
   if(!operations.includes(operation))throw fault('invalid_operation','Only explicitly allowlisted read operations are available.');
-  const request = capturedRequest(operation, changes) ?? requestFromLoadedClient(operation, changes);
+  const csrf = cookie('ct0');
+  const request = csrf && jsonPostReads.has(operation)
+    ? requestFromLoadedClient(operation, changes)
+    : capturedRequest(operation, changes);
   if (!request) throw fault('operation_not_observed', 'Open the matching X page to observe its ' + operation + ' request.');
   const {url, headers, method, body} = request;
-  const csrf = cookie('ct0');
   if (csrf) headers.set('x-csrf-token', csrf);
   const data=await client.request(url.href,{headers,method,body,signal:a.signal,ttl:0});
   if (a.raw) return data;
@@ -486,7 +494,7 @@ async function query(operation,changes={},a={}) {
   return normalized;
 }
 
-function nativePage(operation, variables) {
+function nativePage(operation, variables, missing) {
   let url;
   if (operation === 'SearchTimeline' && typeof variables.rawQuery === 'string') {
     url = new URL('/search', location.origin);
@@ -495,7 +503,8 @@ function nativePage(operation, variables) {
     url = new URL('/i/web/status/' + variables.focalTweetId, location.origin);
   }
   if (!url) throw fault('operation_not_observed', 'Open the matching X page to observe its ' + operation + ' request.');
-  return {status:'navigation_required', operation, url:url.href, instruction:'Open this URL as an X page to start its native request.'};
+  return {status:'navigation_required', operation, url:url.href, ...(missing ? {missing} : {}),
+    instruction:'Keep this tab open. Use spawn_agent with this URL in a background tab. Ask the peer to call x.readObserved with the same operation and variables and return the API result. Use wait_agents to retrieve it. The peer should report failure if X remains unavailable.'};
 }
 
 async function readX(operation, variables, options) {
@@ -503,16 +512,18 @@ async function readX(operation, variables, options) {
     return await query(operation, variables, options);
   } catch (error) {
     if (error.code !== 'operation_not_observed') throw error;
-    return nativePage(operation, variables);
+    return nativePage(operation, variables, error.missing);
   }
 }
 
 async function getXPost(a) {
   const id = String(a.id);
-  try {
-    return await query('TweetResultByRestId', {tweetId: id, includePromotedContent: false}, a);
-  } catch (error) {
-    if (error.code !== 'operation_not_observed') throw error;
+  if (!cookie('ct0')) {
+    try {
+      return await query('TweetResultByRestId', {tweetId: id, includePromotedContent: false}, a);
+    } catch (error) {
+      if (error.code !== 'operation_not_observed') throw error;
+    }
   }
   const page = await readX('TweetDetail', {focalTweetId: id}, a);
   if (page.status === 'navigation_required') return page;
@@ -583,4 +594,4 @@ const skill={
   }),
   getRateLimit:siteFn('Inspect request budgets and server cooldown.',empty,()=>client.status()),
 };
-export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+' Prefer readObserved for native X GraphQL. Use SearchTimeline with rawQuery and product for search, and TweetDetail with focalTweetId to read a post and its conversation. Use the returned timeline cursor as variables.cursor for the next page. If a call returns navigation_required, use the returned X page to load the matching native request and retry there. Use getPost or getConversation before readPostImages when you need selected images.'});
+export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+' Prefer readObserved for native X GraphQL. Use SearchTimeline with rawQuery and product for search, and TweetDetail with focalTweetId to read a post and its conversation. Use the returned timeline cursor as variables.cursor for the next page. If a call returns navigation_required, follow its instructions to run the read in another X tab while preserving the current page. Use getPost or getConversation before readPostImages when you need selected images.'});
