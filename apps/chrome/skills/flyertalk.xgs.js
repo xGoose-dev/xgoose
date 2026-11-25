@@ -249,7 +249,7 @@ function parseMemberUrl(href) {
 function currentRouteImpl() {
   const href = location.href;
   const pathname = location.pathname;
-  const thread = parseThreadUrlImpl(href);
+  const thread = currentThreadRoute();
   if (thread) return { type: 'thread', threadId: thread.threadId, page: thread.page };
   const forum = parseForumUrlImpl(href);
   if (forum) return { type: 'forum', forumId: forum.forumId, page: forum.page };
@@ -271,9 +271,12 @@ async function getVbulletin() {
 
 /* ───── Current page: forum and thread ───── */
 
-function currentThreadId() {
-  if (location.pathname.endsWith('/showthread.php')) return Number(new URLSearchParams(location.search).get('t')) || null;
-  return parseThreadUrlImpl(location.href)?.threadId ?? null;
+function currentThreadRoute() {
+  if (!location.pathname.endsWith('/showthread.php')) return parseThreadUrlImpl(location.href);
+  const params = new URLSearchParams(location.search);
+  const threadId = Number(params.get('t'));
+  if (!Number.isSafeInteger(threadId) || threadId <= 0) return null;
+  return { threadId, page: Number(params.get('page')) || undefined };
 }
 
 /** Thread URLs carry only the forum slug; the breadcrumb link with that slug carries the id. */

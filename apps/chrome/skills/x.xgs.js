@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         x
 // @namespace    x
-// @version      0.2.6
+// @version      0.2.7
 // @description  Search and read posts, conversations, profiles and timelines with X’s browser-session GraphQL API.
 // @match        https://x.com/*
 // @match        https://www.x.com/*

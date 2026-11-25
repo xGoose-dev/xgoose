@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         linkedin
 // @namespace    linkedin
-// @version      0.3.5
+// @version      0.3.6
 // @description  LinkedIn profiles, company research, jobs, network, inbox, rich content and staged publishing, messaging and applications.
 // @match        https://www.linkedin.com/*
 // @match        https://linkedin.com/*
