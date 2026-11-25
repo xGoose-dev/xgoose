@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         reddit
 // @namespace    reddit
-// @version      0.4.4
+// @version      0.4.5
 // @description  Read Reddit posts, search comments, browse user profiles/posts/comments, community feeds and wikis with native pagination.
 // @match        https://www.reddit.com/*
 // @match        https://reddit.com/*
@@ -312,6 +312,31 @@ const listingParams=a=>({limit:a.limit,after:a.after,before:a.before,count:a.cou
 const prefix=a=>a.subreddit?`/r/${a.subreddit}`:'';
 const feedSort = z.enum(['hot', 'new', 'top', 'rising', 'controversial', 'best']).default('hot');
 const renderedFeedPath = /^\/(?:r\/[A-Za-z0-9_+]+(?:\/(?:hot|new|top|rising|controversial|best))?\/?)?$/i;
+const includeRaw = z.boolean().default(false).describe('Include the full Reddit response in raw. For a rendered feed, raw contains the uncompressed post cards.');
+const redundantSourceFields = new Set(['excerpt', 'fullname', 'access', 'method']);
+
+function compactSources(sources) {
+  return sources.map(row => Object.fromEntries(Object.entries(row).filter(([key, value]) =>
+    value != null && !redundantSourceFields.has(key) && !(key === 'offset' && value === 0) &&
+    !(key === 'externalUrl' && value === row.url) &&
+    !(key === 'title' && row.kind === 'comment' && value === `Comment by ${row.author}`))));
+}
+
+function evidenceFn(summary, input, handler, examples) {
+  return siteFn(summary, input.extend({includeRaw}), async a => {
+    const {sources, post, comments, original, ...rest} = await handler(a);
+    return {...rest,
+      ...(sources && {sources: compactSources(sources)}),
+      ...(post && {post: compactSources(post)}),
+      ...(comments && {comments: {...comments, sources: compactSources(comments.sources)}}),
+      ...(original && {original: compactSources(original)}),
+    };
+  }, examples);
+}
+
+function withRaw(payload, raw, requested) {
+  return requested ? {...payload, raw} : payload;
+}
 
 function feedSources(feed, method) {
   const posts = new Map();
@@ -339,15 +364,15 @@ function feedSources(feed, method) {
   return [...posts.values()];
 }
 
-function readCurrentFeed({limit, offset}) {
+function readCurrentFeed({limit, offset, includeRaw}) {
   const feed = renderedFeedPath.test(location.pathname) && document.querySelector('shreddit-feed');
   const posts = feedSources(feed, 'dom');
   const sources = posts.slice(offset, offset + limit);
-  return result(sources, {
+  return withRaw(result(sources, {
     url: location.href, coverage: 'loaded_feed', transport: 'shreddit_dom',
     status: posts.length ? 'ok' : 'feed_not_loaded', returned: sources.length,
     nextOffset: offset + sources.length < posts.length ? offset + sources.length : null,
-  });
+  }), posts, includeRaw);
 }
 
 async function readFeedFragment(path, query, a) {
@@ -356,11 +381,11 @@ async function readFeedFragment(path, query, a) {
   const posts = feedSources(doc, 'api');
   if (!posts.length) throw fault('feed_not_loaded', 'Reddit returned no post cards for this feed page.');
   const sources = posts.slice(a.offset, a.offset + a.limit);
-  return result(sources, {
+  return withRaw(result(sources, {
     transport: 'shreddit_feed', coverage: 'feed_page', returned: sources.length,
     nextOffset: a.offset + sources.length < posts.length ? a.offset + sources.length : null,
     cursor: feedCursor(doc, path),
-  });
+  }), html, a.includeRaw);
 }
 
 function feedCursor(doc, path) {
@@ -448,7 +473,7 @@ async function listing(path,params,a,personal=false){
   if(a.after && a.before)throw fault('invalid_cursor','Choose after or before, not both.');
   const raw=await api(path,{...listingParams(a),...params},a,personal);const data=raw.data;
   if(!data || !Array.isArray(data.children))throw fault('invalid_response','Expected a Reddit Listing; login or API access may be required.');
-  return sourcePage(data.children,a,{after:data.after??null,before:data.before??null});
+  return withRaw(sourcePage(data.children,a,{after:data.after??null,before:data.before??null}),raw,a.includeRaw);
 }
 function commentPage(raw,a){
   const comments=[],more=[],seen=new Set();
@@ -465,9 +490,9 @@ const userOptions={name:username,sort:z.enum(['hot','new','top','controversial']
 const wikiOptions={subreddit:z.string().regex(/^[A-Za-z0-9_]+$/),page:z.string().regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/).default('index')};
 const commentOptions={offset,textOffset:offset,maxChars:z.number().int().positive().optional(),moreOffset:offset};
 const skill={
-  readCurrentFeed:siteFn('Read post cards already rendered on the current Reddit home or subreddit feed. Use sources[].id or .url with getThread; nextOffset continues loaded cards.',z.object({limit:count(25,100),offset}),readCurrentFeed),
-  getPosts:siteFn('Read a global or subreddit feed by sort. Consume nextOffset on the same page, then pass the returned cursor to fetch the next Hot or New page. For navigation_required, open the returned page and use readCurrentFeed. after/before/count continue legacy API pages.',z.object({subreddit:subreddit.optional(),sort:feedSort,t:time,...listingOptions,cursor:z.string().min(1).max(500).optional()}),getPosts),
-  searchPosts:siteFn('Search Reddit post cards. Use a concrete topic or subreddit. Get the discussion link from sources[].url, then pass sources[].id to getThread for the body and comments. nextOffset continues loaded cards; cursor advances the server page.',z.object({
+  readCurrentFeed:evidenceFn('Read post cards already rendered on the current Reddit home or subreddit feed. Use sources[].id or .url with getThread; nextOffset continues loaded cards.',z.object({limit:count(25,100),offset}),readCurrentFeed),
+  getPosts:evidenceFn('Read a global or subreddit feed by sort. Consume nextOffset on the same page, then pass the returned cursor to fetch the next Hot or New page. For navigation_required, open the returned page and use readCurrentFeed. after/before/count continue legacy API pages.',z.object({subreddit:subreddit.optional(),sort:feedSort,t:time,...listingOptions,cursor:z.string().min(1).max(500).optional()}),getPosts),
+  searchPosts:evidenceFn('Search Reddit post cards. Use a concrete topic or subreddit. Get the discussion link from sources[].url, then pass sources[].id to getThread for the body and comments. nextOffset continues loaded cards; cursor advances the server page.',z.object({
     q:z.string().trim().min(1).max(500),subreddit:subreddit.optional(),restrict_sr:z.boolean().default(true),
     sort:z.enum(['relevance','hot','top','new','comments']).default('relevance'),t:time,include_over_18:z.boolean().default(false),limit:count(25,100),offset,cursor:z.string().min(1).optional(),
   }),async a=>{
@@ -484,14 +509,15 @@ const skill={
     });
     const next=doc.querySelector('faceplate-partial[src*="/svc/shreddit/search"][src*="cursor="]')?.getAttribute('src');
     const cursor=next?new URL(next,location.origin).searchParams.get('cursor'):null,end=a.offset+a.limit;
-    return result(rows.slice(a.offset,end),{returned:rows.slice(a.offset,end).length,loadedCount:rows.length,nextOffset:end<rows.length?end:null,cursor:end>=rows.length?cursor:null,transport:'shreddit_search'});
+    const sources=rows.slice(a.offset,end);
+    return withRaw(result(sources,{returned:sources.length,loadedCount:rows.length,nextOffset:end<rows.length?end:null,cursor:end>=rows.length?cursor:null,transport:'shreddit_search'}),html,a.includeRaw);
   }),
   // Shreddit comment cards: tracking context supplies comment/post IDs; the inner card supplies author, timestamp and body.
-  searchComments:siteFn('Search comment text within a subreddit using native Shreddit cards. Returns bodies, authors, scores, post IDs and comment permalinks; cursor advances the server page.',z.object({
+  searchComments:evidenceFn('Search comment text within a subreddit using native Shreddit cards. Returns bodies, authors, scores, post IDs and comment permalinks; cursor advances the server page.',z.object({
     subreddit:z.string().regex(/^[A-Za-z0-9_]+$/),q:z.string().trim().min(1).max(500),sort:z.enum(['relevance','top','new']).default('relevance'),t:time,limit:count(25,100),offset,cursor:z.string().min(1).optional(),
   }),async a=>{
     const query=new URLSearchParams({q:a.q,type:'comments',sort:a.sort,t:a.t});if(a.cursor)query.set('cursor',a.cursor);
-    const doc=documentOf(await client.request(`/svc/shreddit/r/${a.subreddit}/search/?${query}`,{signal:a.signal,type:'text',ttl:30000}));
+    const html=await client.request(`/svc/shreddit/r/${a.subreddit}/search/?${query}`,{signal:a.signal,type:'text',ttl:30000});const doc=documentOf(html);
     const rows=[...doc.querySelectorAll('[data-testid="search-sdui-comment-unit"]')].map(card=>{
       const meta=JSON.parse(card.querySelector('search-telemetry-tracker').getAttribute('data-faceplate-tracking-context'));
       const content=card.querySelector('[data-testid="search-comment-content"]');
@@ -503,17 +529,18 @@ const skill={
     });
     const next=doc.querySelector('faceplate-partial[src*="/search"][src*="cursor="]')?.getAttribute('src');
     const cursor=next?new URL(next,location.origin).searchParams.get('cursor'):null,end=a.offset+a.limit;
-    return result(rows.slice(a.offset,end),{returned:rows.slice(a.offset,end).length,nextOffset:end<rows.length?end:null,cursor:end>=rows.length?cursor:null});
+    const sources=rows.slice(a.offset,end);
+    return withRaw(result(sources,{returned:sources.length,nextOffset:end<rows.length?end:null,cursor:end>=rows.length?cursor:null}),html,a.includeRaw);
   },[{args:{subreddit:'churningcanada',q:'supplementary'}}]),
-  getRecentComments:siteFn('Read newest community comments with text, authors, scores, parent/post IDs and listing cursors.',z.object({subreddit:z.string().regex(/^[A-Za-z0-9_]+$/).optional(),...listingOptions}),a=>listing(`${prefix(a)}/comments.json`,{},a),[{args:{subreddit:'churningcanada',limit:25}}]),
-  getDuplicates:siteFn('Read posts sharing the original post link. Returns the original post and a paginated duplicate-post listing.',z.object({id:postId,sort:z.enum(['num_comments','new']).default('num_comments'),...listingOptions}),async a=>{
+  getRecentComments:evidenceFn('Read newest community comments with text, authors, scores, parent/post IDs and listing cursors.',z.object({subreddit:z.string().regex(/^[A-Za-z0-9_]+$/).optional(),...listingOptions}),a=>listing(`${prefix(a)}/comments.json`,{},a),[{args:{subreddit:'churningcanada',limit:25}}]),
+  getDuplicates:evidenceFn('Read posts sharing the original post link. Returns the original post and a paginated duplicate-post listing.',z.object({id:postId,sort:z.enum(['num_comments','new']).default('num_comments'),...listingOptions}),async a=>{
     const raw=await api(`/duplicates/${a.id.replace(/^t3_/,'')}.json`,{...listingParams(a),sort:a.sort},a);
-    return {...sourcePage(raw[1].data.children,a,{after:raw[1].data.after??null,before:raw[1].data.before??null}),original:raw[0].data.children.map(p=>itemSource(p))};
+    return withRaw({...sourcePage(raw[1].data.children,a,{after:raw[1].data.after??null,before:raw[1].data.before??null}),original:raw[0].data.children.map(p=>itemSource(p))},raw,a.includeRaw);
   },[{args:{id:'1xczwv1'}}]),
   // Wiki JSON: content_md, revision_by.data.name, revision_date and revision_id.
-  getWikiPage:siteFn('Read a community wiki page as Markdown, with revision author, date and ID. offset/maxChars continue page text.',z.object({...wikiOptions,...readOptions}),async a=>{
-    const d=(await api(`/r/${a.subreddit}/wiki/${a.page}.json`,{},a)).data;
-    return result([source({id:d.revision_id,kind:'wiki',title:`r/${a.subreddit} wiki/${a.page}`,url:`https://www.reddit.com/r/${a.subreddit}/wiki/${a.page}`,text:d.content_md,author:d.revision_by?.data?.name,publishedAt:d.revision_date},a)],{revisionId:d.revision_id,reason:d.reason});
+  getWikiPage:evidenceFn('Read a community wiki page as Markdown, with revision author, date and ID. offset/maxChars continue page text.',z.object({...wikiOptions,...readOptions}),async a=>{
+    const raw=await api(`/r/${a.subreddit}/wiki/${a.page}.json`,{},a);const d=raw.data;
+    return withRaw(result([source({id:d.revision_id,kind:'wiki',title:`r/${a.subreddit} wiki/${a.page}`,url:`https://www.reddit.com/r/${a.subreddit}/wiki/${a.page}`,text:d.content_md,author:d.revision_by?.data?.name,publishedAt:d.revision_date},a)],{revisionId:d.revision_id,reason:d.reason}),raw,a.includeRaw);
   },[{args:{subreddit:'churningcanada',page:'index'}}]),
   getWikiPages:siteFn('List community wiki page paths and original URLs.',z.object({subreddit:wikiOptions.subreddit}),async a=>({pages:(await api(`/r/${a.subreddit}/wiki/pages.json`,{},a)).data.map(page=>({page,url:`https://www.reddit.com/r/${a.subreddit}/wiki/${page}`}))}),[{args:{subreddit:'churningcanada'}}]),
   // Revision Listing children are flat revision objects; their native cursor starts with WikiRevision_.
@@ -521,31 +548,31 @@ const skill={
     const d=(await api(`/r/${a.subreddit}/wiki/revisions/${a.page}.json`,{limit:a.limit,after:a.after},a)).data;
     return {revisions:d.children.map(r=>({id:r.id,page:r.page,author:r.author?.data?.name,publishedAt:isoTime(r.timestamp),reason:r.reason,url:`https://www.reddit.com/r/${a.subreddit}/wiki/${r.page}?v=${r.id}`})),after:d.after??null,before:d.before??null};
   },[{args:{subreddit:'churningcanada',page:'index',limit:10}}]),
-  getThread:siteFn('Read a post and its comment tree in one request. Return the result directly for compact output. In JavaScript, comments.sources is an array of comment objects. The text fields are post[0].text and comments.sources[i].text. id accepts a post ID, fullname or full Reddit URL.',z.object({id:postId,sort:commentSort,limit:count(25,100),depth:z.number().int().min(1).max(10).default(4),...commentOptions}),async a=>{
+  getThread:evidenceFn('Read a post and its comment tree in one request. In JavaScript, comments.sources is an array of comment objects. The text fields are post[0].text and comments.sources[i].text. id accepts a post ID, fullname or full Reddit URL.',z.object({id:postId,sort:commentSort,limit:count(25,100),depth:z.number().int().min(1).max(10).default(4),...commentOptions}),async a=>{
     const raw=await api(`/comments/${a.id}.json`,{sort:a.sort,limit:a.limit,depth:a.depth},a);
-    return {post:raw[0].data.children.map(p=>itemSource(p)),comments:commentPage(raw[1].data.children,a)};
+    return withRaw({post:raw[0].data.children.map(p=>itemSource(p)),comments:commentPage(raw[1].data.children,a)},raw,a.includeRaw);
   }),
   readPostImages:siteFn('Resolve numbered post/gallery images to original URLs for the extension image channel.',z.object({id:postId,images:z.array(z.number().int().positive()).optional()}),async a=>{
     const raw=await api(`/comments/${a.id}.json`,{limit:1,depth:1},a);
     const images=postImages(raw[0].data.children[0].data);
     return {imageContext:{requested:true,delivery:'urls_only_until_host_attaches',images:(a.images??images.map(img=>img.image)).map(n=>({image:n,url:images[n-1].url}))}};
   }),
-  getPost:siteFn('GET comments/id.json: read the original post from the first listing. Supports body character continuation; comments use getComments.',z.object({id:postId,...readOptions}),async a=>{
+  getPost:evidenceFn('GET comments/id.json: read the original post from the first listing. Supports body character continuation; comments use getComments.',z.object({id:postId,...readOptions}),async a=>{
     const raw=await api(`/comments/${a.id.replace(/^t3_/,'')}.json`,{limit:1,depth:1},a);
-    return result(raw[0].data.children.map(p=>itemSource(p,a)),{coverage:'post_body_only'});
+    return withRaw(result(raw[0].data.children.map(p=>itemSource(p,a)),{coverage:'post_body_only'}),raw,a.includeRaw);
   }),
-  getComments:siteFn('GET comments/id.json: comment tree with native sort, limit, depth, optional focused comment/context. Preserves unexpanded more IDs and independent row/text continuations.',z.object({
+  getComments:evidenceFn('GET comments/id.json: comment tree with native sort, limit, depth, optional focused comment/context. Preserves unexpanded more IDs and independent row/text continuations.',z.object({
     id:postId,sort:commentSort,limit:count(25,100),depth:z.number().int().min(1).max(10).default(4),comment:commentId.optional(),context:z.number().int().min(0).max(8).default(0),...commentOptions,
   }),async a=>{const raw=await api(`/comments/${a.id.replace(/^t3_/,'')}.json`,{sort:a.sort,limit:a.limit,depth:a.depth,comment:a.comment,context:a.context},a);
     if(!Array.isArray(raw)||!raw[1]?.data)throw fault('invalid_response','Expected the post and comment listings.');
-    return commentPage(raw[1].data.children,a);
+    return withRaw(commentPage(raw[1].data.children,a),raw,a.includeRaw);
   }),
-  getMoreComments:siteFn('GET api/morechildren.json: explicitly expand up to 100 IDs from a more object. Native link_id is a t3_ fullname. May be blocked by Reddit API/network access; no automatic fallback or retry.',z.object({link_id:z.string().regex(/^t3_[a-z0-9]+$/),children:z.array(commentId).min(1).max(100),sort:commentSort,...commentOptions}),async a=>{
+  getMoreComments:evidenceFn('GET api/morechildren.json: explicitly expand up to 100 IDs from a more object. Native link_id is a t3_ fullname. May be blocked by Reddit API/network access; no automatic fallback or retry.',z.object({link_id:z.string().regex(/^t3_[a-z0-9]+$/),children:z.array(commentId).min(1).max(100),sort:commentSort,...commentOptions}),async a=>{
     const raw=await api('/api/morechildren.json',{api_type:'json',link_id:a.link_id,children:a.children.join(','),sort:a.sort},a);
     if(!Array.isArray(raw.json?.data?.things))throw fault('invalid_response','Expected expanded comment things.');
-    return commentPage(raw.json.data.things,a);
+    return withRaw(commentPage(raw.json.data.things,a),raw,a.includeRaw);
   }),
-  searchSubreddits:siteFn('GET subreddits/search.json: find communities by native q and listing cursors.',z.object({q:z.string().trim().min(1).max(300),...listingOptions}),a=>listing('/subreddits/search.json',{q:a.q},a)),
+  searchSubreddits:evidenceFn('GET subreddits/search.json: find communities by native q and listing cursors.',z.object({q:z.string().trim().min(1).max(300),...listingOptions}),a=>listing('/subreddits/search.json',{q:a.q},a)),
   getSubreddit:siteFn('GET r/name/about[ /rules].json: choose board details or posting rules.',z.object({name:z.string().regex(/^[A-Za-z0-9_]+$/),section:z.enum(['about','rules']).default('about')}),async a=>{
     const raw=await api(`/r/${a.name}/about${a.section==='rules'?'/rules':''}.json`,{},a);
     if(a.section==='rules')return {rules:raw.rules,site_rules:raw.site_rules};
@@ -555,12 +582,12 @@ const skill={
   }),
   getUser:siteFn('GET user/name/about.json: profile with bio, avatar, registration date and post/comment karma.',z.object({name:username}),async a=>profile(await api(`/user/${a.name}/about.json`,{},a))),
   getMe:siteFn('GET api/me.json: current browser-session identity and profile fields.',empty,async a=>profile(await api('/api/me.json',{},a,true))),
-  getUserContent:siteFn('GET user/name/section.json: overview, posts, comments or account-only saved/voted/hidden lists. Choose section/sort/t and native listing cursors; private lists require their owner session.',z.object({
+  getUserContent:evidenceFn('GET user/name/section.json: overview, posts, comments or account-only saved/voted/hidden lists. Choose section/sort/t and native listing cursors; private lists require their owner session.',z.object({
     name:username,section:z.enum(['overview','submitted','comments','saved','upvoted','downvoted','hidden','gilded']).default('overview'),sort:z.enum(['hot','new','top','controversial']).default('new'),t:time,...listingOptions,
   }),a=>listing(`/user/${a.name}/${a.section}.json`,{sort:a.sort,t:a.t},a,['saved','upvoted','downvoted','hidden'].includes(a.section))),
-  getUserComments:siteFn('Read comments written by a user: full text, date, score, subreddit, parent/post IDs and permalinks. Supports sort/t and native listing cursors.',z.object(userOptions),a=>listing(`/user/${a.name}/comments.json`,{sort:a.sort,t:a.t},a),[{args:{name:'csgonoob0',sort:'new',limit:25}}]),
-  getUserPosts:siteFn('Read posts submitted by a user: title, body, date, score, subreddit and permalinks. Supports sort/t and native listing cursors.',z.object(userOptions),a=>listing(`/user/${a.name}/submitted.json`,{sort:a.sort,t:a.t},a),[{args:{name:'csgonoob0',sort:'new',limit:25}}]),
-  getMySubreddits:siteFn('GET subreddits/mine/where.json: current account subscriptions, moderation or contributor communities.',z.object({where:z.enum(['subscriber','moderator','contributor']).default('subscriber'),...listingOptions}),a=>listing(`/subreddits/mine/${a.where}.json`,{},a,true)),
+  getUserComments:evidenceFn('Read comments written by a user: full text, date, score, subreddit, parent/post IDs and permalinks. Supports sort/t and native listing cursors.',z.object(userOptions),a=>listing(`/user/${a.name}/comments.json`,{sort:a.sort,t:a.t},a),[{args:{name:'csgonoob0',sort:'new',limit:25}}]),
+  getUserPosts:evidenceFn('Read posts submitted by a user: title, body, date, score, subreddit and permalinks. Supports sort/t and native listing cursors.',z.object(userOptions),a=>listing(`/user/${a.name}/submitted.json`,{sort:a.sort,t:a.t},a),[{args:{name:'csgonoob0',sort:'new',limit:25}}]),
+  getMySubreddits:evidenceFn('GET subreddits/mine/where.json: current account subscriptions, moderation or contributor communities.',z.object({where:z.enum(['subscriber','moderator','contributor']).default('subscriber'),...listingOptions}),a=>listing(`/subreddits/mine/${a.where}.json`,{},a,true)),
   getCapabilities:siteFn('Describe read API coverage, available parameters, authentication and limits. No endpoint probe.',empty,()=>({readOnly:true,authentication:'Current-origin browser session, no extracted OAuth tokens',
     posts:['readCurrentFeed','getPosts','searchPosts','getPost','getThread','readPostImages','getDuplicates'],comments:['searchComments','getRecentComments','getComments','getMoreComments'],communities:['searchSubreddits','getSubreddit','getMySubreddits'],users:['getUser','getMe','getUserContent','getUserComments','getUserPosts'],wiki:['getWikiPage','getWikiPages','getWikiHistory'],
     pagination:'Native fullnames after/before/count; consume local nextOffset first. Comment more IDs are explicit.',
@@ -573,4 +600,4 @@ function profile(raw){
   if(d.subreddit)user.description=d.subreddit.public_description;
   return {user,url:`https://www.reddit.com/user/${d.name}/`};
 }
-export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+" For feed discovery, start with readCurrentFeed when the loaded Reddit feed fits the scope. For a specific sort or community, call getPosts. If it returns navigation_required, open the returned Reddit URL and use readCurrentFeed there. Use searchPosts for a concrete topic or community; its cards provide sources[].id and sources[].url. Return getThread results directly for compact display. In js_exec the full payload is available as xgoose.results[resultId], with the body in post[0].text and an array of comment objects in comments.sources. To show the full payload on request, return JSON.stringify(xgoose.results[resultId]) using the saved result ID. Use getUser for a profile, getUserComments for comments written by that user, and getUserPosts for their submissions. searchComments searches comment text within a subreddit; getRecentComments reads its newest replies. getWikiPages lists paths for getWikiPage; getWikiHistory reads revisions. Post IDs also accept Reddit URLs and redd.it links. readPostImages reads the original image URLs identified by [image N]. Consume nextOffset before advancing a listing after/before or a feed or search cursor. Expand more IDs or focus getComments on a comment. Body source.nextOffset is a character offset."});
+export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+" For feed discovery, start with readCurrentFeed when the loaded Reddit feed fits the scope. For a specific sort or community, call getPosts. If it returns navigation_required, open the returned Reddit URL and use readCurrentFeed there. Use searchPosts for a concrete topic or community. Its cards provide sources[].id and sources[].url. Evidence readers return compact objects by default. Set includeRaw:true when the original response is needed in raw. In JavaScript the main post text is post[0].text, and comments.sources is an array of objects with text fields. Use getUser for a profile, getUserComments for comments written by that user, and getUserPosts for their submissions. searchComments searches comment text within a subreddit; getRecentComments reads its newest replies. getWikiPages lists paths for getWikiPage; getWikiHistory reads revisions. Post IDs also accept Reddit URLs and redd.it links. readPostImages reads the original image URLs identified by [image N]. Consume nextOffset before advancing a listing after/before or a feed or search cursor. Expand more IDs or focus getComments on a comment. Body source.nextOffset is a character offset."});
