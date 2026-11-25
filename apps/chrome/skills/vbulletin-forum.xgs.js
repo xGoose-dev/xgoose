@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         vbulletin-forum
 // @namespace    vbulletin
-// @version      0.2.2
+// @version      0.2.3
 // @description  Generic helpers for vBulletin 3.x/4.x forums (search posts/threads, read threads, see post pictures, recent threads, forum listings).
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*
@@ -316,7 +316,7 @@ async function search(opts, extract) {
 
 /* ───── Images ───── */
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024, MAX_IMAGE_DATA_CHARS = 500_000;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024, MAX_IMAGE_DATA_CHARS = 320_000;
 /** Downscaled JPEG in the image shape hosts attach to the model; the image host's CORS rules apply. */
 async function modelImage(url) {
   const response = await fetch(url, { credentials: 'same-origin' });

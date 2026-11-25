@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name youtube
 // @namespace youtube
-// @version 0.2.1
+// @version 0.2.2
 // @description YouTube search, captions, comments, channels, personal feeds, community posts, live chat, heatmaps, storyboard images and frame reading.
 // @match https://www.youtube.com/*
 // @match https://youtube.com/*
@@ -96,30 +96,64 @@ async function searchVideos(a) {
  return {videos:cards(data),channels:nodes(data,'channelRenderer').map(c=>({id:c.channelId,name:text(c.title),description:text(c.descriptionSnippet)})),filters:nodes(data,'searchFilterRenderer').map(f=>({label:text(f.label),params:f.navigationEndpoint?.searchEndpoint?.params})),cursor:cursor(data)};
 }
 async function transcript(id,language) {
+ if(!id)throw Error('Provide a video URL or ID to read captions.');
  const key=`${id}:${language||'default'}`;if(cache.has(key))return cache.get(key);
- const {data}=await page(id);
+ const {data,player}=await page(id);
+ const panel=nodes(data,'updateEngagementPanelContentCommand').find(cmd=>
+  /transcript/i.test(cmd.contentSourcePanelIdentifier?.tag||'')&&cmd.globalConfiguration?.params);
  const endpoint=nodes(data,'getTranscriptEndpoint')[0];
- if(!endpoint)return transcriptFromPage(id,language,'网页初始数据未包含字幕入口');
- let raw;
- try{raw=await api('get_transcript',{params:endpoint.params});}catch(error){const result=await transcriptFromPage(id,language,String(error.message));if(result.status==='ok')cache.set(key,result);return result;}
+ if(panel){
+  const tracks=player?.captions?.playerCaptionsTracklistRenderer;
+  const audio=tracks?.audioTracks?.[tracks.defaultAudioTrackIndex??0];
+  const captions=tracks?.captionTracks||[];
+  const selected=captions[audio?.defaultCaptionTrackIndex??audio?.captionTrackIndices?.[0]??0];
+  const languages=captions.map(track=>({language:text(track.name)||track.languageCode,selected:track===selected}));
+  if(!language||[text(selected?.name),selected?.languageCode].includes(language)){
+   const result=await panelTranscript(id,panel,languages,player);
+   if(result.status==='ok')cache.set(key,result);
+   return result;
+  }
+  if(!endpoint?.params)return {status:'language_unavailable',reason:'YouTube did not expose transcript parameters for the requested language.',languages,segments:[]};
+ }
+ if(!endpoint?.params)return {status:'unavailable',reason:'YouTube did not expose a transcript endpoint for this video.',languages:[],segments:[]};
+ let raw=await api('get_transcript',{params:endpoint.params});
  let languages=nodes(raw,'transcriptFooterRenderer').flatMap(f=>f.languageMenu?.sortFilterSubMenuRenderer?.subMenuItems||[]).map(t=>({language:t.title,params:t.continuation||t.serviceEndpoint?.getTranscriptEndpoint?.params,selected:t.selected}));
  if(language){const target=languages.find(t=>text(t.language)===language);if(!target)throw Error(`字幕语言未找到；可选：${languages.map(t=>text(t.language)).join(', ')}`);if(!target.selected)raw=await api('get_transcript',{params:target.params});languages=languages.map(t=>({...t,selected:t===target}));}
  const segments=nodes(raw,'transcriptSegmentRenderer').map(s=>({startSeconds:Number(s.startMs)/1000,endSeconds:Number(s.endMs)/1000,text:text(s.snippet),url:videoUrl(id,Number(s.startMs)/1000)}));
- const result={status:segments.length?'ok':'unavailable',languages:languages.map(t=>({language:text(t.language),selected:t.selected})),segments};
+ const result={status:segments.length?'ok':'unavailable',source:'youtube_get_transcript',languages:languages.map(t=>({language:text(t.language),selected:t.selected})),segments};
  if(segments.length)cache.set(key,result);return result;
+}
+function clockSeconds(time){return time.trim().split(':').reduce((n,v)=>n*60+Number(v),0);}
+async function panelTranscript(id,panel,languages,player) {
+ const panelId=panel.contentSourcePanelIdentifier.tag;
+ const raw=await api('get_panel',{panelId,params:panel.globalConfiguration.params});
+ const rows=nodes(raw,'transcriptSegmentViewModel');
+ const timings=nodes(raw,'timedSyncDataList').flat().filter(item=>item.endTimeMs!==undefined);
+ const starts=rows.map(row=>row.timestamp?clockSeconds(row.timestamp):NaN);
+ const matchingTimings=timings.length===rows.length&&timings.every((timing,index)=>
+  Math.floor(Number(timing.videoTimeMs)/1000)===starts[index]&&Number(timing.endTimeMs)>=Number(timing.videoTimeMs));
+ const duration=Number(player?.videoDetails?.lengthSeconds);
+ const segments=rows.flatMap((row,index)=>{
+  const startSeconds=matchingTimings?Number(timings[index].videoTimeMs)/1000:starts[index];
+  if(!row.simpleText||!Number.isFinite(startSeconds))return [];
+  const next=starts[index+1];
+  const endSeconds=matchingTimings?Number(timings[index].endTimeMs)/1000:Number.isFinite(next)?next:duration||startSeconds;
+  return [{startSeconds,endSeconds,text:row.simpleText,url:videoUrl(id,startSeconds)}];
+ });
+ return {status:segments.length?'ok':'unavailable',source:'youtube_get_panel',languages,segments};
 }
 async function getTranscript(a={}) {
  const id=videoId(a.video),all=await transcript(id,a.language),offset=a.offset||0,limit=a.limit||80;
  if(all.next||all.status!=='ok')return {videoId:id,...all};
  const selected=all.segments.filter(s=>(a.startSeconds===undefined||s.endSeconds>=a.startSeconds)&&(a.endSeconds===undefined||s.startSeconds<=a.endSeconds));
- return {videoId:id,status:all.status,languages:all.languages,totalSegments:selected.length,segments:selected.slice(offset,offset+limit),nextOffset:offset+limit<selected.length?offset+limit:null};
+ return {videoId:id,status:all.status,source:all.source,languages:all.languages,totalSegments:selected.length,segments:selected.slice(offset,offset+limit),nextOffset:offset+limit<selected.length?offset+limit:null};
 }
 async function searchTranscript(a) {
  const id=videoId(a.video),all=await transcript(id,a.language),query=a.query.toLocaleLowerCase(),context=a.contextSegments??1;
  if(all.next||all.status!=='ok')return {videoId:id,...all,...(all.next?{next:{skill:'youtube',function:'searchTranscript',args:a}}:{})};
  const indices=new Set();all.segments.forEach((s,i)=>{if(s.text.toLocaleLowerCase().includes(query))for(let j=Math.max(0,i-context);j<=Math.min(all.segments.length-1,i+context);j++)indices.add(j);});
  const matched=[...indices].sort((a,b)=>a-b),offset=a.offset||0,limit=a.limit||30;
- return {videoId:id,status:all.status,totalMatches:matched.length,segments:matched.slice(offset,offset+limit).map(i=>all.segments[i]),nextOffset:offset+limit<matched.length?offset+limit:null};
+ return {videoId:id,status:all.status,source:all.source,totalMatches:matched.length,segments:matched.slice(offset,offset+limit).map(i=>all.segments[i]),nextOffset:offset+limit<matched.length?offset+limit:null};
 }
 async function getComments(a={}) {
  const id=videoId(a.video);let data;
@@ -162,28 +196,7 @@ async function seekTo(a) {
 async function readThumbnail(a={}) {
  const video=await getVideo(a);return {imageContext:{requested:true,delivery:'urls_only_until_host_attaches',images:[{image:1,url:video.thumbnail}]}};
 }
-const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-async function waitFor(read,ms=8000){const end=Date.now()+ms;do{const result=read();if(result)return result;await delay(200);}while(Date.now()<end);return null;}
 function navigate(url,fn,args){return {status:'navigation_required',url,next:{skill:'youtube',function:fn,args}};}
-function clockSeconds(value){return value.trim().split(':').reduce((n,v)=>n*60+Number(v),0);}
-async function transcriptFromPage(id,language,apiError){
- if(videoId()!==id)return navigate(videoUrl(id),'getTranscript',{video:id,language});
- let panel=document.querySelector('ytd-transcript-renderer');
- if(!panel){
-  const findButton=()=>[...document.querySelectorAll('button, ytd-button-renderer')].find(e=>/^(show transcript|显示转录文稿|显示文字稿|顯示轉錄稿)$/i.test(e.textContent.trim()));
-  let button=findButton();
-  if(!button){const expand=document.querySelector('#description-inline-expander #expand');if(expand){expand.click();button=await waitFor(findButton,2000);}}
-  if(!button)return {status:'transcript_ui_required',videoId:id,apiError,segments:[],languages:[],hint:'在视频简介中展开 Show transcript，再调用 getTranscript。'};
-  button.click();panel=await waitFor(()=>document.querySelector('ytd-transcript-renderer'));
- }
- if(!panel)return {status:'loading',segments:[],languages:[],apiError};
- const menu=panel.querySelector('ytd-menu-renderer'),selected=menu?.textContent?.trim();
- if(language&&selected&&!selected.includes(language))return {status:'language_selection_required',language,currentLanguage:selected,segments:[],languages:[],hint:'在字幕面板中选择目标语言，再继续读取。'};
- const rows=await waitFor(()=>{const list=[...panel.querySelectorAll('ytd-transcript-segment-renderer')];return list.length?list:null;});
- const segments=(rows||[]).map(row=>({startSeconds:clockSeconds(row.querySelector('.segment-timestamp')?.textContent||'0'),text:row.querySelector('.segment-text')?.textContent?.trim()||''}));
- segments.forEach((segment,i)=>{segment.endSeconds=segments[i+1]?.startSeconds??Number(document.querySelector('video')?.duration||segment.startSeconds);segment.url=videoUrl(id,segment.startSeconds);});
- return {status:segments.length?'ok':'loading',source:'page_transcript',languages:selected?[{language:selected,selected:true}]:[],segments};
-}
 function playlists(data){return nodes(data,'lockupViewModel').filter(x=>x.contentType==='LOCKUP_CONTENT_TYPE_PLAYLIST').map(x=>({id:x.contentId,title:text(x.metadata?.lockupMetadataViewModel?.title),url:`https://www.youtube.com/playlist?list=${x.contentId}`})).concat(nodes(data,'playlistRenderer').map(x=>({id:x.playlistId,title:text(x.title),url:`https://www.youtube.com/playlist?list=${x.playlistId}`})));}
 async function getFeed(a={}){
  const ids={home:'FEwhat_to_watch',subscriptions:'FEsubscriptions',history:'FEhistory',library:'FElibrary',playlists:'FEplaylist_aggregation',channels:'FEchannels',courses:'FEcourses_destination'};

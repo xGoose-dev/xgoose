@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        xiaohongshu
 // @namespace   xhs
-// @version     0.3.0
+// @version     0.3.1
 // @description 小红书搜索与排序、笔记正文和图片、评论加载、用户主页；复用网页原生接口，保留当前页面。
 // @match       *://www.xiaohongshu.com/*
 // @match       *://xiaohongshu.com/*
@@ -68,7 +68,8 @@ function noteTarget(params = {}) {
   const noteId = params.noteId || noteIdFromUrl(url.href) || unwrap(window.__INITIAL_STATE__?.note?.currentNoteId);
   const ownUrl = noteIdFromUrl(url.href) === noteId;
   const cached = remoteNotes.get(noteId);
-  return {noteId, xsecToken: params.xsecToken ?? (ownUrl ? url.searchParams.get("xsec_token") : null) ?? cached?.note.xsecToken ?? "",
+  const hydrated = unwrap(unwrap(window.__INITIAL_STATE__?.note?.noteDetailMap)?.[noteId]?.note);
+  return {noteId, xsecToken: params.xsecToken ?? (ownUrl ? url.searchParams.get("xsec_token") : null) ?? cached?.note.xsecToken ?? hydrated?.xsecToken ?? "",
     xsecSource: params.source ?? (ownUrl ? url.searchParams.get("xsec_source") : null) ?? cached?.source ?? "pc_feed"};
 }
 function unwrap(v) {
@@ -215,8 +216,7 @@ function getHomeFeed() {
 __name(getHomeFeed, "getHomeFeed");
 function getCurrentNote(params = {}) {
   ensureHost("getCurrentNote");
-  const s = getState();
-  const noteState = s?.note;
+  const noteState = window.__INITIAL_STATE__?.note;
   if (!noteState && !remoteNotes.has(params.noteId)) {
     throw new Error("xhs.getCurrentNote: page has no loaded note; use readNote({noteId, xsecToken})");
   }
@@ -433,35 +433,38 @@ async function waitFor(read, timeoutMs = 8000) {
   return null;
 }
 function visible(el) { return el.getClientRects().length > 0; }
-function pageError() {
-  return document.querySelector('.access-wrapper, .error-wrapper, .not-found-wrapper, .blocked-wrapper')?.innerText?.trim();
-}
 async function readNote(params = {}) {
   const target = noteTarget(params), id = target.noteId;
-  const pageId = noteIdFromUrl(location.href) || unwrap(window.__INITIAL_STATE__?.note?.currentNoteId);
-  if (id && id !== pageId) {
-    const result = await request("/api/sns/web/v1/feed", {sourceNoteId: id, imageFormats: ["jpg", "webp", "avif"],
-      extra: {needBodyTopic: "1"}, xsecToken: target.xsecToken, xsecSource: target.xsecSource}, "post", params.timeoutMs);
-    const note = result.items?.find(item => (item.id || item.noteCard?.noteId) === id)?.noteCard;
-    if (!note) throw new Error(`xhs.readNote: response did not contain note ${id}`);
-    remoteNotes.set(id, {note: {...note, xsecToken: target.xsecToken}, source: target.xsecSource, comments: {list: [], cursor: "", hasMore: true}});
-    const comments = await loadRemoteComments({noteId: id, limit: params.commentLimit ?? 10, timeoutMs: params.timeoutMs});
-    return {...getCurrentNote({noteId: id}), comments: comments.comments};
-  }
-  const ready = await waitFor(() => {
-    const state = window.__INITIAL_STATE__?.note;
-    const current = id || location.pathname.match(/\/(?:explore|discovery\/item)\/([^/?]+)/)?.[1] || unwrap(state?.currentNoteId);
-    return unwrap(unwrap(state?.noteDetailMap)?.[current]?.note) || pageError();
-  }, params.timeoutMs);
-  if (pageError()) return {status: "unavailable", message: pageError(), url: location.href};
-  if (!ready) return {status: "loading", noteId: id, url: location.href};
-  return {...getCurrentNote({noteId: id || undefined}), comments: getNoteComments({noteId: id || undefined, limit: params.commentLimit ?? 10}).comments};
+  await fetchNoteDetail(target, params.timeoutMs);
+  const commentLimit = params.commentLimit ?? 10;
+  const comments = commentLimit > 0 ? (await loadRemoteComments({noteId: id, limit: commentLimit, timeoutMs: params.timeoutMs})).comments : [];
+  return {...getCurrentNote({noteId: id}), comments};
 }
+
+async function fetchNoteDetail({noteId, xsecToken, xsecSource}, timeoutMs) {
+  if (!noteId) throw new Error("xhs: pass a note URL or noteId");
+  const result = await request("/api/sns/web/v1/feed", {sourceNoteId: noteId, imageFormats: ["jpg", "webp", "avif"],
+    extra: {needBodyTopic: "1"}, xsecToken, xsecSource}, "post", timeoutMs);
+  const note = result.items?.find(item => (item.id || item.noteCard?.noteId) === noteId)?.noteCard;
+  if (!note) throw new Error(`xhs: response did not contain note ${noteId}`);
+  remoteNotes.set(noteId, {note: {...note, xsecToken}, source: xsecSource, comments: {list: [], cursor: "", hasMore: true}});
+}
+
 async function readNoteImages(params = {}) {
-  const note = getCurrentNote(params);
+  const target = noteTarget(params);
+  if (!remoteNotes.has(target.noteId)) await fetchNoteDetail(target);
+  const note = getCurrentNote({noteId: target.noteId});
   const selected = params.images ?? note.images.map(img => img.image);
-  return {imageContext: {requested: true, delivery: "urls_only_until_host_attaches",
-    images: selected.map(n => { const img = note.images[n - 1]; return {image: n, url: img.url}; })}};
+  const images = [];
+  const unavailable = [];
+  for (const n of new Set(selected)) {
+    const image = note.images.find(img => img.image === n);
+    if (image?.url) images.push(image);
+    else unavailable.push(n);
+  }
+  return {noteId: note.noteId, totalImages: note.images.length, unavailableImages: unavailable,
+    status: images.length ? (unavailable.length ? "partial" : "ok") : "no_images",
+    imageContext: {requested: true, delivery: "urls_only_until_host_attaches", images}};
 }
 const filterGroups = {sortBy: "排序依据", noteType: "笔记类型", publishTime: "发布时间", searchScope: "搜索范围", distance: "位置距离"};
 const defaultFilters = {sortBy: "综合", noteType: "不限", publishTime: "不限", searchScope: "不限", distance: "不限"};
@@ -523,8 +526,8 @@ async function loadSearchResults(params = {}) {
   return {...result, hits: result.hits.slice(0, limit), loaded: result.hits.length};
 }
 async function loadComments(params = {}) {
-  if (remoteNotes.has(params.noteId)) return loadRemoteComments(params);
-  const noteId = getCurrentNote(params).noteId;
+  const noteId = params.noteId ?? getCurrentNote(params).noteId;
+  if (remoteNotes.has(noteId)) return loadRemoteComments({...params, noteId});
   const limit = params.limit ?? 20, deadline = Date.now() + (params.timeoutMs ?? 8000);
   let result = getNoteComments({noteId, limit});
   const expanded = new Set();
@@ -585,13 +588,13 @@ async function getUserProfile(params = {}) {
 }
 const empty = z.object({});
 const timeout = z.number().int().positive().max(20000).optional();
-const noteInput = z.object({noteId: z.string().optional(), url: z.string().optional(), xsecToken: z.string().optional(), source: z.string().optional(), timeoutMs: timeout, commentLimit: z.number().int().positive().optional()});
+const noteInput = z.object({noteId: z.string().optional(), url: z.string().optional(), xsecToken: z.string().optional(), source: z.string().optional(), timeoutMs: timeout, commentLimit: z.number().int().nonnegative().optional().describe('0 只读取笔记正文和图片。')});
 const searchInput = z.object({keyword: z.string(), searchId: z.string().optional(), sortBy: z.enum(["综合", "最新", "最多点赞", "最多评论", "最多收藏"]).optional(), noteType: z.enum(["不限", "视频", "图文"]).optional(), publishTime: z.enum(["不限", "一天内", "一周内", "半年内"]).optional(), searchScope: z.enum(["不限", "已看过", "未看过", "已关注"]).optional(), distance: z.enum(["不限", "同城", "附近"]).optional(), limit: z.number().int().positive().optional(), offset: z.number().int().nonnegative().optional(), timeoutMs: timeout});
 const entry = (summary, input, handler, args = {}) => fn({summary, input, handler, examples: [{args}]});
 export default defineSkill({
   readNote: entry("读取指定或当前笔记，含正文、图片和首批评论；原生 API 后台请求，当前页面保持不变。", noteInput, readNote),
   getCurrentNote: entry("当前笔记正文、图片与 readImages 提示。", z.object({noteId: z.string().optional()}), getCurrentNote),
-  readNoteImages: entry("把所选图片交给扩展后台读图；images 是从 1 开始的编号。", z.object({noteId: z.string().optional(), images: z.array(z.number().int().positive()).optional()}), readNoteImages, {images: [1]}),
+  readNoteImages: entry("通过笔记链接或 noteId 和 xsecToken 读取图片。images 使用 readNote 返回的编号；缺失编号在 unavailableImages 中。", z.object({noteId: z.string().optional(), xsecToken: z.string().optional(), url: z.string().optional(), source: z.string().optional(), images: z.array(z.number().int().positive()).optional()}), readNoteImages, {images: [1]}),
   searchNotes: entry("原生 API 关键词搜索与排序筛选，返回 hits、filters、hasMore、searchId；不切换当前页面。", searchInput, searchNotes, {keyword: "重庆旅游", sortBy: "最多收藏"}),
   loadSearchResults: entry("加载上次 searchNotes 的后续结果；未调用搜索时读取并滚动当前搜索页。", z.object({limit: z.number().int().positive().optional(), timeoutMs: timeout}), loadSearchResults, {limit: 40}),
   getCurrentSearch: entry("读取当前搜索页已加载的笔记。", empty, getCurrentSearch),

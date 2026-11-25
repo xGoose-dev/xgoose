@@ -89,6 +89,40 @@ const SOURCE_FORMAT = 'id [kind] @author [date, shown when it changes] [↑score
 const SOURCE_FIELDS = new Set(['id', 'kind', 'title', 'url', 'discussionUrl', 'externalUrl', 'author', 'publishedAt', 'text', 'excerpt', 'access', 'scope', 'method', 'complete', 'offset', 'nextOffset', 'parentId', 'score', 'commentCount']);
 const isReaderSource = (source: any) => source && typeof source.url === 'string' && typeof source.text === 'string';
 
+interface WordPressComment {
+  id: number;
+  parent: number;
+  author: string;
+  authorUrl?: string;
+  date: string;
+  text: string;
+  url: string;
+  replies?: WordPressComment[];
+}
+
+function isWordPressComment(value: any): value is WordPressComment {
+  return value && Number.isSafeInteger(value.id) && Number.isSafeInteger(value.parent) &&
+    typeof value.author === 'string' && (value.authorUrl === undefined || typeof value.authorUrl === 'string') &&
+    typeof value.date === 'string' && typeof value.text === 'string' && typeof value.url === 'string' &&
+    (value.replies === undefined || Array.isArray(value.replies) && value.replies.every(isWordPressComment));
+}
+
+/** Preserve the whole comment tree while removing repeated JSON keys and article URLs. */
+function compactWordPressComments(raw: Record<string, any>, items: WordPressComment[]) {
+  const first = items[0];
+  const anchor = `#comment-${first.id}`;
+  const template = first.url.endsWith(anchor) ? `${first.url.slice(0, -anchor.length)}#comment-{id}` : null;
+  function row(comment: WordPressComment): unknown[] {
+    const url = template?.replace('{id}', String(comment.id)) === comment.url ? null : comment.url;
+    const fields: unknown[] = [comment.id, comment.parent, comment.author, comment.date, comment.text, url, comment.authorUrl || null];
+    if (comment.replies?.length) fields.push(comment.replies.map(row));
+    while (fields.at(-1) === null) fields.pop();
+    return fields;
+  }
+  return {...raw, items: items.map(row), ...(template ? {comment_url: template} : {}),
+    comment_fields: ['id', 'parent (0 for top-level)', 'author', 'date', 'text', 'url (use comment_url when absent)', 'authorUrl', 'replies (same fields)']};
+}
+
 /** Shared website-reader results: one line per source, defaults omitted, links as a template when every URL contains its id. */
 function compactReader(raw: Record<string, any>): Record<string, any> {
   const {readerVersion, sources, ...rest} = raw;
@@ -120,6 +154,8 @@ function compactReader(raw: Record<string, any>): Record<string, any> {
 }
 
 function compactKnown(raw: Record<string, any>, origin: string): unknown {
+  if (Number.isSafeInteger(raw.totalPages) && Array.isArray(raw.items) && raw.items.length && raw.items.every(isWordPressComment))
+    return compactWordPressComments(raw, raw.items);
   if (Number.isSafeInteger(raw.readerVersion) && Array.isArray(raw.sources) && raw.sources.every(isReaderSource)) return compactReader(raw);
   if (Array.isArray(raw.posts) && Array.isArray(raw.topics) && raw.posts.every(isSearchHit) && raw.topics.every(isTopic)) return compactSearch(raw, origin);
   if (Array.isArray(raw.posts)) return compactThread(raw);

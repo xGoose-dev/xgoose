@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         wordpress
 // @namespace    wordpress
-// @version      0.1.1
+// @version      0.1.2
 // @description  WordPress 网站自动识别：文章/页面搜索、正文与图片、评论、作者、分类标签、自定义内容类型和 REST 能力发现。
 // @match        https://*/*
 // @match        http://*/*
@@ -87,6 +87,39 @@ async function contentRoute(type='post') {if(type==='post')return 'wp/v2/posts';
 const empty=z.object({}), paging={page:z.number().int().positive().optional(),perPage:z.number().int().min(1).max(100).optional()};
 const resource=z.object({id:z.number().int().positive(),type:z.string().optional()});
 const entry=(summary,input,handler,args={})=>fn({summary,input,handler,examples:[{args}]});
+const comment=z.object({
+  id:z.number(),parent:z.number(),author:z.string(),authorUrl:z.string().optional(),date:z.string(),text:z.string(),url:z.string(),
+  replies:z.array(z.lazy(()=>comment)).optional(),
+});
+const commentPage=z.object({
+  items:z.array(comment),page:z.number(),total:z.number().nullable().optional(),totalPages:z.number().nullable().optional(),
+  nextPage:z.number().nullable(),loaded:z.number().optional(),missingParentIds:z.array(z.number()).optional(),
+});
+async function getComments({postId,parent,query,order='asc',page,perPage,nested=false}) {
+  const read=(page,limit,parent)=>list('wp/v2/comments',{post:postId,parent,search:query,page,per_page:limit,order},x=>({
+    id:x.id,parent:x.parent,author:x.author_name,authorUrl:x.author_url,date:x.date,text:plain(x.content?.rendered),url:x.link,
+  }));
+  if(!nested)return read(page,perPage||20,parent);
+
+  const limit=perPage||100;
+  const first=await read(1,limit);
+  const comments=new Map();
+  let batch=first;
+  while(true){
+    for(const item of batch.items)comments.set(item.id,{...item,replies:[]});
+    if(!batch.nextPage)break;
+    batch=await read(batch.nextPage,limit);
+  }
+  const roots=[];
+  for(const item of comments.values()){
+    const ancestor=comments.get(item.parent);
+    if(ancestor)ancestor.replies.push(item);
+    else roots.push(item);
+  }
+  const items=parent?comments.get(parent)?.replies??roots.filter(item=>item.parent===parent):roots;
+  const missingParentIds=[...new Set(roots.map(item=>item.parent).filter(Boolean))];
+  return {...first,items,loaded:comments.size,missingParentIds,nextPage:null};
+}
 export default defineSkill({
  detect:entry('检测当前页面的 WordPress 信号和实际 API 根路径。',empty,async()=>discover()),
  getSiteInfo:entry('读取站点名称、REST namespaces、路由及 MCP Adapter 路由。',empty,async()=>{const {data}=await request('');return {...discover(),name:data.name,description:data.description,url:data.url,namespaces:data.namespaces,mcpRoutes:Object.keys(data.routes||{}).filter(x=>/mcp/.test(x))};}),
@@ -94,8 +127,14 @@ export default defineSkill({
  getPost:entry('读取文章/页面完整正文、图片编号与来源。',resource,async a=>post((await request(`${await contentRoute(a.type)}/${a.id}`)).data,true),{id:1}),
  getCurrentPost:entry('从当前页面 REST alternate 链接识别文章或页面，读取完整正文。',empty,async()=>{const link=document.querySelector('link[rel="alternate"][type="application/json"]');if(!link)throw new Error('当前页没有文章 REST alternate 链接');const url=new URL(link.href,location.href),route=url.searchParams.get('rest_route')||url.pathname;const apiPath=url.searchParams.has('rest_route')?route:route.slice(new URL(discover().apiRoot).pathname.replace(/\/?$/,'/').length);if(!/\/\d+\/?$/.test(apiPath))throw new Error('当前 alternate 链接不是 WordPress 内容接口');return post((await request(apiPath)).data,true);}),
  readPostImages:entry('将文章中所选图片的完整 URL 交给扩展后台读取。',resource.extend({images:z.array(z.number().int().positive()).optional()}),async a=>{const p=post((await request(`${await contentRoute(a.type)}/${a.id}`)).data,true);return {imageContext:{requested:true,delivery:'urls_only_until_host_attaches',images:(a.images||p.images.filter(i=>i.url).map(i=>i.image)).map(n=>{const image=p.images[n-1];if(!image?.url)throw new Error(`图片 ${n} 没有可读取的地址`);return image;})}};},{id:1,images:[1]}),
- getComments:entry('读取文章评论及父评论 ID，可按 parent 筛选楼中楼。',z.object({postId:z.number(),parent:z.number().optional(),...paging}),async a=>list('wp/v2/comments',{post:a.postId,parent:a.parent,page:a.page,per_page:a.perPage||20,order:'asc'},x=>({id:x.id,parent:x.parent,author:x.author_name,authorUrl:x.author_url,date:x.date,text:plain(x.content?.rendered),url:x.link})),{postId:1}),
+ getComments:fn({
+  summary:'通过 WordPress REST 查评论。设 nested:true 拉齐全部页，再用 items[].replies 展示所有层级；单页结果用 nextPage 续读。',
+  input:z.object({postId:z.number(),parent:z.number().optional(),query:z.string().optional().describe('服务端关键词筛选；读取完整楼中楼时省略。'),order:z.enum(['asc','desc']).optional(),nested:z.boolean().optional().describe('从 API 第一页读完评论，按 parent 还原回复树。'),...paging}),
+  output:commentPage,
+  handler:getComments,
+  examples:[{args:{postId:1,query:'certificate'}},{args:{postId:1,nested:true}}],
+ }),
  getAuthor:entry('读取作者公开资料。',z.object({id:z.number()}),async a=>(await request(`wp/v2/users/${a.id}`)).data,{id:1}),
  getTaxonomy:entry('列出分类或标签，支持关键词和分页。',z.object({taxonomy:z.enum(['categories','tags']).optional(),query:z.string().optional(),...paging}),async a=>list(`wp/v2/${a.taxonomy||'categories'}`,{search:a.query,page:a.page,per_page:a.perPage||20})),
  getTypes:entry('发现站点在 REST API 暴露的自定义内容类型及 rest_base。',empty,async()=>(await request('wp/v2/types')).data),
-},{instructions:'WordPress API 根路径由页面 discovery 链接决定，兼容子目录和 ?rest_route=。正文 [image N] 对应 images，readImages 提示可调用后台读图。MCP 路由仅在站点安装对应插件时出现。'});
+},{instructions:'WordPress API 根路径由页面 discovery 链接决定，兼容子目录和 ?rest_route=。正文 [image N] 对应 images，readImages 提示可调用后台读图。需要展示完整评论或楼中楼时，调用 getComments({postId,nested:true})，沿 items[].replies 展示各层。missingParentIds 中的父评论未随结果返回，其回复仍保留原 parent。MCP 路由仅在站点安装对应插件时出现。'});
