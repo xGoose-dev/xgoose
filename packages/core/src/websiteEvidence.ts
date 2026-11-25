@@ -93,7 +93,7 @@ interface WordPressComment {
   id: number;
   parent: number;
   author: string;
-  authorUrl: string;
+  authorUrl?: string;
   date: string;
   text: string;
   url: string;
@@ -102,7 +102,7 @@ interface WordPressComment {
 
 function isWordPressComment(value: any): value is WordPressComment {
   return value && Number.isSafeInteger(value.id) && Number.isSafeInteger(value.parent) &&
-    typeof value.author === 'string' && typeof value.authorUrl === 'string' &&
+    typeof value.author === 'string' && (value.authorUrl === undefined || typeof value.authorUrl === 'string') &&
     typeof value.date === 'string' && typeof value.text === 'string' && typeof value.url === 'string' &&
     (value.replies === undefined || Array.isArray(value.replies) && value.replies.every(isWordPressComment));
 }

@@ -101,12 +101,20 @@ async function transcript(id,language) {
  const {data,player}=await page(id);
  const panel=nodes(data,'updateEngagementPanelContentCommand').find(cmd=>
   /transcript/i.test(cmd.contentSourcePanelIdentifier?.tag||'')&&cmd.globalConfiguration?.params);
- if(panel){
-  const result=await panelTranscript(id,language,panel,player);
-  if(result.status==='ok')cache.set(key,result);
-  return result;
- }
  const endpoint=nodes(data,'getTranscriptEndpoint')[0];
+ if(panel){
+  const tracks=player?.captions?.playerCaptionsTracklistRenderer;
+  const audio=tracks?.audioTracks?.[tracks.defaultAudioTrackIndex??0];
+  const captions=tracks?.captionTracks||[];
+  const selected=captions[audio?.defaultCaptionTrackIndex??audio?.captionTrackIndices?.[0]??0];
+  const languages=captions.map(track=>({language:text(track.name)||track.languageCode,selected:track===selected}));
+  if(!language||[text(selected?.name),selected?.languageCode].includes(language)){
+   const result=await panelTranscript(id,panel,languages,player);
+   if(result.status==='ok')cache.set(key,result);
+   return result;
+  }
+  if(!endpoint?.params)return {status:'language_unavailable',reason:'YouTube did not expose transcript parameters for the requested language.',languages,segments:[]};
+ }
  if(!endpoint?.params)return {status:'unavailable',reason:'YouTube did not expose a transcript endpoint for this video.',languages:[],segments:[]};
  let raw=await api('get_transcript',{params:endpoint.params});
  let languages=nodes(raw,'transcriptFooterRenderer').flatMap(f=>f.languageMenu?.sortFilterSubMenuRenderer?.subMenuItems||[]).map(t=>({language:t.title,params:t.continuation||t.serviceEndpoint?.getTranscriptEndpoint?.params,selected:t.selected}));
@@ -116,18 +124,10 @@ async function transcript(id,language) {
  if(segments.length)cache.set(key,result);return result;
 }
 function clockSeconds(time){return time.trim().split(':').reduce((n,v)=>n*60+Number(v),0);}
-async function panelTranscript(id,language,panel,player) {
+async function panelTranscript(id,panel,languages,player) {
  const panelId=panel.contentSourcePanelIdentifier.tag;
  const raw=await api('get_panel',{panelId,params:panel.globalConfiguration.params});
- const tracks=player?.captions?.playerCaptionsTracklistRenderer;
- const audio=tracks?.audioTracks?.[tracks.defaultAudioTrackIndex??0];
- const captions=tracks?.captionTracks||[];
- const selected=captions[audio?.defaultCaptionTrackIndex??audio?.captionTrackIndices?.[0]??0];
- const languages=captions.map(track=>({language:text(track.name)||track.languageCode,selected:track===selected}));
  const rows=nodes(raw,'transcriptSegmentViewModel');
- if(language&&(!selected||![text(selected.name),selected.languageCode].includes(language))) {
-  return {status:'language_unavailable',reason:'YouTube did not expose transcript panel parameters for the requested language.',languages,segments:[]};
- }
  const timings=nodes(raw,'timedSyncDataList').flat().filter(item=>item.endTimeMs!==undefined);
  const starts=rows.map(row=>row.timestamp?clockSeconds(row.timestamp):NaN);
  const matchingTimings=timings.length===rows.length&&timings.every((timing,index)=>

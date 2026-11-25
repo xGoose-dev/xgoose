@@ -526,8 +526,8 @@ async function loadSearchResults(params = {}) {
   return {...result, hits: result.hits.slice(0, limit), loaded: result.hits.length};
 }
 async function loadComments(params = {}) {
-  if (remoteNotes.has(params.noteId)) return loadRemoteComments(params);
-  const noteId = getCurrentNote(params).noteId;
+  const noteId = params.noteId ?? getCurrentNote(params).noteId;
+  if (remoteNotes.has(noteId)) return loadRemoteComments({...params, noteId});
   const limit = params.limit ?? 20, deadline = Date.now() + (params.timeoutMs ?? 8000);
   let result = getNoteComments({noteId, limit});
   const expanded = new Set();
@@ -588,7 +588,7 @@ async function getUserProfile(params = {}) {
 }
 const empty = z.object({});
 const timeout = z.number().int().positive().max(20000).optional();
-const noteInput = z.object({noteId: z.string().optional(), url: z.string().optional(), xsecToken: z.string().optional(), source: z.string().optional(), timeoutMs: timeout, commentLimit: z.number().int().positive().optional()});
+const noteInput = z.object({noteId: z.string().optional(), url: z.string().optional(), xsecToken: z.string().optional(), source: z.string().optional(), timeoutMs: timeout, commentLimit: z.number().int().nonnegative().optional().describe('0 只读取笔记正文和图片。')});
 const searchInput = z.object({keyword: z.string(), searchId: z.string().optional(), sortBy: z.enum(["综合", "最新", "最多点赞", "最多评论", "最多收藏"]).optional(), noteType: z.enum(["不限", "视频", "图文"]).optional(), publishTime: z.enum(["不限", "一天内", "一周内", "半年内"]).optional(), searchScope: z.enum(["不限", "已看过", "未看过", "已关注"]).optional(), distance: z.enum(["不限", "同城", "附近"]).optional(), limit: z.number().int().positive().optional(), offset: z.number().int().nonnegative().optional(), timeoutMs: timeout});
 const entry = (summary, input, handler, args = {}) => fn({summary, input, handler, examples: [{args}]});
 export default defineSkill({

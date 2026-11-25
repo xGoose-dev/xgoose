@@ -373,24 +373,8 @@ async function readPostImages({ postId, images }) {
 
 /* ───── Threads ───── */
 
-const openingPages = new Map();
-function fetchThreadPage(threadId, page) {
-  const url = forumUrl(`showthread.php?t=${threadId}${page > 1 ? `&page=${page}` : ''}`);
-  if (page !== 1) return fetchPage(url);
-  const now = Date.now();
-  const cached = openingPages.get(url);
-  if (cached?.expires > now) return cached.pending;
-  const pending = fetchPage(url);
-  openingPages.set(url, {pending, expires: now + 60_000});
-  pending.catch(() => {
-    if (openingPages.get(url)?.pending === pending) openingPages.delete(url);
-  });
-  if (openingPages.size > 24) openingPages.delete(openingPages.keys().next().value);
-  return pending;
-}
-
 async function getThreadPage(threadId, page, maxChars, perPage) {
-  const { doc, url } = await fetchThreadPage(threadId, page);
+  const { doc, url } = await fetchPage(forumUrl(`showthread.php?t=${threadId}${page > 1 ? `&page=${page}` : ''}`));
   return {
     url,
     title: txt(doc.querySelector('h1, .threadtitle, [class*="threadtitle"]')),
