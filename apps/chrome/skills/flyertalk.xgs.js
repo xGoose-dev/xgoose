@@ -477,6 +477,7 @@ export default defineSkill({
   instructions: `Start research with searchAll; it covers articles, forum posts and thread titles.
 - Search in English; the forum index does not tokenize Chinese or other CJK text. Translate the user's terms first.
 - Look beyond the top-ranked search hits and read widely across relevant threads. Use xgoose.skills.vbulletin.summarizeThread with a reply range suited to the question. Keep reading while other threads can add useful firsthand reports, follow-up outcomes, or explanations for disagreements.
+- For thread summaries, use the question to choose the reply range. As a reference, consider roughly the earliest 30 and latest 100 replies. For more in-depth questions, read additional relevant replies beyond those windows.
 - For the open forum, use getThreads; getForum lists any forum by ID. For the open thread, get the thread ID from currentRoute and select the reply range or page to read with xgoose.skills.vbulletin.summarizeThread.
 - Use only thread, post and forum ids from tool results. Keep search results in their relevance order.
 - Leave forumIds unset unless the user names a forum; getForumMap lists the main forum ids.
