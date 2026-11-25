@@ -1,11 +1,5 @@
 name: Chrome Release
 on:
-  push:
-    branches: [main]
-    paths:
-      - package.json
-      - apps/chrome/package.json
-      - apps/chrome/static/manifest.json
   workflow_dispatch:
     inputs:
       dry_run:
@@ -24,15 +18,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      release: ${{ steps.version.outputs.release }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - id: version
-        env:
-          BEFORE: ${{ github.event.before }}
-          EVENT: ${{ github.event_name }}
         shell: bash
         run: |
           set -euo pipefail
@@ -43,31 +33,15 @@ jobs:
             echo 'Releases must come from a commit already on main.' >&2
             exit 1
           }
-          if [[ "$EVENT" == push ]]; then
-            # Infrastructure changes alone must not publish a historical version.
-            if [[ -z "$BEFORE" || "$BEFORE" =~ ^0+$ ]]; then
-              echo 'release=false' >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            previous=$(git show "${BEFORE}:package.json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
-            if [[ "$previous" == "$version" ]]; then
-              echo 'release=false' >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            python3 -c 'import sys; a,b=[tuple(map(int,v.split("."))) for v in sys.argv[1:]]; assert b>a, "Release version must increase"' "$previous" "$version"
-          fi
-          echo 'release=true' >> "$GITHUB_OUTPUT"
   verify:
     name: Verify release
     needs: prepare
-    if: needs.prepare.outputs.release == 'true'
     uses: ./.github/workflows/main-ci.yml
     permissions:
       contents: read
   publish:
     name: Publish tested GitHub Release
     needs: [prepare, verify]
-    if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -91,7 +65,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE_SHA: ${{ github.sha }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          DRY_RUN: ${{ inputs.dry_run }}
         shell: bash
         run: |
           set -euo pipefail
