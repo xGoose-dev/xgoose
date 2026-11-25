@@ -35,6 +35,10 @@
     "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
     "skillId": "deef1332-fcef-4925-b6f8-b407c07f3d62"
   },
+  "reddit": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "e5cb2b39-de63-4886-9b2b-46e15f1740d0"
+  },
   "hacker-news": {
     "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
     "skillId": "e8aa0907-70e3-43d2-9bb4-e7057364cf5a"
@@ -50,5 +54,185 @@
   "amex-chat": {
     "authorId": "da12dccf-f9f8-4d52-b6ad-4a69340266ed",
     "skillId": "00aad896-f4f6-4042-898d-6da9442fee07"
+  },
+  "alaska-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "117ca9da-87da-4071-a0b5-db32c0fd57da"
+  },
+  "amazon": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "0bd7111c-d787-45c0-a12a-810168994922"
+  },
+  "amex-dashboard": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "ea34c97c-d9c6-4fbe-80ae-9f0a1961f550"
+  },
+  "amex-offers": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "94f481a9-13e4-498d-8419-f9f07b92e423"
+  },
+  "ana-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "35d711b5-dcf7-4311-91d6-d2fd39a2385f"
+  },
+  "apartments": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "85171ab1-8020-411e-b1f1-7e99350b5b9d"
+  },
+  "avis-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "d86f221b-9d5c-4b72-86b4-90f485a1fa69"
+  },
+  "bilibili": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "39e4e0c4-ad0d-4ddb-b42b-5443217c0cb9"
+  },
+  "capital-one-offers": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "8037cac5-9648-4f12-8d92-5239455bd5ad"
+  },
+  "cathay-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "4c2cc6ce-2d2f-4f55-9c49-ebd6ab8d3220"
+  },
+  "china-airlines-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "b0beb969-e764-47f3-90c5-ed268ca714be"
+  },
+  "delta-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "07e3ef6f-b531-4ea3-b822-629c76bf4b71"
+  },
+  "discord": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "b7a6ea6d-0cc5-4d87-a58d-923678de8129"
+  },
+  "discuz-forum": {
+    "authorId": "da12dccf-f9f8-4d52-b6ad-4a69340266ed",
+    "skillId": "5c2a3208-dd8a-45f9-89d4-c96851b60aff"
+  },
+  "douban": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "2d454586-efda-44c1-a367-9f125313d41d"
+  },
+  "eva-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "2c70cfee-425b-43fa-9952-e3460e9e6de8"
+  },
+  "finnair-chat": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "81959312-bd63-4228-9175-1a5d474feb39"
+  },
+  "google-flights": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "cdaf456d-7a0f-4393-b693-301eb8bf468f"
+  },
+  "google-hotels": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "990d340c-300d-4744-8a1f-df0304dd2855"
+  },
+  "hilton-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "227cafca-63ac-43f9-a5c4-8e63b06096a2"
+  },
+  "ihg-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "534b8f8b-9463-404d-814c-814aeded3165"
+  },
+  "instagram": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "caa78ab4-5014-4153-93da-43c83a94abdd"
+  },
+  "iprefer-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "4a39f4de-f48c-4079-9b4f-54a01e86264f"
+  },
+  "jal-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "4a0fcd11-cbb9-4acf-a157-d69b8e2bd103"
+  },
+  "marriott-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "d43a1091-fa21-4312-8f0d-b58bb8873d9f"
+  },
+  "nga": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "4664bd62-11f7-4ae8-bfc7-dc3abff00233"
+  },
+  "onepoint3acres": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "4f2e4da9-7ed8-40bd-83b8-8206d8acb886"
+  },
+  "realtor": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "310af98e-5836-4af4-8e76-95c62120c5cf"
+  },
+  "redfin": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "1e107c5e-5eb2-4854-b30e-ba9b1c9704c5"
+  },
+  "shop": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "7c251f15-9877-4e22-aa25-5890fa200b57"
+  },
+  "shopify": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "95ac3fd0-484c-46f1-ace4-18944276b5ae"
+  },
+  "target": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "fa0d884e-4018-488c-a84b-96f705a7341f"
+  },
+  "tieba": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "a5bfe918-f92c-49cf-b217-ce4919b53042"
+  },
+  "united-awards": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "993e5dac-b2dd-4b7d-b9b4-d854dfd133ac"
+  },
+  "walmart": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "260ef2d8-4472-42cc-954e-c395a5acef34"
+  },
+  "weibo": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "1a7be1d2-005e-400f-a76d-457d758a1f1c"
+  },
+  "weread": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "587ba5eb-6922-48ba-9609-0c6758077395"
+  },
+  "wikipedia": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "282bab8f-b0b0-4611-b2d4-bb593966ed2a"
+  },
+  "wordpress": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "8ba23822-744b-45f7-9bd7-f24c63e32ac9"
+  },
+  "xgoose-guide": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "ccf31608-d0f7-4c34-862b-f8d04ce4ad60"
+  },
+  "xiaohongshu": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "8483635e-c31f-4970-b1b2-902067ce5980"
+  },
+  "youtube": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "f6b01e13-85d3-4614-a198-0901244d8df7"
+  },
+  "zhihu": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "8c0af6c8-bea5-41d6-b260-b2ac207def4f"
+  },
+  "zillow": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "79c1ec96-6f5c-47c2-97d5-1a02b0a156e0"
+  },
+  "zsxq": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "b28a65d0-bf2d-437b-99ff-0b4201b83e31"
   }
 }

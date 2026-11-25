@@ -1,14 +1,14 @@
 // ==XGooseSkill==
 // @name         x
 // @namespace    x
-// @version      0.2.3
-// @description  X/Twitter session reader: search, posts/conversations, profiles, user timelines/replies/media/likes, followers/following, home, bookmarks, lists and communities. Reuses observed read-only GraphQL requests; no hardcoded query hashes. Includes rate limits and source cards.
+// @version      0.2.6
+// @description  Search and read posts, conversations, profiles and timelines with X’s browser-session GraphQL API.
 // @match        https://x.com/*
 // @match        https://www.x.com/*
 // @match        https://twitter.com/*
 // @match        https://www.twitter.com/*
 // @connect      <self>
-// @primary      searchPosts
+// @primary      readObserved
 // @keyword      x
 // @keyword      twitter
 // @keyword      推特
@@ -286,6 +286,11 @@ const operations=[
   'ListMembers','ListSubscribers','CommunitiesExploreTimeline','CommunityTweetsTimeline',
 ];
 const client=createClient('x',{minIntervalMs:1500,perMinute:20,perHour:200},u=>u.origin===location.origin&&/^\/i\/api\/graphql\/[\w-]+\/[A-Za-z0-9_]+$/.test(u.pathname)&&operations.includes(u.pathname.split('/').at(-1)));
+const jsonPostReads = new Set(['SearchTimeline', 'TweetDetail']);
+const searchFilters = {Latest: 'live', People: 'user', Photos: 'image', Videos: 'video', Top: 'top'};
+const loadedOperations = new Map();
+let webAuthorization;
+let featureSwitch;
 function postId(value) {
   const id=String(value).match(/^(?:https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/(?:[^/]+\/status|i\/web\/status)\/)?(\d+)(?:[/?#].*)?$/)?.[1];
   if(!id)throw new Error('Expected a post ID or X/Twitter status URL');
@@ -338,40 +343,201 @@ function xSources(data,options={}) {
     coverage:'Only entities returned by this session and page of the timeline. Replies and search results are not guaranteed exhaustive.',
     ...(!tweets.size&&!users.size?boundedRaw(data):{})});
 }
+function xRequests() {
+  return (globalThis.__xgoose?.getNetworkRequests?.({filter: '/i/api/graphql/', limit: 100}) ?? [])
+    .filter(request => request.method === 'GET' || request.method === 'POST');
+}
+
+function mergedVariables(original, changes) {
+  const variables = {...original, cursor: undefined, ...changes};
+  return Object.fromEntries(Object.entries(variables).filter(([, value]) => value !== undefined));
+}
+
+function capturedRequest(operation, changes) {
+  for (const request of xRequests().reverse()) {
+    if (request.status != null && (request.status < 200 || request.status >= 300)) continue;
+    if (!URL.canParse(request.url, location.href)) continue;
+    const url = new URL(request.url, location.href);
+    if (url.origin !== location.origin || !/^\/i\/api\/graphql\/[\w-]+\/[A-Za-z0-9_]+$/.test(url.pathname) ||
+        url.pathname.split('/').at(-1) !== operation) continue;
+    const headers = observedHeaders(request);
+    const nativeHeaders = globalThis.__xgoose.getNetworkRequestDetail(request.id, 'headers')?.req ?? {};
+    for (const [key, value] of Object.entries(nativeHeaders)) {
+      if (/^(x-client-transaction-id|content-type)$/i.test(key)) headers.set(key, value);
+    }
+    try {
+      if (request.method === 'POST') {
+        const payload = JSON.parse(globalThis.__xgoose.getNetworkRequestDetail(request.id, 'body'));
+        if (!payload?.variables || Array.isArray(payload.variables) || typeof payload.variables !== 'object') continue;
+        payload.variables = mergedVariables(payload.variables, changes);
+        headers.set('content-type', 'application/json');
+        return {url, headers, method: 'POST', body: JSON.stringify(payload)};
+      }
+      const variables = mergedVariables(JSON.parse(url.searchParams.get('variables') || '{}'), changes);
+      if (jsonPostReads.has(operation) && url.searchParams.has('features')) {
+        const payload = {variables};
+        for (const key of ['features', 'fieldToggles']) {
+          if (url.searchParams.has(key)) {
+            payload[key] = JSON.parse(url.searchParams.get(key));
+            url.searchParams.delete(key);
+          }
+        }
+        url.searchParams.delete('variables');
+        headers.delete('x-client-transaction-id'); // The observed ID belongs to the GET request.
+        headers.set('content-type', 'application/json');
+        return {url, headers, method: 'POST', body: JSON.stringify(payload)};
+      }
+      url.searchParams.set('variables', JSON.stringify(variables));
+      return {url, headers, method: 'GET'};
+    } catch {
+      // An incomplete request preview is unusable. Look for an earlier template.
+    }
+  }
+}
+
+function findLoadedOperation(operation) {
+  if (webAuthorization && loadedOperations.has(operation)) return loadedOperations.get(operation);
+  for (const [, modules] of globalThis.webpackChunk_twitter_responsive_web ?? []) {
+    for (const factory of Object.values(modules ?? {})) {
+      if (typeof factory !== 'function') continue;
+      const source = Function.prototype.toString.call(factory);
+      // This constant identifies X's web application. The browser supplies the user's session.
+      if (!webAuthorization && source.includes('"responsive_web"')) {
+        webAuthorization = source.match(/"(Bearer A{10,}[\w%.~-]{45,})"/)?.[1];
+      }
+      const match = source.match(/queryId:"([\w-]+)",operationName:"(SearchTimeline|TweetDetail)",operationType:"query",metadata:\{featureSwitches:(\[[^\]]*\]),fieldToggles:(\[[^\]]*\])/);
+      if (match) {
+        const [, id, name, features, toggles] = match;
+        loadedOperations.set(name, {id, features:JSON.parse(features), toggles:JSON.parse(toggles)});
+      }
+      if (webAuthorization && loadedOperations.has(operation)) return loadedOperations.get(operation);
+    }
+  }
+}
+
+function pageFeatureSwitch() {
+  if (featureSwitch) return featureSwitch;
+  // X removes its global state after initialization, but keeps the inline JSON.
+  const state = globalThis.__INITIAL_STATE__?.featureSwitch;
+  if (state) return state;
+  const prefix = /^\s*window\.__INITIAL_STATE__\s*=\s*/;
+  const script = [...document.scripts].find(script => prefix.test(script.textContent))?.textContent;
+  const end = script?.search(/;\s*window\.__META_DATA__\s*=/) ?? -1;
+  if (end === -1) return;
+  try {
+    featureSwitch = JSON.parse(script.slice(0, end).replace(prefix, '')).featureSwitch;
+    return featureSwitch;
+  } catch {
+    // Fall back to opening the native page if X changes its bootstrap format.
+  }
+}
+
+function requestFromLoadedClient(operation, changes) {
+  const descriptor = findLoadedOperation(operation);
+  const config = pageFeatureSwitch();
+  const missing = [];
+  if (!descriptor) missing.push('operation_definition');
+  if (!config) missing.push('feature_configuration');
+  if (!webAuthorization) missing.push('web_application_header');
+  if (missing.length) throw fault('operation_not_observed', 'The current X page has not loaded the web client data for ' + operation + '.', {missing});
+  const flag = name => config.customOverrides?.[name]?.value ?? config.user?.config?.[name]?.value ?? config.defaultConfig?.[name]?.value ?? false;
+  const product = changes.product ?? 'Latest';
+  const defaults = operation === 'SearchTimeline' ? {
+    product, count:10, querySource:'typed_query',
+    withGrokTranslatedBio:(product === 'Top' || product === 'People') && flag('responsive_web_grok_bio_auto_translation_in_search_is_enabled'),
+    withQuickPromoteEligibilityTweetFields:false,
+  } : {
+    rankingMode:'Relevance', includePromotedContent:true, withCommunity:flag('c9s_enabled'),
+    withQuickPromoteEligibilityTweetFields:true, withBirdwatchNotes:flag('responsive_web_birdwatch_consumption_enabled'),
+    withVoice:flag('voice_consumption_enabled'),
+  };
+  const payload = {
+    variables:mergedVariables(defaults, changes),
+    features:Object.fromEntries(descriptor.features.map(name => [name, flag(name)])),
+  };
+  if (operation === 'TweetDetail') {
+    const toggles = {
+      withPayments:false, withDmBlocks:false, withArticlePlainText:false,
+      withArticleRichContentState:flag('responsive_web_twitter_article_seed_tweet_detail_enabled'),
+      withArticleSummaryText:flag('responsive_web_grok_article_summary_enabled'),
+      withArticleVoiceOver:flag('responsive_web_grok_article_summary_enabled'),
+      withGrokAnalyze:flag('subscriptions_inapp_grok_analyze'),
+      withDisallowedReplyControls:flag('disallowed_reply_controls_callout_enabled'),
+    };
+    payload.fieldToggles = Object.fromEntries(Object.entries(toggles).filter(([name]) => descriptor.toggles.includes(name)));
+  }
+  const headers = new Headers({
+    authorization:webAuthorization,
+    'content-type':'application/json',
+    'x-twitter-auth-type':'OAuth2Session',
+    'x-twitter-active-user':'yes',
+    'x-twitter-client-language':document.documentElement?.lang || 'en',
+  });
+  const url = new URL(`/i/api/graphql/${descriptor.id}/${operation}`, location.origin);
+  return {url, headers, method:'POST', body:JSON.stringify(payload)};
+}
+
 async function query(operation,changes={},a={}) {
   if(!operations.includes(operation))throw fault('invalid_operation','Only explicitly allowlisted read operations are available.');
-  const captured=observedRequests('/i/api/graphql/').reverse().find(r=>{
-    try{const u=new URL(r.url,location.href);return u.origin===location.origin&&u.pathname.split('/').at(-1)===operation;}catch{return false;}
-  });
-  if(!captured)throw fault('operation_not_observed',`Open the matching X section once to capture its current ${operation} request. Use readCurrent in the meantime; no GraphQL hash or authorization token is fabricated.`);
-  const url=new URL(captured.url,location.href);
-  let original;
-  try{original=JSON.parse(url.searchParams.get('variables')||'{}');}catch{throw fault('invalid_observed_request','Captured variables are not valid JSON.');}
-  delete original.cursor;
-  const variables={...original,...changes};
-  Object.keys(variables).forEach(key=>variables[key]===undefined&&delete variables[key]);
-  url.searchParams.set('variables',JSON.stringify(variables));
-  const headers=observedHeaders(captured);
-  const csrf=cookie('ct0');if(csrf)headers.set('x-csrf-token',csrf);
-  const data=await client.request(url.href,{headers,signal:a.signal,ttl:0});
+  const csrf = cookie('ct0');
+  const request = csrf && jsonPostReads.has(operation)
+    ? requestFromLoadedClient(operation, changes)
+    : capturedRequest(operation, changes);
+  if (!request) throw fault('operation_not_observed', 'Open the matching X page to observe its ' + operation + ' request.');
+  const {url, headers, method, body} = request;
+  if (csrf) headers.set('x-csrf-token', csrf);
+  const data=await client.request(url.href,{headers,method,body,signal:a.signal,ttl:0});
+  if (a.raw) return data;
   if(Array.isArray(data.errors)&&data.errors.length&&!data.data)throw fault('graphql_error',data.errors.map(e=>`${e.code??''} ${e.message||'Request failed'}`).join('; ').slice(0,700));
   const normalized=xSources(data,a);
   if(data.errors?.length)normalized.partialErrors=data.errors.map(e=>({code:e.code,message:e.message}));
   return normalized;
 }
-const skill={
-  searchPosts:siteFn('Search X using the session’s observed SearchTimeline operation. If unobserved, returns the native search URL rather than fake empty results.',z.object({
-    query:z.string().min(1).max(500),product:z.enum(['Top','Latest','People','Photos','Videos']).default('Latest'),...timeline,
-  }),async a=>{
-    try{return await query('SearchTimeline',{rawQuery:a.query,product:a.product,count:a.count,cursor:a.cursor},a);}
-    catch(error){
-      if(error.code!=='operation_not_observed')throw error;
-      return result([],{status:'navigation_required',url:`https://x.com/search?${new URLSearchParams({q:a.query,f:a.product==='Latest'?'live':a.product==='People'?'user':a.product==='Photos'?'image':a.product==='Videos'?'video':'top'})}`,
-        instruction:'Native search has not been observed in this tab yet. Open this link, let results load, and use readCurrent or searchPosts again.'});
+
+function nativePage(operation, variables, missing) {
+  let url;
+  if (operation === 'SearchTimeline' && typeof variables.rawQuery === 'string') {
+    url = new URL('/search', location.origin);
+    url.search = new URLSearchParams({q:variables.rawQuery,f:searchFilters[variables.product ?? 'Latest'] ?? 'live'});
+  } else if (operation === 'TweetDetail' && /^\d+$/.test(String(variables.focalTweetId))) {
+    url = new URL('/i/web/status/' + variables.focalTweetId, location.origin);
+  }
+  if (!url) throw fault('operation_not_observed', 'Open the matching X page to observe its ' + operation + ' request.');
+  return {status:'navigation_required', operation, url:url.href, ...(missing ? {missing} : {}),
+    instruction:'Keep this tab open. Use spawn_agent with this URL in a background tab. Ask the peer to call x.readObserved with the same operation and variables and return the API result. Use wait_agents to retrieve it. The peer should report failure if X remains unavailable.'};
+}
+
+async function readX(operation, variables, options) {
+  try {
+    return await query(operation, variables, options);
+  } catch (error) {
+    if (error.code !== 'operation_not_observed') throw error;
+    return nativePage(operation, variables, error.missing);
+  }
+}
+
+async function getXPost(a) {
+  const id = String(a.id);
+  if (!cookie('ct0')) {
+    try {
+      return await query('TweetResultByRestId', {tweetId: id, includePromotedContent: false}, a);
+    } catch (error) {
+      if (error.code !== 'operation_not_observed') throw error;
     }
-  },[{args:{query:'local LLM lang:en -filter:replies',count:5,product:'Latest'}}]),
-  getPost:siteFn('Read one post by ID using an observed single-post operation; preserves long note text when returned.',z.object({id:postIdentifier,...readOptions}),a=>query('TweetResultByRestId',{tweetId:String(a.id),includePromotedContent:false},a)),
-  getConversation:siteFn('Read one page of a post’s conversation, including returned replies and quoted posts.',z.object({id:postIdentifier,...timeline}),a=>query('TweetDetail',{focalTweetId:String(a.id),cursor:a.cursor},a)),
+  }
+  const page = await readX('TweetDetail', {focalTweetId: id}, a);
+  if (page.status === 'navigation_required') return page;
+  const post = page.sources.find(source => source.kind === 'post' && source.id === id);
+  if (!post) throw fault('post_unavailable', 'X did not return the requested post in the conversation.');
+  return {...page, sources: [post], nextCursor: null, coverage: 'Requested post only.'};
+}
+
+const skill={
+  searchPosts:siteFn('Search X posts using the current browser session. Supports Top, Latest and cursor pagination.',z.object({
+    query:z.string().min(1).max(500),product:z.enum(['Top','Latest','People','Photos','Videos']).default('Latest'),...timeline,
+  }),a=>readX('SearchTimeline',{rawQuery:a.query,product:a.product,count:a.count,cursor:a.cursor},a),[{args:{query:'local LLM lang:en -filter:replies',count:5,product:'Latest'}}]),
+  getPost:siteFn('Read one X post by ID or status URL, including available long note text.',z.object({id:postIdentifier,...readOptions}),getXPost),
+  getConversation:siteFn('Read one page of a post’s conversation, including returned replies and quoted posts.',z.object({id:postIdentifier,...timeline}),a=>readX('TweetDetail',{focalTweetId:String(a.id),cursor:a.cursor},a)),
   searchUsers:siteFn('Search accounts by name or keyword.',z.object({query:z.string().min(1),...timeline}),a=>skill.searchPosts.handler({...a,product:'People'})),
   getReplies:siteFn('Search posts in a conversation; directOnly selects replies to the focal post. Search coverage follows X search results.',z.object({id:postIdentifier,directOnly:z.boolean().default(false),...timeline}),async a=>{
     const page=await skill.searchPosts.handler({query:`conversation_id:${a.id}`,product:'Latest',count:a.count,cursor:a.cursor,signal:a.signal});
@@ -399,9 +565,12 @@ const skill={
   getListMembers:siteFn('Read a page of list members.',z.object({listId:numericId,...timeline}),a=>query('ListMembers',{listId:String(a.listId),count:a.count,cursor:a.cursor},a)),
   getListSubscribers:siteFn('Read a page of list subscribers when accessible.',z.object({listId:numericId,...timeline}),a=>query('ListSubscribers',{listId:String(a.listId),count:a.count,cursor:a.cursor},a)),
   getCommunityPosts:siteFn('Read community posts using an actually observed community timeline.',z.object({communityId:numericId,...timeline}),a=>query('CommunityTweetsTimeline',{communityId:String(a.communityId),count:a.count,cursor:a.cursor},a)),
-  readObserved:siteFn('Advanced access to the allowlisted observed read operations, including evolving community feeds. Reuses current feature flags and query IDs.',z.object({
-    operation:z.enum(operations),variables:z.record(z.union([z.string().max(2000),z.number(),z.boolean(),z.array(z.string().max(100)).max(20)])).default({}),
-  }),a=>query(a.operation,a.variables,a)),
+  readObserved:siteFn('Call an X browser GraphQL read operation with native variables. Returns the original X JSON response.',z.object({
+    operation:z.enum(operations),variables:z.record(z.unknown()).default({}),
+  }),a=>readX(a.operation,a.variables,{...a,raw:true}),[
+    {args:{operation:'SearchTimeline',variables:{rawQuery:'OpenAI',product:'Latest',count:10}}},
+    {args:{operation:'TweetDetail',variables:{focalTweetId:'1900000000000000000'}}},
+  ]),
   readCurrent:siteFn('Read only the currently loaded posts/conversation without a captured API operation. Loaded-page coverage is explicit.',reading,a=>{
     const articles=[...document.querySelectorAll('article[data-testid="tweet"]')].slice(0,20);
     if(!articles.length)return currentPage(['main','[data-testid="primaryColumn"]'],a);
@@ -417,7 +586,7 @@ const skill={
     }),{scope:'loaded_posts_only',complete:false});
   }),
   getCapabilities:siteFn('List currently observed read operations and missing ones, without exposing session headers, cookies or query variables.',empty,()=>{
-    const observed=[...new Set(observedRequests('/i/api/graphql/').map(r=>{
+    const observed=[...new Set(xRequests().map(r=>{
       try{return new URL(r.url,location.href).pathname.split('/').at(-1);}catch{return null;}
     }).filter(op=>operations.includes(op)))];
     return {observed,notYetObserved:operations.filter(op=>!observed.includes(op)),readCurrentAvailable:true,
@@ -425,4 +594,4 @@ const skill={
   }),
   getRateLimit:siteFn('Inspect request budgets and server cooldown.',empty,()=>client.status()),
 };
-export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+' Post IDs and X/Twitter status URLs work with getPost/getConversation/getReplies. Use searchUsers for accounts; getReplies uses conversation_id search and directOnly optionally selects immediate replies. Image markers have a sibling readImages handler. getCapabilities lists observed browser operations; cross-page searches return a URL to open before continuing.'});
+export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+' Prefer readObserved for native X GraphQL. Use SearchTimeline with rawQuery and product for search, and TweetDetail with focalTweetId to read a post and its conversation. Use the returned timeline cursor as variables.cursor for the next page. If a call returns navigation_required, follow its instructions to run the read in another X tab while preserving the current page. Use getPost or getConversation before readPostImages when you need selected images.'});
