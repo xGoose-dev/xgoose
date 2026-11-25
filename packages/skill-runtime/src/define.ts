@@ -94,18 +94,23 @@ export function defineSkill<T extends Record<string, FnSpec<any, any>>>(
   const meta = { ...(globalMeta ?? {}), ...(opts.meta ?? {}) };
 
   const fnNames = Object.keys(spec);
-  const callables: Record<string, (raw: any) => Promise<any> | any> = {};
+  const callables: Record<string, (raw: any, signal?: AbortSignal) => any> = {};
 
   for (const [name, f] of Object.entries(spec)) {
     // Pass raw args straight to the handler. If the agent passes a bad
     // shape, the handler's destructure or first property access throws —
     // that error bubbles back to `js_exec` and the agent self-corrects
     // by reading `help({ skill, function })`.
-    callables[name] = (rawArgs: any) => {
+    callables[name] = (rawArgs: any, signal?: AbortSignal) => {
       if (meta.namespace && (globalThis as any).xgoose?.skills?.[meta.namespace] !== bundle) {
         throw new Error(`Skill ${meta.namespace} has been disabled or replaced; refresh may be needed to clear prior side effects.`);
       }
-      return f.handler(f.input.parse(rawArgs ?? {}));
+      const args = f.input.parse(rawArgs ?? {});
+      if (signal && args && typeof args === "object" && !Array.isArray(args)) {
+        // Host metadata stays outside the website skill's JSON schema.
+        return f.handler(Object.defineProperty({ ...args }, "signal", { value: signal }));
+      }
+      return f.handler(args);
     };
   }
 

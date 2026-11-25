@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         hyatt-awards
 // @namespace    hyatt
-// @version      0.3.2
+// @version      0.3.3
 // @description  World of Hyatt award/cash search + Pay My Way + promo tracker. Same-origin scraper for hyatt.com.
 // @match        *://www.hyatt.com/*
 // @detect       location.hostname === 'www.hyatt.com'
@@ -68,7 +68,7 @@ async function runWithConcurrency(tasks, limit) {
   const out = new Array(tasks.length);
   let next = 0;
   const workers = [];
-  const concurrency = Math.max(1, Math.min(limit | 0 || 1, tasks.length));
+  const concurrency = Math.min(tasks.length, Math.max(1, Math.floor(limit) || 1));
   for (let i = 0; i < concurrency; i++) {
     workers.push(
       (async () => {
@@ -294,7 +294,7 @@ export default defineSkill({
       rooms: z.number().int().min(1).optional(),
       kids: z.number().int().min(0).optional(),
       mode: ModeSchema.optional(),
-      concurrency: z.number().int().min(1).max(12).optional(),
+      concurrency: z.number().int().positive().optional().describe("Choose the number of simultaneous nightly searches for this call. Defaults to 6."),
       filters: FiltersSchema,
       includeRaw: z.boolean().optional(),
     }),

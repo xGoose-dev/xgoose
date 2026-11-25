@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        ihg-awards
 // @namespace   ihg
-// @version     0.1.1
+// @version     0.1.2
 // @description IHG One Rewards property rate search. Cross-origin scraper for `apis.ihg.com/availability/v3/hotels/offers`. Anonymous returns BOTH cash AND points pricing in a single call. Run on www.ihg.com.
 // @match       *://www.ihg.com/*
 // @detect      location.hostname === 'www.ihg.com'
@@ -134,7 +134,7 @@ async function runWithConcurrency(tasks, limit) {
   const out = new Array(tasks.length);
   let next = 0;
   const workers = [];
-  const concurrency = Math.max(1, Math.min(limit | 0 || 1, tasks.length));
+  const concurrency = Math.min(tasks.length, Math.max(1, Math.floor(limit) || 1));
   for (let i = 0; i < concurrency; i++) {
     workers.push(
       (async () => {
@@ -643,7 +643,7 @@ export default defineSkill({
     handler: async ({rooms, filters}) => filterStaySummaries(rooms, filters),
   }),
   findAvailability: fn({
-    summary: "★ main entry. Date range → per-night calendar with cash + points.",
+    summary: "★ main entry. Date range → per-night calendar with cash + points. Pass {hotelMnemonic,startDate,endDate,concurrency?}. Choose how many nightly searches to run together (default 4).",
     input: z.any().optional(),
     handler: async (params) => findAvailability(params),
   }),

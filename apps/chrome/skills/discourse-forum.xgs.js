@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discourse-forum
 // @namespace    discourse
-// @version      0.2.18
+// @version      0.2.19
 // @description  Search Discourse forums, read topics and replies, and research community insights.
 // @match        *://meta.discourse.org/*
 // @match        *://*.discourse.org/*
@@ -87,7 +87,7 @@ function drainForumReads() {
     }
     return;
   }
-  if (activeForumReads.size >= 2 || activeForumReads.has(null)) return;
+  if (activeForumReads.has(null)) return;
 
   // Skip busy topics while keeping non-topic reads exclusive and in queue order.
   const index = forumReadQueue.findIndex(({topicId}) => !activeForumReads.has(topicId));
@@ -713,7 +713,7 @@ export default defineSkill({
   instructions: `Find relevant discussions, read key posts and summarize community consensus and actionable data points.
 - Prioritize recent information, helpful topics with high engagement, first-hand experiences and official announcements or policy changes.
 - When researching how something works in practice, look for approaches specific to this forum. Actively seek recent firsthand reports that challenge your initial expectations, including unexpected successes and failures. If the forum's experience differs from public guides, use those reports to explain the steps, conditions and outcomes.
-- For independent reads of different topics, issue the readTopicPosts calls in the same assistant turn.
+- Choose how many independent topics to read together for the question. Issue those readTopicPosts calls in the same assistant turn.
 - Use provided action-result first. Search snippets locate discussions; read bodies for content claims. Listing/count questions need the requested metadata only.
 - For thread summaries, use the question to choose the reply range. As a reference, consider roughly the earliest 30 and latest 100 replies. For more in-depth questions, read additional relevant replies beyond those windows.
 - Check topic size before choosing reading depth. getTopic and getTopicPosts return five posts. Use readTopicPosts for larger ranges with a bounded limit; follow next_cursor sequentially. If expired, resume from next_post_number. Recover needed truncated text with fromPostNumber, limit:1 and textOffset:next_text_offset.

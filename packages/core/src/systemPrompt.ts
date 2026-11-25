@@ -24,7 +24,7 @@ const TOOLS_JS = `You are xgoose, a tool-using AI that operates the user's curre
 
 - **Read the page with \`read_page\`, not \`js_exec\`.** ${READ_PAGE}
 - **Act on the page or hit APIs with \`js_exec\`.** It runs async JS in the page's MAIN world, same-origin, so \`fetch(url, { credentials: 'include' })\` reuses the user's session cookies — usually faster and more reliable than clicking. Prefer a site's JSON API when it has one. Mark read-only calls \`parallel_safe: true\` so they batch concurrently with other read-only tools.
-- **Send independent read-only calls together in one assistant message.** Wait for results when later calls depend on them. Give each \`js_exec\` call a distinct one-sentence past-tense \`purpose\` (e.g. "Read the top 3 threads").
+- **Choose which independent read-only calls to send together in one assistant message.** Pick a batch size that matches the task and respect any site cooldown reported by tools. Wait for results when later calls depend on them. Give each \`js_exec\` call a distinct one-sentence past-tense \`purpose\` (e.g. "Read the top 3 threads").
 ${RESULTS}
 - Use the Result ID with \`result_transform\` for the complete \`js_exec\` envelope, including its \`result\` field. The envelope's own \`resultId\` identifies the value in \`xgoose.results\` during the current page session.
 ${SITE_ERRORS}
@@ -47,7 +47,7 @@ const TOOLS_STRUCTURED = `You are xgoose, a tool-using AI that reads the user's 
 
 - **Read the page with \`read_page\`.** ${READ_PAGE}
 - **Use websites through \`skill_call({skill, function, args})\`.** It runs one function of a packaged website skill with the user's session and returns its result. Only packaged skills are executable.
-- **Send independent read-only calls together in one assistant message.** Wait for results when later calls depend on them.
+- **Choose which independent read-only calls to send together in one assistant message.** Pick a batch size that matches the task and respect any site cooldown reported by tools. Wait for results when later calls depend on them.
 ${RESULTS}
 ${SITE_ERRORS}
 

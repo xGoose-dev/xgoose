@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         hacker-news
 // @namespace    hn
-// @version      0.1.6
+// @version      0.1.7
 // @description  Hacker News search, all six feeds, stories, comments, threads, polls, users, submissions and updates. Bounded, cached, rate-limited reads with original-source cards.
 // @match        https://news.ycombinator.com/*
 // @match        https://hn.algolia.com/*
@@ -156,7 +156,7 @@ function boundedRaw(data) {
 
 function createClient(site, policy, allowed) {
   const key = `xgoose.reader.limits.${site}.v1`;
-  const state = readerStates.get(site) ?? { tail: Promise.resolve(), pending: new Map(), cache: new Map(), times: [], blockedUntil: 0, queued: 0 };
+  const state = readerStates.get(site) ?? { startTail: Promise.resolve(), pending: new Map(), cache: new Map(), times: [], blockedUntil: 0, queued: 0 };
   readerStates.set(site, state);
   function load() {
     try {
@@ -190,12 +190,23 @@ function createClient(site, policy, allowed) {
       if (state.times.length >= policy.perHour) wait = Math.max(wait, state.times[0] + 3600000 - now);
       if (wait > 10000) throw fault('rate_limited', 'Local request budget exhausted; retry after the indicated delay.', { retryAfterMs: wait });
       await pause(wait, signal);
-      state.times.push(Date.now()); save();
+      load();
+      const start = Date.now();
+      if (state.blockedUntil > start) throw fault('rate_limited', 'Waiting for the server cooldown.', { retryAfterMs: state.blockedUntil - start });
+      state.times.push(start); save();
     };
-    // Web Locks + localStorage share quotas among tabs on this origin. Without
-    // Web Locks the in-page queue still works; getRateLimit reports that limit.
-    if (globalThis.navigator?.locks) return navigator.locks.request(key, operation);
-    return operation();
+    // Reserve request starts serially. Network I/O runs after releasing the lock.
+    if (globalThis.navigator?.locks) {
+      try {
+        return await navigator.locks.request(key, { signal }, operation);
+      } catch (error) {
+        if (signal?.aborted) throw fault('aborted', 'Request cancelled.');
+        throw error;
+      }
+    }
+    const start = (state.startTail ??= Promise.resolve()).then(operation, operation);
+    state.startTail = start;
+    return start;
   }
   function request(input, options = {}) {
     const url = new URL(input, location.href);
@@ -204,14 +215,19 @@ function createClient(site, policy, allowed) {
     const ttl = options.ttl ?? 30000;
     const cached = state.cache.get(cacheKey);
     if (ttl && cached?.until > Date.now()) return Promise.resolve(structuredClone(cached.value));
-    if (ttl && state.pending.has(cacheKey)) return state.pending.get(cacheKey).then(structuredClone);
-    if (state.queued >= 20) return Promise.reject(fault('queue_full', 'At most 20 requests may wait; use pagination instead of unbounded fan-out.'));
+    if (ttl && state.pending.has(cacheKey)) {
+      return state.pending.get(cacheKey).then(structuredClone, error => {
+        // A cancelled leader can release the request for a still-active caller.
+        if (error.code === 'aborted' && !options.signal?.aborted) return request(input, options);
+        throw error;
+      });
+    }
     state.queued++;
-    const run = state.tail.catch(() => {}).then(async () => {
-      await reserve(options.signal);
+    const start = reserve(options.signal).finally(() => { state.queued--; });
+    const run = start.then(async () => {
       const controller = new AbortController();
       const abort = () => controller.abort();
-      if (options.signal?.aborted) abort();
+      if (options.signal?.aborted) throw fault('aborted', 'Request cancelled.');
       options.signal?.addEventListener('abort', abort, { once: true });
       const timer = setTimeout(abort, 15000);
       try {
@@ -240,12 +256,15 @@ function createClient(site, policy, allowed) {
           state.cache.set(cacheKey, { value, until: Date.now() + ttl });
         }
         return structuredClone(value);
+      } catch (error) {
+        if (options.signal?.aborted) throw fault('aborted', 'Request cancelled.');
+        throw error;
       } finally {
         clearTimeout(timer); options.signal?.removeEventListener('abort', abort);
       }
     });
-    state.tail = run; state.pending.set(cacheKey, run);
-    run.finally(() => { state.queued--; if (state.pending.get(cacheKey) === run) state.pending.delete(cacheKey); }).catch(() => {});
+    state.pending.set(cacheKey, run);
+    run.finally(() => { if (state.pending.get(cacheKey) === run) state.pending.delete(cacheKey); }).catch(() => {});
     return run;
   }
   return {

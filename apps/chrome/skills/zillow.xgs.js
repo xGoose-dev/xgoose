@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name        zillow
 // @namespace   zillow
-// @version     0.2.1
+// @version     0.2.3
 // @description Zillow search-results scraper. Reads listings, region info, filters, and pagination from the page's hydrated `__NEXT_DATA__` blob. Includes session SSR searches and property detail/history reads.
 // @match       *://www.zillow.com/*
 // @match       *://zillow.com/*
@@ -33,21 +33,27 @@ import { fn } from "@xgoose/skill";
 import { z } from "zod";
 var empty = z.object({});
 var urlInput = z.object({ url: z.string().optional() });
-var queue = Promise.resolve();
-var last = 0;
+var requestStarts = globalThis[Symbol.for("xgoose.real-estate.request-starts")] ??= {
+  tail: Promise.resolve(),
+  last: globalThis.webagent?.skills?.zillow?.__limiter?.lastStart || void 0
+};
+function waitForRequestStart({ minGapMs = 1e3, jitterMs = 0 } = {}) {
+  const start = requestStarts.tail.then(async () => {
+    const gap = requestStarts.last === void 0 ? 0 : Math.max(0, requestStarts.last + minGapMs - Date.now());
+    const jitter = minGapMs > 0 ? Math.floor(Math.random() * jitterMs) : 0;
+    if (gap + jitter > 0) await new Promise((resolve) => setTimeout(resolve, gap + jitter));
+    requestStarts.last = Date.now();
+  });
+  requestStarts.tail = start;
+  return start;
+}
 async function request(url) {
   const target = new URL(url, location.origin);
   if (target.origin !== location.origin) throw Error("Open this skill on " + target.origin);
-  const job = queue.then(async () => {
-    await new Promise((r) => setTimeout(r, Math.max(0, 1e3 - (Date.now() - last))));
-    last = Date.now();
-    const response = await fetch(target.href, { credentials: "include" });
-    if (!response.ok) throw Error(`HTTP ${response.status}: ${target.pathname}`);
-    return response.text();
-  });
-  queue = job.catch(() => {
-  });
-  return job;
+  await waitForRequestStart();
+  const response = await fetch(target.href, { credentials: "include" });
+  if (!response.ok) throw Error(`HTTP ${response.status}: ${target.pathname}`);
+  return response.text();
 }
 function json(text2) {
   return JSON.parse(text2.replace(/^\s*\{\}&&/, ""));
@@ -189,11 +195,8 @@ var realtorFunctions = {
 
 // src/real-estate/zillow.xgs.js
 var __defProp = Object.defineProperty;
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
-var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 var DEFAULT_LIMIT = {
-  maxConcurrent: 1,
   minGapMs: 1e3,
   jitterMs: 300
 };
@@ -209,59 +212,14 @@ __name(clampInt, "clampInt");
 function mergeConfig(base, patch) {
   if (!patch) return base;
   return {
-    maxConcurrent: clampInt(patch.maxConcurrent ?? base.maxConcurrent, 1, 16, base.maxConcurrent),
     minGapMs: clampInt(patch.minGapMs ?? base.minGapMs, 0, 6e4, base.minGapMs),
     jitterMs: clampInt(patch.jitterMs ?? base.jitterMs, 0, 3e4, base.jitterMs)
   };
 }
 __name(mergeConfig, "mergeConfig");
-var _Limiter = class _Limiter2 {
-  constructor() {
-    __publicField(this, "cfg", { ...DEFAULT_LIMIT });
-    __publicField(this, "inFlight", 0);
-    __publicField(this, "lastStart", 0);
-    __publicField(this, "waiters", []);
-  }
-  setConfig(patch) {
-    this.cfg = mergeConfig(this.cfg, patch);
-  }
-  getConfig() {
-    return { ...this.cfg };
-  }
-  async acquire(override) {
-    const cfg = mergeConfig(this.cfg, override);
-    while (this.inFlight >= cfg.maxConcurrent) {
-      await new Promise((r) => this.waiters.push(r));
-    }
-    this.inFlight++;
-    const now = Date.now();
-    const wait = this.lastStart + cfg.minGapMs - now;
-    if (wait > 0) {
-      const jitter = cfg.jitterMs > 0 ? Math.floor(Math.random() * cfg.jitterMs) : 0;
-      await sleep(wait + jitter);
-    } else if (cfg.jitterMs > 0 && cfg.minGapMs > 0) {
-      const jitter = Math.floor(Math.random() * cfg.jitterMs);
-      if (jitter > 0) await sleep(jitter);
-    }
-    this.lastStart = Date.now();
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      this.inFlight--;
-      const next2 = this.waiters.shift();
-      if (next2) next2();
-    };
-  }
+var rateLimit = globalThis[Symbol.for("xgoose.zillow.rate-limit")] ??= {
+  config: mergeConfig(DEFAULT_LIMIT, globalThis.webagent?.skills?.zillow?.__limiter?.getConfig?.())
 };
-__name(_Limiter, "Limiter");
-var Limiter = _Limiter;
-var __root = typeof window !== "undefined" ? window : globalThis;
-__root.webagent = __root.webagent || { skills: {} };
-__root.webagent.skills = __root.webagent.skills || {};
-__root.webagent.skills.zillow = __root.webagent.skills.zillow || {};
-var LIMITER = __root.webagent.skills.zillow.__limiter ?? new Limiter();
-__root.webagent.skills.zillow.__limiter = LIMITER;
 var NEXT_DATA_RE = /<script[^>]+id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/;
 var PX_DENY_RE = /Access to this page has been denied|px-captcha/i;
 var STATUS_TYPES = /* @__PURE__ */ new Set(["FOR_RENT", "FOR_SALE", "SOLD", "PENDING"]);
@@ -515,20 +473,14 @@ async function searchByPath(params) {
   const target = injectPageSegment(params.urlPath, params.page);
   const url = absolutize(target);
   for (let attempt = 0; ; attempt++) {
-    const release = await LIMITER.acquire(params.rateLimit);
-    let r;
-    let text2;
-    try {
-      r = await fetch(url, {
-        method: "GET",
-        credentials: "include",
-        cache: "no-cache",
-        headers: { Accept: "text/html,application/xhtml+xml" }
-      });
-      text2 = await r.text();
-    } finally {
-      release();
-    }
+    await waitForRequestStart(mergeConfig(rateLimit.config, params.rateLimit));
+    const r = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-cache",
+      headers: { Accept: "text/html,application/xhtml+xml" }
+    });
+    const text2 = await r.text();
     if (r.status === 429) {
       if (attempt >= RETRY_429_DELAYS_MS.length) return rateLimitedResult(url);
       await sleep(RETRY_429_DELAYS_MS[attempt]);
@@ -547,11 +499,11 @@ async function searchByPath(params) {
 }
 __name(searchByPath, "searchByPath");
 function setRateLimit(config) {
-  LIMITER.setConfig(config);
+  rateLimit.config = mergeConfig(rateLimit.config, config);
 }
 __name(setRateLimit, "setRateLimit");
 function getRateLimit() {
-  return LIMITER.getConfig();
+  return { ...rateLimit.config };
 }
 __name(getRateLimit, "getRateLimit");
 function buildSearchUrl(params) {

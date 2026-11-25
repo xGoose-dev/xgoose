@@ -77,10 +77,16 @@ try {
   }
   assert.equal(calls.length, 3);
   const toolMessages = calls[2].messages.filter(message => message.role === 'tool').map(message => message.content);
-  assert.deepEqual(toolMessages.map(message => {
-    try { return JSON.parse(message); } catch { return message; }
-  }), invocations.map(({operation}) => ({data: {[nativeKey(operation)]: {onlyNativeField: 'original-'+operation}}})),
-  JSON.stringify({traffic, failures, toolMessages, navigations}));
+  const resultIds = new Set();
+  const nativeResults = toolMessages.map(message => {
+    const [, json, id] = message.match(/^([\s\S]+)\nResult ID: "([^"]+)"$/) ?? [];
+    assert.ok(id, message);
+    resultIds.add(id);
+    return JSON.parse(json);
+  });
+  assert.equal(resultIds.size, invocations.length);
+  assert.deepEqual(nativeResults, invocations.map(({operation}) => ({data: {[nativeKey(operation)]: {onlyNativeField: 'original-'+operation}}})),
+    JSON.stringify({traffic, failures, toolMessages, navigations}));
   assert.deepEqual(traffic.map(({operation, method}) => [operation, method]),
     [['SearchTimeline', 'GET'], ['SearchTimeline', 'POST'], ['TweetDetail', 'GET'], ['TweetDetail', 'POST']]);
   assert.deepEqual(traffic[1].body, {variables: invocations[0].variables, features: {siteFeature: false}});

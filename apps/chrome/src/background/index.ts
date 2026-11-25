@@ -216,13 +216,17 @@ registerRouter({
           }
           // Cap each invocation so a hung skill can't pin the SW reply
           // forever — mirrors `pageBridge.exec`'s default 30 s budget.
+          const controller = new AbortController();
           let timer: ReturnType<typeof setTimeout>;
           const racer = new Promise<{ __timeout: true }>((resolve) => {
-            timer = setTimeout(() => resolve({ __timeout: true }), Math.max(1, t));
+            timer = setTimeout(() => {
+              resolve({ __timeout: true });
+              controller.abort();
+            }, Math.max(1, t));
           });
           try {
             const out = await Promise.race([
-              Promise.resolve(callable(callArgs)),
+              Promise.resolve(callable(callArgs, controller.signal)),
               racer,
             ]);
             if ((out as any)?.__timeout) {
