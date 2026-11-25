@@ -33,6 +33,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Browser regressions
         run: npm run e2e
+      - name: X native skill regression
+        run: node tests/browser/x-native-read.mjs
       - name: Notification and transcript regression
         run: npm run test:notifications
       - name: Safari viewport regression

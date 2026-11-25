@@ -13,6 +13,7 @@ import {assertLiveDocument,executableSkillsForUrl, injectPackagedSkills, reconci
 import { installSkillUpdateChecks, checkSkillUpdates, skillUpdateState, updateSkill } from "./skillUpdates";
 import { hostedStatus } from "./hosted";
 import { readSubstackPublication } from "./substackReader";
+import { continueXNativeRead } from './xNativeRead';
 import { readNgaImages } from './ngaImages';
 import { skillCatalog, installCatalogSkill } from "./catalog";
 import { recordJournal, getConsent, setConsent } from "./transcripts";
@@ -186,6 +187,8 @@ registerRouter({
     const active = await executableSkillsForUrl(sender.url ?? "");
     if (!active.some(s => s.namespace === namespace)) return { ok: false, error: "Skill is disabled, missing a dependency, or unavailable on this page" };
     if (!/^[A-Za-z_$][\w$]*$/.test(functionName) || functionName.startsWith("__") || ["constructor", "prototype"].includes(functionName)) return {ok:false,error:"Invalid exported skill function"};
+    const timeout = Math.min(120000, Math.max(100, timeoutMs ?? 30_000));
+    const deadline = Date.now()+timeout;
     try {
       await assertLiveDocument(sender);
       const results = await chrome.scripting.executeScript({
@@ -237,7 +240,7 @@ registerRouter({
             } as const;
           } finally { clearTimeout(timer!); }
         },
-        args: [namespace, functionName, args ?? {}, Math.min(120000, Math.max(100, timeoutMs ?? 30_000)), (sender as any).__xgooseDocumentNonce ?? ""],
+        args: [namespace, functionName, args ?? {}, timeout, (sender as any).__xgooseDocumentNonce ?? ""],
       });
       await assertLiveDocument(sender);
       const raw = results[0]?.result as any;
@@ -262,6 +265,14 @@ registerRouter({
       }
       if (raw.__error) {
         return { ok: false, error: raw.message, stack: raw.stack };
+      }
+      if (!isSafari && namespace === 'x' && active.some(s => s.namespace === 'x' && s.filePath === 'skills/x.xgs.js')) {
+        const continuation = continueXNativeRead(sender, functionName, args ?? {}, raw.result, deadline);
+        if (continuation) {
+          const completed = await continuation;
+          await assertLiveDocument(sender);
+          return completed;
+        }
       }
       return { ok: true, result: raw.result };
     } catch (err: any) {
