@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         tieba
 // @namespace    tieba
-// @version      0.3.3
+// @version      0.3.4
 // @description  百度贴吧只读助手：全站/吧内搜索、主题与回复、图片和公开用户 profile。兼容新版页面及旧版 HTML，沿用浏览器登录，内置限速和验证冷却，返回 dehydrated 来源。
 // @match        https://tieba.baidu.com/*
 // @connect      <self>
@@ -262,7 +262,7 @@ function createClient(site, policy, allowed) {
   };
 }
 
-const READING_INSTRUCTIONS = `For discussion summaries, default to the original post plus roughly the first 30 and latest 100 replies, deduplicating overlaps; follow user-specified ranges. Reply in the user's language. Use search/list results to choose sources and read relevant details. Include original URLs, authors, dates and reply links. Choose functions, sorting and pagination for the task. Pass the REPL signal for cancellable requests; getRateLimit reports local quotas.`;
+const READING_INSTRUCTIONS = `For discussion summaries, read the original post and choose relevant replies and pagination based on the question; follow user-specified ranges. Reply in the user's language. Use search/list results to choose sources and read relevant details. Include original URLs, authors, dates and reply links. Choose functions, sorting and pagination for the task. Pass the REPL signal for cancellable requests; getRateLimit reports local quotas.`;
 
 function credentialDialog(label, save) {
   const dialog = document.createElement('dialog');

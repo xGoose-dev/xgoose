@@ -721,7 +721,7 @@ export default defineSkill({
 - Summarize rather than quote whole threads. Describe outcomes, dates, amounts and relevant circumstances; include author, available likes and post links. Follow the user's scope and language.`,
   actions: [
     {label:'Latest topics', prompt:"List the newest topics in action-result by creation time, with a short description and source link for each.",js:"return await xgoose.skills.discourse.getRecentTopics({kind:'new'});"},
-    {label:'Summarize this thread', prompt:"Summarize the original post, first 30 and latest 100 replies, deduplicating overlaps. Summarize community consensus and actionable DPs with authors, dates and sources. Follow user-specified ranges.",js:'return await xgoose.skills.discourse.readTopicForSummary({});'},
+    {label:'Summarize this thread', prompt:"Use discourse.readTopicPosts to read the opening post and relevant replies. Choose reading depth for the question and follow user-specified ranges. Summarize community consensus and actionable data points with authors, dates and post links."},
     {label:'Surprise me randomly', prompt:"Recommend the sampled topics in action-result with a title, reason, update date and source link.",js:"return await xgoose.skills.discourse.getRecentTopics({kind:'random'});"},
   ],
 });

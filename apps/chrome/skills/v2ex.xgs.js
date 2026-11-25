@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         v2ex
 // @namespace    v2ex
-// @version      0.2.5
+// @version      0.2.6
 // @description  V2EX public v1 and token-authenticated v2 read APIs: configurable search, topics, replies, node directory and node topics, profiles and notifications. Browser-session identity and explicit pagination.
 // @match        https://www.v2ex.com/*
 // @match        https://v2ex.com/*
@@ -14,7 +14,7 @@
 // @keyword      v2ex
 // @keyword      v站
 // @keyword      程序员社区
-// @action       概括这个帖子 | 概括当前帖的主帖、开头约 30 条回复及最新约 100 条回复，重叠去重，附来源链接。自行选择函数和分页参数；用户指定范围优先。
+// @action       概括这个帖子 | 概括当前帖的主帖和相关回复，附来源链接。按问题选择阅读范围和分页参数；用户指定范围优先。
 // @action       热帖 | 使用 v2ex.getHotTopics 获取当前热门主题，挑选值得关注的讨论，给出简短看点和原帖链接。列表是摘要，不要声称已读正文或全部回复。
 // @action       新帖 | 使用 v2ex.getLatestTopics 获取最新主题；若用户当前在具体节点，可用 getNodeTopics 读取该节点近期主题。标明范围和时间，给出看点与链接。
 // @action       随便看看 | 使用 v2ex skill，从热门或最新主题中选择一个有趣且与当前话题不重复的帖子；读取正文和相关回复后介绍有意思的观点并附来源。明确选择范围，不要反复搜索同一快照。
@@ -271,7 +271,7 @@ function createClient(site, policy, allowed) {
   };
 }
 
-const READING_INSTRUCTIONS = `For discussion summaries, default to the original post plus roughly the first 30 and latest 100 replies, deduplicating overlaps; follow user-specified ranges. Reply in the user's language. Use search/list results to choose sources and read relevant details. Include original URLs, authors, dates and reply links. Choose functions, sorting and pagination for the task. Pass the REPL signal for cancellable requests; getRateLimit reports local quotas.`;
+const READING_INSTRUCTIONS = `For discussion summaries, read the original post and choose relevant replies and pagination based on the question; follow user-specified ranges. Reply in the user's language. Use search/list results to choose sources and read relevant details. Include original URLs, authors, dates and reply links. Choose functions, sorting and pagination for the task. Pass the REPL signal for cancellable requests; getRateLimit reports local quotas.`;
 
 function credentialDialog(label, save) {
   const dialog = document.createElement('dialog');

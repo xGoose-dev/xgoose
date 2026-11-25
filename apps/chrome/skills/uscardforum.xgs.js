@@ -86,28 +86,7 @@ function currentRouteImpl() {
   return { type: 'unknown' };
 }
 
-async function recentDeals() {
-  const results = await Promise.allSettled(['羊毛','offer','优惠'].map(query=>discourse().searchTopics({query,order:'latest'})));
-  const found=results.flatMap(r=>r.status==='fulfilled' ? r.value.topics || [] : []);
-  const candidates=[...new Map(found.filter(t=>!t.pinned && t.archetype!=='private_message').map(t=>[t.id,t])).values()];
-  if (!candidates.length) throw new Error('未获取到最新羊毛搜索结果。');
-  candidates.sort((a,b)=>Date.parse(b.last_posted_at || b.created_at)-Date.parse(a.last_posted_at || a.created_at));
-  const topics=[];
-  for(const item of candidates.slice(0,8)) {
-    try {
-      const detail=await discourse().getTopic({id:item.id,maxChars:2500});
-      topics.push({id:item.id,title:item.title,url:`${location.origin}/t/${item.id}`,created_at:item.created_at,last_posted_at:item.last_posted_at,posts:detail.posts || [],read_error:detail.httpStatus ? detail.message : undefined});
-    } catch(error) { topics.push({id:item.id,title:item.title,url:`${location.origin}/t/${item.id}`,read_error:String(error)}); }
-  }
-  return {kind:'deals',topics,hint:'每帖仅前五楼预览；按需读取后续 DP，附原帖链接。'};
-}
-
 export default defineSkill({
-  getRecentDeals: fn({
-    summary: 'Find recent deals; returns up to eight topics with five-post previews and source links.',
-    input: z.object({}),
-    handler: async () => recentDeals(),
-  }),
   searchInCategory: fn({
     summary: 'Search topics within a specific 美卡论坛 category. ★ primary entry.',
     input: z.object({
@@ -183,7 +162,4 @@ export default defineSkill({
 - 补读时可在同一轮并行调用 discourse.readTopicPosts 读取不同主题。遇到超时后，逐个发出剩余的读帖调用。同一主题按 next_cursor 顺序逐页读。
 - 比较信用卡时，结合社区反馈说明开卡奖励与要求、年费、权益、积分价值、适合人群及申请策略。
 - 总结长帖内容，读取与分页遵循 discourse-forum。`,
-  actions: [
-    {label:'最近羊毛', prompt:'根据 action-result 总结近期有用的羊毛和 offer，说明适用条件、社区反馈与实测 DP，附日期和原帖链接；关键正文不足时补读。',js:'return await xgoose.skills.uscf.getRecentDeals({});'},
-  ],
 });

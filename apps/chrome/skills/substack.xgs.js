@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         substack
 // @namespace    substack
-// @version      0.2.2
+// @version      0.2.3
 // @description  Substack publication archives/search, posts, comments, RSS, publication metadata and session read endpoints. Supports custom publication domains, excerpts, source cards and conservative rate limits.
 // @match        https://substack.com/*
 // @match        https://*.substack.com/*
@@ -275,7 +275,7 @@ function createClient(site, policy, allowed) {
   };
 }
 
-const READING_INSTRUCTIONS = `For discussion summaries, default to the original post plus roughly the first 30 and latest 100 replies, deduplicating overlaps; follow user-specified ranges. Reply in the user's language. Use search/list results to choose sources and read relevant details. Include original URLs, authors, dates and reply links. Choose functions, sorting and pagination for the task. Pass the REPL signal for cancellable requests; getRateLimit reports local quotas.`;
+const READING_INSTRUCTIONS = `For discussion summaries, read the original post and choose relevant replies and pagination based on the question; follow user-specified ranges. Reply in the user's language. Use search/list results to choose sources and read relevant details. Include original URLs, authors, dates and reply links. Choose functions, sorting and pagination for the task. Pass the REPL signal for cancellable requests; getRateLimit reports local quotas.`;
 
 function credentialDialog(label, save) {
   const dialog = document.createElement('dialog');

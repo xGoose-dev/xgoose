@@ -33,12 +33,12 @@ try {
    await page.locator('#xgoose-root .toggle').click();
    const shortcuts=page.locator('#xgoose-root .shortcuts button');
    await shortcuts.filter({hasText:'Surprise me randomly'}).waitFor();
-   assert.deepEqual(await shortcuts.allTextContents(),host==='www.uscardforum.com'?[...generic,'Recent deals']:generic);
+   assert.deepEqual(await shortcuts.allTextContents(),generic);
    await page.screenshot({path:`artifacts/shortcuts/${host}-desktop.png`});
    await page.setViewportSize({width:390,height:844});
    await page.screenshot({path:`artifacts/shortcuts/${host}-mobile.png`});
   }
   await page.close();
  }
- console.log(JSON.stringify({passed:true,sharedDiscourseActions:true,uscfDeals:true,customDiscourseDomain:true,noActionsOnNonDiscourse:true,liveForum:false}));
+ console.log(JSON.stringify({passed:true,sharedDiscourseActions:true,customDiscourseDomain:true,noActionsOnNonDiscourse:true,liveForum:false}));
 } finally {await context.close();await rm(profile,{recursive:true,force:true});}
