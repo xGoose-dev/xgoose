@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         vbulletin-forum
 // @namespace    vbulletin
-// @version      0.2.2
+// @version      0.2.3
 // @description  Generic helpers for vBulletin 3.x/4.x forums (search posts/threads, read threads, see post pictures, recent threads, forum listings).
 // @match        *://www.flyertalk.com/*
 // @match        *://flyertalk.com/*
@@ -316,7 +316,7 @@ async function search(opts, extract) {
 
 /* ───── Images ───── */
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024, MAX_IMAGE_DATA_CHARS = 500_000;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024, MAX_IMAGE_DATA_CHARS = 320_000;
 /** Downscaled JPEG in the image shape hosts attach to the model; the image host's CORS rules apply. */
 async function modelImage(url) {
   const response = await fetch(url, { credentials: 'same-origin' });
@@ -373,8 +373,24 @@ async function readPostImages({ postId, images }) {
 
 /* ───── Threads ───── */
 
+const openingPages = new Map();
+function fetchThreadPage(threadId, page) {
+  const url = forumUrl(`showthread.php?t=${threadId}${page > 1 ? `&page=${page}` : ''}`);
+  if (page !== 1) return fetchPage(url);
+  const now = Date.now();
+  const cached = openingPages.get(url);
+  if (cached?.expires > now) return cached.pending;
+  const pending = fetchPage(url);
+  openingPages.set(url, {pending, expires: now + 60_000});
+  pending.catch(() => {
+    if (openingPages.get(url)?.pending === pending) openingPages.delete(url);
+  });
+  if (openingPages.size > 24) openingPages.delete(openingPages.keys().next().value);
+  return pending;
+}
+
 async function getThreadPage(threadId, page, maxChars, perPage) {
-  const { doc, url } = await fetchPage(forumUrl(`showthread.php?t=${threadId}${page > 1 ? `&page=${page}` : ''}`));
+  const { doc, url } = await fetchThreadPage(threadId, page);
   return {
     url,
     title: txt(doc.querySelector('h1, .threadtitle, [class*="threadtitle"]')),
