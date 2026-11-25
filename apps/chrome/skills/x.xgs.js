@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         x
 // @namespace    x
-// @version      0.2.4
+// @version      0.2.5
 // @description  Search and read posts, conversations, profiles and timelines with X’s browser-session GraphQL API.
 // @match        https://x.com/*
 // @match        https://www.x.com/*
@@ -288,6 +288,8 @@ const operations=[
 const client=createClient('x',{minIntervalMs:1500,perMinute:20,perHour:200},u=>u.origin===location.origin&&/^\/i\/api\/graphql\/[\w-]+\/[A-Za-z0-9_]+$/.test(u.pathname)&&operations.includes(u.pathname.split('/').at(-1)));
 const jsonPostReads = new Set(['SearchTimeline', 'TweetDetail']);
 const searchFilters = {Latest: 'live', People: 'user', Photos: 'image', Videos: 'video', Top: 'top'};
+const loadedOperations = new Map();
+let featureSwitch;
 function postId(value) {
   const id=String(value).match(/^(?:https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/(?:[^/]+\/status|i\/web\/status)\/)?(\d+)(?:[/?#].*)?$/)?.[1];
   if(!id)throw new Error('Expected a post ID or X/Twitter status URL');
@@ -392,9 +394,86 @@ function capturedRequest(operation, changes) {
   }
 }
 
+function findLoadedOperation(operation) {
+  if (loadedOperations.has(operation)) return loadedOperations.get(operation);
+  for (const [, modules] of globalThis.webpackChunk_twitter_responsive_web ?? []) {
+    for (const factory of Object.values(modules ?? {})) {
+      if (typeof factory !== 'function') continue;
+      const source = Function.prototype.toString.call(factory);
+      const match = source.match(/queryId:"([\w-]+)",operationName:"(SearchTimeline|TweetDetail)",operationType:"query",metadata:\{featureSwitches:(\[[^\]]*\]),fieldToggles:(\[[^\]]*\])/);
+      if (!match) continue;
+      const [, id, name, features, toggles] = match;
+      loadedOperations.set(name, {id, features:JSON.parse(features), toggles:JSON.parse(toggles)});
+      if (name === operation) return loadedOperations.get(name);
+    }
+  }
+}
+
+function pageFeatureSwitch() {
+  if (featureSwitch) return featureSwitch;
+  // X removes its global state after initialization, but keeps the inline JSON.
+  const prefix = 'window.__INITIAL_STATE__=';
+  const script = [...document.scripts].find(script => script.textContent.startsWith(prefix))?.textContent;
+  const end = script?.indexOf(';window.__META_DATA__') ?? -1;
+  if (end < 0) return;
+  try {
+    featureSwitch = JSON.parse(script.slice(prefix.length, end)).featureSwitch;
+    return featureSwitch;
+  } catch {
+    // Fall back to opening the native page if X changes its bootstrap format.
+  }
+}
+
+function sessionHeaders() {
+  for (const request of xRequests().reverse()) {
+    if (request.status < 200 || request.status >= 300 || !URL.canParse(request.url, location.href) ||
+        new URL(request.url, location.href).origin !== location.origin) continue;
+    const headers = observedHeaders(request);
+    if (headers.has('authorization')) return headers;
+  }
+}
+
+function requestFromLoadedClient(operation, changes) {
+  if (!jsonPostReads.has(operation)) return;
+  const headers = sessionHeaders();
+  if (!headers) return;
+  const descriptor = findLoadedOperation(operation);
+  const config = pageFeatureSwitch();
+  if (!descriptor || !config) return;
+  const flag = name => config.customOverrides?.[name]?.value ?? config.user?.config?.[name]?.value ?? config.defaultConfig?.[name]?.value ?? false;
+  const product = changes.product ?? 'Latest';
+  const defaults = operation === 'SearchTimeline' ? {
+    product, count:10, querySource:'typed_query',
+    withGrokTranslatedBio:(product === 'Top' || product === 'People') && flag('responsive_web_grok_bio_auto_translation_in_search_is_enabled'),
+    withQuickPromoteEligibilityTweetFields:false,
+  } : {
+    rankingMode:'Relevance', includePromotedContent:true, withCommunity:flag('c9s_enabled'),
+    withQuickPromoteEligibilityTweetFields:true, withBirdwatchNotes:flag('responsive_web_birdwatch_consumption_enabled'),
+    withVoice:flag('voice_consumption_enabled'),
+  };
+  const payload = {
+    variables:mergedVariables(defaults, changes),
+    features:Object.fromEntries(descriptor.features.map(name => [name, flag(name)])),
+  };
+  if (operation === 'TweetDetail') {
+    const toggles = {
+      withPayments:false, withDmBlocks:false, withArticlePlainText:false,
+      withArticleRichContentState:flag('responsive_web_twitter_article_seed_tweet_detail_enabled'),
+      withArticleSummaryText:flag('responsive_web_grok_article_summary_enabled'),
+      withArticleVoiceOver:flag('responsive_web_grok_article_summary_enabled'),
+      withGrokAnalyze:flag('subscriptions_inapp_grok_analyze'),
+      withDisallowedReplyControls:flag('disallowed_reply_controls_callout_enabled'),
+    };
+    payload.fieldToggles = Object.fromEntries(Object.entries(toggles).filter(([name]) => descriptor.toggles.includes(name)));
+  }
+  headers.set('content-type','application/json');
+  const url = new URL(`/i/api/graphql/${descriptor.id}/${operation}`, location.origin);
+  return {url, headers, method:'POST', body:JSON.stringify(payload)};
+}
+
 async function query(operation,changes={},a={}) {
   if(!operations.includes(operation))throw fault('invalid_operation','Only explicitly allowlisted read operations are available.');
-  const request = capturedRequest(operation, changes);
+  const request = capturedRequest(operation, changes) ?? requestFromLoadedClient(operation, changes);
   if (!request) throw fault('operation_not_observed', 'Open the matching X page to observe its ' + operation + ' request.');
   const {url, headers, method, body} = request;
   const csrf = cookie('ct0');
@@ -504,4 +583,4 @@ const skill={
   }),
   getRateLimit:siteFn('Inspect request budgets and server cooldown.',empty,()=>client.status()),
 };
-export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+' Prefer readObserved for native X GraphQL. Use SearchTimeline with rawQuery and product for search, and TweetDetail with focalTweetId to read a post and its conversation. Use the returned timeline cursor as variables.cursor for the next page. If a call returns navigation_required, open that X URL and retry the call from that page. Use getPost or getConversation before readPostImages when you need selected images.'});
+export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+' Prefer readObserved for native X GraphQL. Use SearchTimeline with rawQuery and product for search, and TweetDetail with focalTweetId to read a post and its conversation. Use the returned timeline cursor as variables.cursor for the next page. If a call returns navigation_required, use the returned X page to load the matching native request and retry there. Use getPost or getConversation before readPostImages when you need selected images.'});
