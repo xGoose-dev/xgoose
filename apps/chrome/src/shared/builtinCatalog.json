@@ -35,6 +35,10 @@
     "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
     "skillId": "deef1332-fcef-4925-b6f8-b407c07f3d62"
   },
+  "reddit": {
+    "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
+    "skillId": "e5cb2b39-de63-4886-9b2b-46e15f1740d0"
+  },
   "hacker-news": {
     "authorId": "e1c1cb21-86c1-45e4-87b3-1e3b2f5981aa",
     "skillId": "e8aa0907-70e3-43d2-9bb4-e7057364cf5a"
