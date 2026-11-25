@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         reddit
 // @namespace    reddit
-// @version      0.4.3
+// @version      0.4.4
 // @description  Read Reddit posts, search comments, browse user profiles/posts/comments, community feeds and wikis with native pagination.
 // @match        https://www.reddit.com/*
 // @match        https://reddit.com/*
@@ -281,6 +281,7 @@ function credentialDialog(label, save) {
 }
 
 const client=createClient('reddit',{minIntervalMs:1100,perMinute:50,perHour:600},u=>u.origin===location.origin && (u.pathname==='/svc/shreddit/search' || /^\/svc\/shreddit\/r\/[A-Za-z0-9_]+\/search\/$/.test(u.pathname) ||
+  u.pathname==='/svc/shreddit/feeds/popular-feed' || /^\/svc\/shreddit\/community-more-posts\/(?:hot|new)\/$/.test(u.pathname) ||
   /^\/(?:r\/[A-Za-z0-9_]+\/)?comments\.json$/.test(u.pathname) ||
   /^\/duplicates\/[a-z0-9]+\.json$/.test(u.pathname) ||
   /^\/r\/[A-Za-z0-9_]+\/wiki\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.json$/.test(u.pathname) ||
@@ -312,9 +313,7 @@ const prefix=a=>a.subreddit?`/r/${a.subreddit}`:'';
 const feedSort = z.enum(['hot', 'new', 'top', 'rising', 'controversial', 'best']).default('hot');
 const renderedFeedPath = /^\/(?:r\/[A-Za-z0-9_+]+(?:\/(?:hot|new|top|rising|controversial|best))?\/?)?$/i;
 
-function readCurrentFeed({limit, offset}) {
-  const meta = {url: location.href, coverage: 'loaded_feed', transport: 'shreddit_dom'};
-  const feed = renderedFeedPath.test(location.pathname) && document.querySelector('shreddit-feed');
+function feedSources(feed, method) {
   const posts = new Map();
   for (const card of feed ? feed.querySelectorAll('shreddit-post[permalink][post-title]') : []) {
     const permalink = card.getAttribute('permalink');
@@ -329,7 +328,7 @@ function readCurrentFeed({limit, offset}) {
       ...source({
         id: fullname, kind: 'post', title: card.getAttribute('post-title'),
         url: new URL(permalink, location.origin).href, author: card.getAttribute('author'),
-        publishedAt: card.getAttribute('created-timestamp'), scope: 'feed_preview', method: 'dom',
+        publishedAt: card.getAttribute('created-timestamp'), scope: 'feed_preview', method,
         complete: false, access: 'session',
         score: score === null || !Number.isFinite(Number(score)) ? null : Number(score),
         commentCount: comments === null || !Number.isFinite(Number(comments)) ? null : Number(comments),
@@ -337,30 +336,71 @@ function readCurrentFeed({limit, offset}) {
       subreddit, fullname,
     });
   }
-  const sources = [...posts.values()].slice(offset, offset + limit);
+  return [...posts.values()];
+}
+
+function readCurrentFeed({limit, offset}) {
+  const feed = renderedFeedPath.test(location.pathname) && document.querySelector('shreddit-feed');
+  const posts = feedSources(feed, 'dom');
+  const sources = posts.slice(offset, offset + limit);
   return result(sources, {
-    ...meta, status: posts.size ? 'ok' : 'feed_not_loaded', returned: sources.length,
-    nextOffset: offset + sources.length < posts.size ? offset + sources.length : null,
+    url: location.href, coverage: 'loaded_feed', transport: 'shreddit_dom',
+    status: posts.length ? 'ok' : 'feed_not_loaded', returned: sources.length,
+    nextOffset: offset + sources.length < posts.length ? offset + sources.length : null,
   });
 }
 
+async function readFeedFragment(path, query, a) {
+  const html = await client.request(`${path}?${query}`, {signal: a.signal, type: 'text', ttl: 30000});
+  const doc = documentOf(html);
+  const posts = feedSources(doc, 'api');
+  if (!posts.length) throw fault('feed_not_loaded', 'Reddit returned no post cards for this feed page.');
+  const sources = posts.slice(a.offset, a.offset + a.limit);
+  return result(sources, {
+    transport: 'shreddit_feed', coverage: 'feed_page', returned: sources.length,
+    nextOffset: a.offset + sources.length < posts.length ? a.offset + sources.length : null,
+    cursor: feedCursor(doc, path),
+  });
+}
+
+function feedCursor(doc, path) {
+  const next = doc?.querySelector(`faceplate-partial[src^="${path}?"]`);
+  return next ? new URL(next.getAttribute('src'), location.origin).searchParams.get('after') : null;
+}
+
 async function getPosts(a) {
-  // A browser feed represents the loaded first page, not an API cursor.
-  const browserFeed = !a.after && !a.before && !a.count && (a.subreddit || a.sort !== 'controversial');
+  const legacyPage = a.after || a.before || a.count;
+  const name = a.subreddit?.toLowerCase();
+  const popular = !name || name === 'popular';
+  const browserFeed = !legacyPage && name !== 'all' && (name || a.sort !== 'controversial');
+  const nativeFeed = browserFeed && /^(?:www\.)?reddit\.com$/.test(location.hostname)
+    && (a.sort === 'hot' || a.sort === 'new') && (popular || /^[a-z0-9_]+$/.test(name));
+  const nativePath = nativeFeed && (popular ? '/svc/shreddit/feeds/popular-feed' : `/svc/shreddit/community-more-posts/${a.sort}/`);
+  if (a.cursor && !nativeFeed) throw fault('invalid_cursor', 'Reuse a feed cursor with the same Hot or New request and without after, before, or count.');
   const pathname = `/r/${a.subreddit || 'popular'}/${a.sort}/`;
   const url = new URL(pathname, 'https://www.reddit.com');
   if (a.t !== 'all' || a.sort === 'top' || a.sort === 'controversial') url.searchParams.set('t', a.t);
-  if (browserFeed && location.pathname.toLowerCase() === pathname.toLowerCase()
+  if (browserFeed && !a.cursor && location.pathname.toLowerCase() === pathname.toLowerCase()
       && new URL(location.href).searchParams.get('t') === url.searchParams.get('t')) {
     const page = readCurrentFeed(a);
-    if (page.status === 'ok') return {...page, after: null, before: null};
+    if (page.status === 'ok') return {...page, after: null, before: null,
+      ...(nativePath ? {cursor: feedCursor(document.querySelector('shreddit-feed'), nativePath)} : {})};
   }
   try {
+    if (nativePath) {
+      const query = new URLSearchParams(popular ? {sort: a.sort.toUpperCase()} : {name: a.subreddit});
+      if (a.t !== 'all') query.set('t', a.t);
+      if (a.cursor) {
+        query.set('after', a.cursor);
+        if (popular) query.set('cursor', a.cursor);
+      }
+      return await readFeedFragment(nativePath, query, a);
+    }
     return await listing(`${prefix(a)}/${a.sort}.json`, {t: a.t}, a);
   } catch (error) {
-    if (error.status !== 403 || !browserFeed) throw error;
+    if (!browserFeed || a.cursor || (error.status !== 403 && error.code !== 'feed_not_loaded')) throw error;
     return result([], {
-      status: 'navigation_required', httpStatus: 403, url: url.href, sort: a.sort,
+      status: 'navigation_required', httpStatus: error.status, url: url.href, sort: a.sort,
       subreddit: a.subreddit || 'popular',
       instruction: 'Open this Reddit feed in the browser, wait for posts to render, then call readCurrentFeed. Use the cards already on the current feed when its scope and sort fit the request.',
     });
@@ -426,7 +466,7 @@ const wikiOptions={subreddit:z.string().regex(/^[A-Za-z0-9_]+$/),page:z.string()
 const commentOptions={offset,textOffset:offset,maxChars:z.number().int().positive().optional(),moreOffset:offset};
 const skill={
   readCurrentFeed:siteFn('Read post cards already rendered on the current Reddit home or subreddit feed. Use sources[].id or .url with getThread; nextOffset continues loaded cards.',z.object({limit:count(25,100),offset}),readCurrentFeed),
-  getPosts:siteFn('Read a global or subreddit feed by sort. For navigation_required, open the returned Reddit page and use readCurrentFeed there. after/before/count continue API pages.',z.object({subreddit:subreddit.optional(),sort:feedSort,t:time,...listingOptions}),getPosts),
+  getPosts:siteFn('Read a global or subreddit feed by sort. Consume nextOffset on the same page, then pass the returned cursor to fetch the next Hot or New page. For navigation_required, open the returned page and use readCurrentFeed. after/before/count continue legacy API pages.',z.object({subreddit:subreddit.optional(),sort:feedSort,t:time,...listingOptions,cursor:z.string().min(1).max(500).optional()}),getPosts),
   searchPosts:siteFn('Search Reddit post cards. Use a concrete topic or subreddit. Get the discussion link from sources[].url, then pass sources[].id to getThread for the body and comments. nextOffset continues loaded cards; cursor advances the server page.',z.object({
     q:z.string().trim().min(1).max(500),subreddit:subreddit.optional(),restrict_sr:z.boolean().default(true),
     sort:z.enum(['relevance','hot','top','new','comments']).default('relevance'),t:time,include_over_18:z.boolean().default(false),limit:count(25,100),offset,cursor:z.string().min(1).optional(),
@@ -481,7 +521,7 @@ const skill={
     const d=(await api(`/r/${a.subreddit}/wiki/revisions/${a.page}.json`,{limit:a.limit,after:a.after},a)).data;
     return {revisions:d.children.map(r=>({id:r.id,page:r.page,author:r.author?.data?.name,publishedAt:isoTime(r.timestamp),reason:r.reason,url:`https://www.reddit.com/r/${a.subreddit}/wiki/${r.page}?v=${r.id}`})),after:d.after??null,before:d.before??null};
   },[{args:{subreddit:'churningcanada',page:'index',limit:10}}]),
-  getThread:siteFn('Read a post and its comment tree in one request. The post body is in post[0].text and replies are in comments.sources. id accepts a post ID, fullname or full Reddit URL.',z.object({id:postId,sort:commentSort,limit:count(25,100),depth:z.number().int().min(1).max(10).default(4),...commentOptions}),async a=>{
+  getThread:siteFn('Read a post and its comment tree in one request. Return the result directly for compact output. In JavaScript, comments.sources is an array of comment objects. The text fields are post[0].text and comments.sources[i].text. id accepts a post ID, fullname or full Reddit URL.',z.object({id:postId,sort:commentSort,limit:count(25,100),depth:z.number().int().min(1).max(10).default(4),...commentOptions}),async a=>{
     const raw=await api(`/comments/${a.id}.json`,{sort:a.sort,limit:a.limit,depth:a.depth},a);
     return {post:raw[0].data.children.map(p=>itemSource(p)),comments:commentPage(raw[1].data.children,a)};
   }),
@@ -533,4 +573,4 @@ function profile(raw){
   if(d.subreddit)user.description=d.subreddit.public_description;
   return {user,url:`https://www.reddit.com/user/${d.name}/`};
 }
-export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+" For feed discovery, start with readCurrentFeed when the loaded Reddit feed fits the scope. For a specific sort or community, call getPosts. If it returns navigation_required, use the matching rendered feed or open the returned Reddit URL and use readCurrentFeed there. Use searchPosts for a concrete topic or community; its cards provide sources[].id and sources[].url. Read full posts and replies with getThread, using post[0].text and comments.sources. Use getUser for a profile, getUserComments for comments written by that user, and getUserPosts for their submissions. searchComments searches comment text within a subreddit; getRecentComments reads its newest replies. getWikiPages lists paths for getWikiPage; getWikiHistory reads revisions. Post IDs also accept Reddit URLs and redd.it links. readPostImages reads the original image URLs identified by [image N]. Consume nextOffset before advancing a listing after/before or a search cursor. Expand more IDs or focus getComments on a comment. Body source.nextOffset is a character offset."});
+export default defineSkill(skill,{instructions:READING_INSTRUCTIONS+" For feed discovery, start with readCurrentFeed when the loaded Reddit feed fits the scope. For a specific sort or community, call getPosts. If it returns navigation_required, open the returned Reddit URL and use readCurrentFeed there. Use searchPosts for a concrete topic or community; its cards provide sources[].id and sources[].url. Return getThread results directly for compact display. In js_exec the full payload is available as xgoose.results[resultId], with the body in post[0].text and an array of comment objects in comments.sources. To show the full payload on request, return JSON.stringify(xgoose.results[resultId]) using the saved result ID. Use getUser for a profile, getUserComments for comments written by that user, and getUserPosts for their submissions. searchComments searches comment text within a subreddit; getRecentComments reads its newest replies. getWikiPages lists paths for getWikiPage; getWikiHistory reads revisions. Post IDs also accept Reddit URLs and redd.it links. readPostImages reads the original image URLs identified by [image N]. Consume nextOffset before advancing a listing after/before or a feed or search cursor. Expand more IDs or focus getComments on a comment. Body source.nextOffset is a character offset."});
