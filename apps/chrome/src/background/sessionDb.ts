@@ -8,7 +8,9 @@ import {emptyPeerState, type PeerState} from "../../../../packages/core/src/peer
 let opening: Promise<IDBDatabase> | undefined;
 function open(): Promise<IDBDatabase> {
   return opening ??= new Promise((resolve, reject) => {
-    const request = indexedDB.open("xgoose-sessions", 1);
+    // Preview builds added stores and indexes without changing the shared schema.
+    // Open the installed version so those users can keep using their history.
+    const request = indexedDB.open("xgoose-sessions");
     let abandoned = false;
     const fail = (error: unknown) => {
       if (abandoned) return;
