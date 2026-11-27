@@ -3,6 +3,7 @@ import {requestTextBytes,textBytes,clipBytes,textChunks,omitImageBytes,modelOnly
 import {inputTokenBudget,requestByteBudget,OUTPUT_RESERVE_TOKENS} from './contextPolicy';
 import {modelResultText, setResultBudget, ToolResultStore, withoutPreviewHandle} from './resultStore';
 import {resultImageParts} from './resultImages';
+import {createHostedImageFetch, withResultImageSources, type CompressHostedImage} from './hostedImages';
 import { normalizeContext } from "@earendil-works/pi-ai/utils/transcript";
 import { Agent, type AgentMessage, type StreamFn, type AgentContext } from "@earendil-works/pi-agent-core";
 import { streamSimple as openai } from "@earendil-works/pi-ai/api/openai-completions";
@@ -14,7 +15,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import type { CoreSettings } from "./types";
 import type { HostFetcher } from "./ports";
 import { buildSystemPrompt, type PromptCapabilities } from "./systemPrompt";
-import { createModel } from "./model";
+import { createModel, isHostedBaseUrl } from "./model";
 import type { XgooseBuiltTool } from "./tools/buildTool";
 
 /** Stable host contract. Persisted v1 messages are converted at the PI boundary. */
@@ -24,6 +25,7 @@ export interface RuntimeSnapshot { messages: ChatMessage[]; running: boolean; er
 export interface CreateAgentOpts {
   settings: CoreSettings;
   fetchImpl: HostFetcher;
+  compressHostedImage?: CompressHostedImage;
   tools: XgooseBuiltTool[];
   reminder?: string | null;
   capabilities?: PromptCapabilities;
@@ -162,7 +164,7 @@ function presentToolResult(message: AgentMessage, results: ToolResultStore): Age
   presented.resultId = result.resultId;
   presented.content = [
     { type: "text", text: modelResultText(result.value, text, result.resultId) },
-    ...attachments,
+    ...withResultImageSources(attachments, result.value),
     { type: "text", text: `Result ID: ${JSON.stringify(result.resultId)}` },
   ];
   return presented;
@@ -205,9 +207,11 @@ export class PageAgentRuntime {
     let gatewayBudget=opts.requestBudgetBytes??requestByteBudget(model.contextWindow);
     let tokenBudget=inputTokenBudget(model.contextWindow);
     let activeContext:AgentContext|undefined;
+    const fetchHosted = isHostedBaseUrl(model.baseUrl)
+      ? createHostedImageFetch(opts.fetchImpl, opts.compressHostedImage) : undefined;
     const rawStream: StreamFn = opts.streamFn ?? ((m, context, options) => {
       const requestOptions = { ...options, apiKey: opts.settings.apiKey, fetch: async (input:any,init:any)=>{
-        const response=await opts.fetchImpl(input,init);
+        const response=await (fetchHosted ? fetchHosted(input,init,context.messages) : opts.fetchImpl(input,init));
         // A newer successful gateway policy may replace a legacy small cap.
         // Error targets still tighten the current request, and explicit host
         // overrides remain caps. Never permanently latch the smallest policy

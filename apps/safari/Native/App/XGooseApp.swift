@@ -20,9 +20,12 @@ import SafariServices
     @Published var error: String?
     @Published var busy = false
     @Published var enabled: Bool?
-    @Published var cloud: JSONObject = [:]
+    @Published private(set) var hostedCatalogue: HostedModelCatalogue?
+    @Published private(set) var hostedQuota: JSONObject?
     var settings: JSONObject { state["settings"] as? JSONObject ?? [:] }
     var user: JSONObject? { state["user"] as? JSONObject }
+    var hostedAccountId: String? { user?["id"] as? String }
+    var hostedChoice: String { hostedCatalogue?.availableChoice(settings["model"] as? String) ?? hostedDefaultChoice }
     var language: String { settings["language"] as? String ?? "auto" }
     var hosted: Bool { settings["provider"] as? String ?? "xgoose-hosted" == "xgoose-hosted" }
     var connectionVerified: Bool { connectionReady && state["connectionTested"] as? Bool == true }
@@ -39,7 +42,15 @@ import SafariServices
         return result["value"]
     }
     func reload() async {
-        if let view = await call("view",showBusy:state.isEmpty) as? JSONObject { state = view; sampleAppearance() }
+        if let view = await call("view",showBusy:state.isEmpty) as? JSONObject {
+            let previousAccountId = hostedAccountId
+            state = view
+            if hostedAccountId != previousAccountId {
+                hostedCatalogue = nil
+                hostedQuota = nil
+            }
+            sampleAppearance()
+        }
         if #available(iOS 26.2, *) {
             do { enabled = try await SFSafariExtensionManager.stateOfExtension(withIdentifier:extensionIdentifier).isEnabled }
             catch { enabled = nil }
@@ -102,7 +113,21 @@ import SafariServices
             catch { self.error = error.localizedDescription }
         }
     }
-    func loadCloud() async { if let result = await call("cloud") as? JSONObject { cloud = result; await reload() } }
+    func loadHostedModels() async {
+        guard let accountId = hostedAccountId, let response = await call("hosted-models") as? JSONObject,
+              hostedAccountId == accountId, let catalogue = HostedModelCatalogue(response) else { return }
+        hostedCatalogue = catalogue
+        await reload()
+    }
+    func loadHostedQuota() async {
+        guard let accountId = hostedAccountId, let quota = await call("hosted-quota") as? JSONObject,
+              hostedAccountId == accountId else { return }
+        hostedQuota = quota
+    }
+    func loadCloud() async {
+        await loadHostedModels()
+        await loadHostedQuota()
+    }
 }
 
 struct RootView: View {
@@ -213,6 +238,21 @@ struct LanguageView:View {
     }.navigationTitle(model.t("Language","语言","Idioma")) }
 }
 
+struct HostedModelPicker: View {
+    @EnvironmentObject var model: AppModel
+    @Binding var choice: String
+
+    var body: some View {
+        if let catalogue = model.hostedCatalogue {
+            let defaultName = catalogue.models.first { $0.id == catalogue.defaultModel }?.name ?? catalogue.defaultModel
+            Picker(model.t("Hosted model","Hosted 模型","Modelo Hosted"), selection: $choice) {
+                Text(model.t("Default","默认","Predeterminado") + " (\(defaultName))").tag(hostedDefaultChoice)
+                ForEach(catalogue.models) { item in Text(item.name).tag(item.id) }
+            }
+        }
+    }
+}
+
 struct ConnectionView:View {
     @EnvironmentObject var model:AppModel
     @State var key = ""
@@ -221,12 +261,20 @@ struct ConnectionView:View {
     var provider:String {model.settings["provider"] as? String ?? "xgoose-hosted"}
     var body:some View {Form {
         Section(model.t("AI provider","AI 服务","Proveedor de IA")) {
-            Picker(model.t("Provider","服务商","Proveedor"),selection:Binding(get:{provider},set:{value in Task {await model.settingsPatch(["provider":value,"model":value == "xgoose-hosted" ? hostedDefaultModel:value == "openai-compat" ? "gpt-4o-mini":"gemini-2.5-flash"]); key="";selectedModel=model.settings["model"] as? String ?? "";base=(model.settings["baseUrls"] as? [String:String])?[value] ?? ""}})) {
+            Picker(model.t("Provider","服务商","Proveedor"),selection:Binding(get:{provider},set:{value in Task {await model.settingsPatch(["provider":value,"model":value == "xgoose-hosted" ? hostedDefaultChoice:value == "openai-compat" ? "gpt-4o-mini":"gemini-2.5-flash"]); key="";selectedModel=model.settings["model"] as? String ?? "";base=(model.settings["baseUrls"] as? [String:String])?[value] ?? ""}})) {
                 Text("xgoose Hosted").tag("xgoose-hosted"); Text("Gemini").tag("gemini"); Text("Gemini via LiteLLM").tag("gemini-litellm"); Text("OpenAI-compatible").tag("openai-compat")
             }
         }
         if model.hosted {
-            Section { NavigationLink(model.t("Sign in & review Hosted AI","登录并设置 Hosted AI","Inicia sesión y configura Hosted")) {AccountView()} }
+            Section {
+                if model.hostedAccountId != nil {
+                    HostedModelPicker(choice: Binding(get: { model.hostedChoice }, set: { id in
+                        Task { await model.settingsPatch(["model":id]) }
+                    }))
+                    Button(model.t("Refresh models","刷新模型","Actualizar modelos")) { Task { await model.loadHostedModels() } }
+                }
+                NavigationLink(model.t("Sign in & review Hosted AI","登录并设置 Hosted AI","Inicia sesión y configura Hosted")) {AccountView()}
+            }
         } else {
             Section(model.t("Your API connection","你的 API 连接","Tu conexión API")) {
                 SecureField(model.t("API key (leave empty to keep)","API key（留空则保留）","Clave API"),text:$key).textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -247,6 +295,9 @@ struct ConnectionView:View {
             if model.state["connectionTested"] as? Bool == true {Label(model.t("Connection verified","连接已验证","Conexión verificada"),systemImage:"checkmark.circle.fill").foregroundStyle(.green)}
         }
     }.navigationTitle(model.t("Connect AI","连接 AI","Conecta IA"))
+     .task(id: model.hosted ? model.hostedAccountId : nil) {
+        if model.hosted && model.hostedAccountId != nil { await model.loadHostedModels() }
+     }
      .onAppear {base=(model.settings["baseUrls"] as? [String:String])?[provider] ?? "";selectedModel=model.settings["model"] as? String ?? ""}
     }
 }
@@ -255,17 +306,22 @@ struct AccountView:View {
     @EnvironmentObject var model:AppModel
     @State var email=""
     @State var confirmDelete=false
-    @State var hostedModel=""
+    @State var hostedModel=hostedDefaultChoice
+    var hostedChoice: String {
+        model.hosted ? model.hostedChoice : model.hostedCatalogue?.availableChoice(hostedModel) ?? hostedDefaultChoice
+    }
     var body:some View {Form {
         if let user=model.user {
             Section(model.t("Signed in","已登录","Sesión iniciada")) { Text(user["email"] as? String ?? "");Button(model.t("Sign out","退出登录","Cerrar sesión"),role:.destructive) {Task {_ = await model.call("logout");await model.reload()}} }
             Section(model.t("Hosted AI","Hosted AI","IA Hosted")) {
-                if let quota=model.cloud["quota"] as? JSONObject {Text(model.t("Available credit","可用额度","Crédito disponible")+": "+String(format:"$%.2f",(quota["remaining_micros"] as? Double ?? 0)/1_000_000))}
-                if (model.cloud["quota"] as? JSONObject)?["claimable"] as? Bool == true {Button(model.t("Claim trial credit","领取试用额度","Obtener crédito de prueba")) {Task {_ = await model.call("claim-trial");await model.loadCloud()}}}
-                let models=model.cloud["models"] as? [JSONObject] ?? []
-                if !models.isEmpty {Picker(model.t("Model","模型","Modelo"),selection:Binding(get:{model.hosted ? model.settings["model"] as? String ?? hostedDefaultModel : hostedModel.isEmpty ? (models.first?["id"] as? String ?? "") : hostedModel},set:{id in hostedModel=id;if model.hosted {Task {await model.settingsPatch(["model":id])}}})) {ForEach(models.compactMap{$0["id"] as? String},id:\.self) {Text($0).tag($0)}}}
+                if let quota=model.hostedQuota {Text(model.t("Available credit","可用额度","Crédito disponible")+": "+String(format:"$%.2f",(quota["remaining_micros"] as? Double ?? 0)/1_000_000))}
+                if model.hostedQuota?["claimable"] as? Bool == true {Button(model.t("Claim trial credit","领取试用额度","Obtener crédito de prueba")) {Task {_ = await model.call("claim-trial");await model.loadHostedQuota()}}}
+                HostedModelPicker(choice: Binding(get: { hostedChoice }, set: { id in
+                    if model.hosted { Task { await model.settingsPatch(["model":id]) } }
+                    else { hostedModel = id }
+                }))
                 Text(model.t("Hosted sends your messages, relevant page content and images to xgoose and its AI providers. Conversations are stored in the cloud and may be accessed by authorized administrators. Use BYOK if you prefer your own provider.","Hosted 会将消息、相关网页内容和图片发送给 xgoose 及其 AI 服务商。会话保存在云端，授权管理员可访问。也可以选择自带 API key。","Hosted envía mensajes, contenido e imágenes a xgoose y sus proveedores. Las conversaciones se guardan en la nube y administradores autorizados pueden acceder."))
-                Button(model.state["hostedAccepted"] as? Bool == true ? model.t("Hosted enabled","Hosted 已启用","Hosted activado") : model.t("Agree & use Hosted","同意并使用 Hosted","Aceptar y usar Hosted")) {Task {_ = await model.call("consent",["model":hostedModel]);await model.reload()}}
+                Button(model.state["hostedAccepted"] as? Bool == true ? model.t("Hosted enabled","Hosted 已启用","Hosted activado") : model.t("Agree & use Hosted","同意并使用 Hosted","Aceptar y usar Hosted")) {Task {_ = await model.call("consent",["model":hostedChoice]);await model.reload()}}
                 Button(model.t("Refresh models & credit","刷新模型与额度","Actualizar modelos y crédito")) {Task {await model.loadCloud()}}
             }
             Section {Button(model.t("Delete account & cloud data","删除账号和云端数据","Eliminar cuenta y datos"),role:.destructive) {confirmDelete=true}}
@@ -285,7 +341,7 @@ struct AccountView:View {
             } header: {Text(model.t("Email confirmation sign-in","邮箱确认登录","Acceso por correo"))} footer: {Text(model.t("Signing in turns on Hosted AI: your messages, relevant page content and images are sent to xgoose and its AI providers, and conversations are stored in the cloud, where authorized administrators may access them. New accounts are created when you confirm. No password required. You can also use BYOK without an xgoose account.","登录即启用 Hosted AI：消息、相关网页内容和图片会发送给 xgoose 及其 AI 服务商，会话保存在云端，授权管理员可访问。确认邮箱时会创建新账号，无需密码。也可以无需 xgoose 账号使用自带 API key。","Al iniciar sesión se activa la IA Hosted: tus mensajes, el contenido relevante de la página y las imágenes se envían a xgoose y sus proveedores de IA, y las conversaciones se guardan en la nube, donde administradores autorizados pueden acceder. La cuenta se crea al confirmar. No necesitas contraseña. BYOK no requiere cuenta."))}
         }
     }.navigationTitle(model.t("Account","账号","Cuenta"))
-     .task(id:model.user?["id"] as? String) {if model.user != nil {await model.loadCloud()}}
+     .task(id: model.hostedAccountId) { if model.hostedAccountId != nil { await model.loadCloud() } }
      .task {while !Task.isCancelled {try? await Task.sleep(for:.seconds(5));if Task.isCancelled {break};if model.state["pending"] != nil {await model.reload()}}}
      .confirmationDialog(model.t("Permanently delete your account?","永久删除你的账号？","¿Eliminar tu cuenta permanentemente?"),isPresented:$confirmDelete,titleVisibility:.visible) {Button(model.t("Delete account","删除账号","Eliminar cuenta"),role:.destructive) {Task {_ = await model.call("delete-account");await model.reload()}}} message:{Text(model.t("This removes your account and cloud data, including conversations and published skills. This cannot be undone.","这会删除账号和云端数据，包括会话和已发布技能。此操作无法撤销。","Se eliminarán la cuenta y los datos. No se puede deshacer."))}
     }

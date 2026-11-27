@@ -122,7 +122,7 @@ final class NativeServiceTests:XCTestCase {
         NativeService.requestSession=URLSession(configuration:config)
         HostedProtocol.consents=0
         let fresh=((await NativeQueue.shared.run("view"))["value"] as? JSONObject)?["settings"] as? JSONObject
-        XCTAssertEqual(fresh?["model"] as? String,"deepseek-flash");XCTAssertEqual(fresh?["analyticsEnabled"] as? Bool,true)
+        XCTAssertEqual(fresh?["model"] as? String,hostedDefaultChoice);XCTAssertEqual(fresh?["analyticsEnabled"] as? Bool,true)
         let blocked=await NativeQueue.shared.run("hosted-ready")
         XCTAssertEqual(blocked["ok"] as? Bool,false,"Hosted needs an account")
         try Vault.write(["pending":["email":"new@example.com","token":"poll-token","expiresAt":Date().timeIntervalSince1970*1000+600000]])
@@ -130,10 +130,46 @@ final class NativeServiceTests:XCTestCase {
         let view=(await NativeQueue.shared.run("view"))["value"] as? JSONObject
         XCTAssertEqual((view?["user"] as? JSONObject)?["email"] as? String,"new@example.com")
         XCTAssertEqual(view?["hostedAccepted"] as? Bool,true,"signing in is the agreement")
-        XCTAssertEqual((view?["settings"] as? JSONObject)?["model"] as? String,"deepseek-flash")
+        XCTAssertEqual((view?["settings"] as? JSONObject)?["model"] as? String,hostedDefaultChoice)
+        let catalog = (await NativeQueue.shared.run("hosted-models"))["value"] as? JSONObject
+        XCTAssertEqual(catalog.flatMap(HostedModelCatalogue.init)?.defaultModel, "deepseek-flash")
         XCTAssertEqual(HostedProtocol.consents,1)
         let ready=await NativeQueue.shared.run("hosted-ready")
         XCTAssertEqual(ready["ok"] as? Bool,true);XCTAssertEqual(HostedProtocol.consents,1)
+    }
+    @MainActor func testHostedPickerRefreshesServerModelsIndependentlyOfQuota() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [HostedProtocol.self]
+        NativeService.requestSession = URLSession(configuration: config)
+        let originalCatalogue = HostedProtocol.catalogue
+        defer { HostedProtocol.catalogue = originalCatalogue }
+        HostedProtocol.catalogue = ["default_model":"gpt-6.1-terra","data":[
+            ["id":"luna"], ["id":"gpt-6.1-terra"], ["id":"server-new-model","display_name":"New Hosted Model"],
+        ]]
+        try Vault.write(["account":[
+            "user":["id":"test-user"], "accessToken":"access", "accessTokenExpiresAt":"2999-01-01T00:00:00Z",
+        ]])
+        _ = await NativeQueue.shared.run("patch", ["settings":["analyticsEnabled":false]])
+        let app = AppModel()
+        await app.reload()
+        await app.loadCloud()
+        XCTAssertNil(app.hostedQuota, "The fixture's quota request fails")
+        XCTAssertEqual(app.hostedCatalogue?.models.map(\.id), ["luna","gpt-6.1-terra","server-new-model"])
+        XCTAssertEqual(app.hostedCatalogue?.models.last?.name, "New Hosted Model")
+        XCTAssertEqual(app.hostedCatalogue?.defaultModel, "gpt-6.1-terra")
+
+        await app.settingsPatch(["model":"server-new-model"])
+        await app.loadHostedModels()
+        XCTAssertEqual(app.hostedChoice, "server-new-model")
+        let snapshot = (await NativeQueue.shared.run("snapshot"))["value"] as? JSONObject
+        let extensionSettings = (snapshot?["values"] as? JSONObject)?["xgoose.settings"] as? JSONObject
+        XCTAssertEqual(extensionSettings?["model"] as? String, "server-new-model")
+
+        HostedProtocol.catalogue = ["default_model":"luna","data":[["id":"luna"],["id":"another-model"]]]
+        await app.loadHostedModels()
+        XCTAssertEqual(app.hostedCatalogue?.models.map(\.id), ["luna","another-model"])
+        XCTAssertEqual(app.hostedCatalogue?.defaultModel, "luna")
+        XCTAssertEqual(app.settings["model"] as? String, hostedDefaultChoice)
     }
     func testOnlyAnApiRejectionSignsTheUserOut() async throws {
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[RefreshProtocol.self]
@@ -156,17 +192,20 @@ final class NativeServiceTests:XCTestCase {
 /// The sign-in, consent and catalogue endpoints of a Hosted account.
 final class HostedProtocol:URLProtocol {
     static var consents=0
+    static var catalogue: JSONObject = ["default_model":"deepseek-flash","data":[["id":"claude-haiku-5-5"],["id":"deepseek-flash"]]]
     override class func canInit(with request:URLRequest)->Bool {true}
     override class func canonicalRequest(for request:URLRequest)->URLRequest {request}
     override func startLoading() {
         let value:JSONObject
+        let status: Int
         switch request.url!.path {
-        case "/auth/extension/poll":value=["status":"ok","user":["id":"new-user","email":"new@example.com"],"access_token":"access","refresh_token":"refresh","access_token_expires_at":"2999-01-01T00:00:00Z"]
-        case "/me/transcript-consent":Self.consents+=1;value=["hosted":true,"byok":false]
-        case "/ai/v1/models":value=["default_model":"deepseek-flash","data":[["id":"claude-haiku-5-5"],["id":"deepseek-flash"]]]
-        default:value=[:]
+        case "/auth/extension/poll":status=200;value=["status":"ok","user":["id":"new-user","email":"new@example.com"],"access_token":"access","refresh_token":"refresh","access_token_expires_at":"2999-01-01T00:00:00Z"]
+        case "/me/transcript-consent":status=200;Self.consents+=1;value=["hosted":true,"byok":false]
+        case "/ai/v1/models":status=200;value=Self.catalogue
+        case "/me/quota":status=503;value=["message":"Quota temporarily unavailable"]
+        default:status=200;value=[:]
         }
-        client?.urlProtocol(self,didReceive:HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["content-type":"application/json"])!,cacheStoragePolicy:.notAllowed)
+        client?.urlProtocol(self,didReceive:HTTPURLResponse(url:request.url!,statusCode:status,httpVersion:nil,headerFields:["content-type":"application/json"])!,cacheStoragePolicy:.notAllowed)
         client?.urlProtocol(self,didLoad:try! JSONSerialization.data(withJSONObject:value));client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}

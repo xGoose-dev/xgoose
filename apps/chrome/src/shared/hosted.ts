@@ -21,12 +21,13 @@ export function hostedBlocker(quota: HostedQuota, consent: boolean, now = Date.n
 export async function normalizeHostedError(response: Response): Promise<Response> {
   if (response.ok) return response;
   const body = await response.text();
-  let message = "", code = "hosted_error",context:unknown;
+  let message = "", code = "hosted_error",context:unknown,imageDetail:unknown;
   try {
     const data = JSON.parse(body);
     code = typeof data.error === "string" ? data.error : data.error?.code ?? code;
     message = data.error?.message || data.message || "";
     if(code==="context_length_exceeded")context=data.detail??data.error?.context;
+    if(code==="image_too_large")imageDetail=data.detail??data.error?.detail;
     if (code === "too_many_requests" && data.detail) {
       message = hostedBlocker(data.detail, true) || message;
     }
@@ -38,7 +39,7 @@ export async function normalizeHostedError(response: Response): Promise<Response
   headers.set("content-type", "application/json");
   headers.delete("content-length");
   headers.delete("content-encoding");
-  return new Response(JSON.stringify({error:{message,code,type:code,...(context?{context}:{})}}), {status:response.status,headers});
+  return new Response(JSON.stringify({error:{message,code,type:code,...(context?{context}:{}),...(imageDetail?{detail:imageDetail}:{})}}), {status:response.status,headers});
 }
 
 export const HOSTED_AUTH_STOPPED="Hosted sign-in could not be restored. The agent has stopped listening and taking actions. Sign in again in Settings, then send Continue. The website customer-service chat may still be connected.";

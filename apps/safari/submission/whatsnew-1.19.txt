@@ -1,0 +1,2 @@
+The Hosted model picker now shows the current model list and follows the server default when Default is selected.
+Large images from websites or earlier turns are resized so Hosted conversations can continue.
