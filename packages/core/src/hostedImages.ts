@@ -26,23 +26,27 @@ export function withResultImageSources(attachments: ToolContent, result: unknown
     for (const child of Object.values(value)) visit(child, depth + 1);
   }
   visit(result, 0);
-  if (sources.size !== count) return attachments;
-  let index = 0;
+  if (sources.size < count) return attachments;
+  // The context cap keeps the newest images in each result.
+  let index = sources.size - count;
   return attachments.map(part => {
     if (part.type !== "image") return part;
     const sourceUrl = sources.get(++index);
-    return sourceUrl ? { ...part, sourceUrl } : part;
+    return sourceUrl && !("sourceUrl" in part) ? { ...part, sourceUrl } : part;
   });
 }
 
-function imageSources(messages: AgentMessage[]): Map<string, string> {
-  const sources = new Map<string, string>();
+function imageSources(messages: AgentMessage[]) {
+  const sources = new Map<string, (string | undefined)[]>();
   for (const message of messages) {
-    if (message.role !== "toolResult") continue;
+    if ((message.role !== "toolResult" && message.role !== "user") || !Array.isArray(message.content)) continue;
     for (const part of message.content) {
-      if (part.type === "image" && "sourceUrl" in part && typeof part.sourceUrl === "string") {
-        sources.set(`data:${part.mimeType};base64,${part.data}`, part.sourceUrl);
-      }
+      if (part.type !== "image") continue;
+      const url = `data:${part.mimeType};base64,${part.data}`;
+      const source = "sourceUrl" in part && typeof part.sourceUrl === "string" ? part.sourceUrl : undefined;
+      const occurrences = sources.get(url);
+      if (occurrences) occurrences.push(source);
+      else sources.set(url, [source]);
     }
   }
   return sources;
@@ -52,7 +56,7 @@ function omittedImage(source?: string): TextPart {
   return { type: "text", text: `[Image omitted because it exceeds the Hosted size limit.${source ? ` Source: ${source}` : ""}]` };
 }
 
-export function createHostedImageFetch(fetch: HostFetcher, compress?: CompressHostedImage) {
+export function createHostedImageFetch(fetch: HostFetcher, compress: CompressHostedImage) {
   const cache = new Map<string, string | undefined>();
   return async (input: RequestInfo | URL, init: RequestInit | undefined, messages: AgentMessage[]) => {
     if (typeof init?.body !== "string" || !init.body.includes('"image_url"')) return fetch(input, init);
@@ -67,7 +71,7 @@ export function createHostedImageFetch(fetch: HostFetcher, compress?: CompressHo
       for (const [index, part] of message.content.entries()) {
         if (part.type !== "image_url") continue;
         const { url } = part.image_url;
-        const source = sources.get(url);
+        const source = sources.get(url)?.shift();
         if (source) imageLinks.set(part, source);
         if (url.length <= MAX_IMAGE_URL_CHARS) {
           hasImages = true;
@@ -75,7 +79,7 @@ export function createHostedImageFetch(fetch: HostFetcher, compress?: CompressHo
         }
         signal?.throwIfAborted();
         if (!cache.has(url)) {
-          const compressed = await compress?.(url, MAX_IMAGE_URL_CHARS);
+          const compressed = await compress(url, MAX_IMAGE_URL_CHARS);
           if (cache.size >= MAX_CACHED_IMAGES) cache.delete(cache.keys().next().value!);
           cache.set(url, compressed);
         }

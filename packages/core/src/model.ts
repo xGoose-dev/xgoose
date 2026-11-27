@@ -20,8 +20,6 @@ export const KNOWN_MODELS: Record<Provider, string[]> = {
   "openai-compat": ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra", "gpt-4o", "gpt-4o-mini", "gpt-4.1", "o4-mini"],
 };
 
-export const isHostedBaseUrl = (url: string) => /^https:\/\/api\.xgoose\.org\/ai\/v1\/?$/.test(url);
-
 /** Model credentials and transport stay in the host; this object contains no secrets. */
 export function normalizeProviderBaseUrl(provider: Provider, value: string): string {
   const google = provider !== "openai-compat";
@@ -41,7 +39,7 @@ export function createModel(s: CoreSettings, _fetchImpl?: HostFetcher): Model<Ap
   const baseUrl = normalizeProviderBaseUrl(s.provider, s.baseUrl);
   // Modern OpenAI models reject max_tokens. Keep legacy compatible providers
   // and our Hosted gateway's existing wire contract unchanged.
-  const hosted = isHostedBaseUrl(baseUrl);
+  const hosted = /^https:\/\/api\.xgoose\.org\/ai\/v1\/?$/.test(baseUrl);
   const modernOpenAI = !google && !hosted && /^(?:gpt-(?:5|6)(?:[.-]|$)|o[134](?:-|$))/i.test(s.model);
   // Sol/Terra/Astra use Responses so function calling can retain reasoning.
   // https://developers.openai.com/api/docs/guides/deployment-checklist

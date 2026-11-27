@@ -69,7 +69,7 @@ export async function createAgent(opts: {
   const fetchProvider=opts.settings.provider==="xgoose-hosted"?createChromeProviderFetch({hostedAccountId:coreSettings.hostedAccountId}):getFetchImpl();
   return coreCreateAgent({
     settings: coreSettings,
-    compressHostedImage,
+    compressHostedImage: opts.settings.provider === "xgoose-hosted" ? compressHostedImage : undefined,
     fetchImpl: async (input, init) => {
       const started=Date.now();
       const response=await fetchProvider(input,init);
@@ -116,7 +116,7 @@ async function projectToCoreSettings(s: Settings): Promise<{
   // Model metadata comes from the signed-in gateway, so a future Hosted model
   // need not fall back to the bundled catalogue's conservative unknown window.
   const catalogue=await send('sw:list_xgoose_models',{}).catch(()=>null);
-  const model=resolveHostedModel(s.model,catalogue?.ok?catalogue:null);
+  const model=resolveHostedModel(s.model,catalogue?.ok?catalogue:null,isSafari);
   const contextWindowTokens=catalogue?.ok?catalogue.contextWindows?.[model]:undefined;
   return {
     provider: "openai-compat",

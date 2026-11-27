@@ -11,6 +11,8 @@ test("server defaults follow catalogue changes while explicit choices and BYOK s
  assert.equal(resolveHostedModel("default",next),"claude-haiku-5-5");
  assert.equal(resolveHostedModel("claude-haiku-5-5",first),"claude-haiku-5-5");
  assert.equal(resolveHostedModel("luna",next),"luna");
+ assert.equal(resolveHostedModel("luna",next,true),"claude-haiku-5-5");
+ assert.equal(resolveHostedModel("luna",null,true),"luna");
  assert.equal(first.contextWindows?.["deepseek-purge"],1000000);
  assert.equal(modelContextWindow("deepseek-purge"),1000000);
  const byok=SettingsSchema.parse({provider:"openai-compat",model:"my-custom-model",apiKeys:{"openai-compat":"synthetic"}});

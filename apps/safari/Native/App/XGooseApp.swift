@@ -128,6 +128,11 @@ import SafariServices
         await loadHostedModels()
         await loadHostedQuota()
     }
+    func enableHosted(requestedModel: String) async {
+        let request: JSONObject = hosted ? [:] : ["model":requestedModel]
+        _ = await call("consent", request)
+        await reload()
+    }
 }
 
 struct RootView: View {
@@ -321,7 +326,9 @@ struct AccountView:View {
                     else { hostedModel = id }
                 }))
                 Text(model.t("Hosted sends your messages, relevant page content and images to xgoose and its AI providers. Conversations are stored in the cloud and may be accessed by authorized administrators. Use BYOK if you prefer your own provider.","Hosted 会将消息、相关网页内容和图片发送给 xgoose 及其 AI 服务商。会话保存在云端，授权管理员可访问。也可以选择自带 API key。","Hosted envía mensajes, contenido e imágenes a xgoose y sus proveedores. Las conversaciones se guardan en la nube y administradores autorizados pueden acceder."))
-                Button(model.state["hostedAccepted"] as? Bool == true ? model.t("Hosted enabled","Hosted 已启用","Hosted activado") : model.t("Agree & use Hosted","同意并使用 Hosted","Aceptar y usar Hosted")) {Task {_ = await model.call("consent",["model":hostedChoice]);await model.reload()}}
+                Button(model.state["hostedAccepted"] as? Bool == true ? model.t("Hosted enabled","Hosted 已启用","Hosted activado") : model.t("Agree & use Hosted","同意并使用 Hosted","Aceptar y usar Hosted")) {
+                    Task { await model.enableHosted(requestedModel: hostedChoice) }
+                }
                 Button(model.t("Refresh models & credit","刷新模型与额度","Actualizar modelos y crédito")) {Task {await model.loadCloud()}}
             }
             Section {Button(model.t("Delete account & cloud data","删除账号和云端数据","Eliminar cuenta y datos"),role:.destructive) {confirmDelete=true}}

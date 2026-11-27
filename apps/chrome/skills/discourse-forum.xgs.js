@@ -1,7 +1,7 @@
 // ==XGooseSkill==
 // @name         discourse-forum
 // @namespace    discourse
-// @version      0.2.20
+// @version      0.2.19
 // @description  Search Discourse forums, read topics and replies, and research community insights.
 // @match        *://meta.discourse.org/*
 // @match        *://*.discourse.org/*
@@ -506,7 +506,7 @@ async function readTopicRange(rawArgs) {
   return makeResult();
 }
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024, MAX_IMAGE_DATA_CHARS = 320_000;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024, MAX_IMAGE_DATA_CHARS = 500_000;
 /** Downscaled JPEG in the image shape hosts attach to the model; the page's own CORS and cookie rules apply. */
 async function modelImage(url) {
   const response = await fetch(url, {credentials: 'same-origin'});

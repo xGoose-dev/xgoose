@@ -15,7 +15,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import type { CoreSettings } from "./types";
 import type { HostFetcher } from "./ports";
 import { buildSystemPrompt, type PromptCapabilities } from "./systemPrompt";
-import { createModel, isHostedBaseUrl } from "./model";
+import { createModel } from "./model";
 import type { XgooseBuiltTool } from "./tools/buildTool";
 
 /** Stable host contract. Persisted v1 messages are converted at the PI boundary. */
@@ -47,13 +47,20 @@ function capContextImages(messages:AgentMessage[]):AgentMessage[] {
   return messages.slice().reverse().map(message=>!Array.isArray(message.content)?message:{...message,content:message.content.slice().reverse().map(part=>part.type==='image'&&left--<=0?{type:'text' as const,text:'[Earlier source image omitted from model context; read it again if needed.]'}:part).reverse()} as AgentMessage).reverse();
 }
 
-export function toPiMessages(messages: ChatMessage[], model: Model<Api>): AgentMessage[] {
+export function toPiMessages(messages: ChatMessage[], model: Model<Api>, imageResults?: ToolResultStore): AgentMessage[] {
   // Keep recent image context bounded without deleting local conversation history.
   let imagesLeft=8;
   const bounded=messages.slice().reverse().map(message=>{
     if(!["user","tool"].includes(message.role)||!Array.isArray(message.content))return message;
     const boundImage=(part:any)=>part?.type==="image"?(imagesLeft-->0?part:{type:"text",text:"[Earlier image omitted from model context. Ask the user to reattach it if needed.]"}):part;
-    const content=message.content.slice().reverse().map((part:any)=>part?.type==='tool-result'&&Array.isArray(part.images)?{...part,images:part.images.slice().reverse().map(boundImage).reverse()}:boundImage(part)).reverse();
+    const content=message.content.slice().reverse().map((part:any)=>{
+      if(part?.type!=="tool-result"||!Array.isArray(part.images))return boundImage(part);
+      const source = imageResults?.get(part.resultId ?? part.toolCallId);
+      const images = imageResults
+        ? withResultImageSources(part.images, source?.value ?? readSavedToolOutput(part.output).value)
+        : part.images;
+      return {...part,images:images.slice().reverse().map(boundImage).reverse()};
+    }).reverse();
     return {...message,content};
   }).reverse();
   return bounded.flatMap((m): AgentMessage[] => {
@@ -140,7 +147,7 @@ function restoreToolResults(history: ChatMessage[]): ToolResultStore {
   return results;
 }
 
-function presentToolResult(message: AgentMessage, results: ToolResultStore): AgentMessage {
+function presentToolResult(message: AgentMessage, results: ToolResultStore, includeImageSources: boolean): AgentMessage {
   if (message.role !== "toolResult") return message;
   const { details, resultId, ...display } = message as ReferencedToolMessage;
   if (display.resultPresented) return message;
@@ -164,7 +171,7 @@ function presentToolResult(message: AgentMessage, results: ToolResultStore): Age
   presented.resultId = result.resultId;
   presented.content = [
     { type: "text", text: modelResultText(result.value, text, result.resultId) },
-    ...withResultImageSources(attachments, result.value),
+    ...(includeImageSources ? withResultImageSources(attachments, result.value) : attachments),
     { type: "text", text: `Result ID: ${JSON.stringify(result.resultId)}` },
   ];
   return presented;
@@ -197,8 +204,8 @@ export class PageAgentRuntime {
     input.abortSignal?.throwIfAborted();
     const opts = this.opts, model = createModel(opts.settings), queue = new EventQueue();
     setResultBudget(model.contextWindow);
-    const history = toPiMessages(input.messages, model);
     const results = restoreToolResults(input.resultHistory ?? input.messages);
+    const history = toPiMessages(input.messages, model, opts.compressHostedImage ? results : undefined);
     this.modelMessages = history;
     let steps = 0, lengthContinuations = 0, continueAfterLength = false, reachedStepLimit = false;
     const completedMessages: AgentMessage[] = [];
@@ -207,7 +214,7 @@ export class PageAgentRuntime {
     let gatewayBudget=opts.requestBudgetBytes??requestByteBudget(model.contextWindow);
     let tokenBudget=inputTokenBudget(model.contextWindow);
     let activeContext:AgentContext|undefined;
-    const fetchHosted = isHostedBaseUrl(model.baseUrl)
+    const fetchHosted = opts.compressHostedImage
       ? createHostedImageFetch(opts.fetchImpl, opts.compressHostedImage) : undefined;
     const rawStream: StreamFn = opts.streamFn ?? ((m, context, options) => {
       const requestOptions = { ...options, apiKey: opts.settings.apiKey, fetch: async (input:any,init:any)=>{
@@ -387,7 +394,7 @@ export class PageAgentRuntime {
       toolExecution: "parallel",
       streamFn: streamProvider,
       prepareRequest: async ({context},signal)=>{
-        const bounded={...context,messages:capContextImages(context.messages.map(message => presentToolResult(message, results)))};
+        const bounded={...context,messages:capContextImages(context.messages.map(message => presentToolResult(message, results, !!fetchHosted)))};
         activeContext=bounded;
         const compacted=await compactContext(bounded,signal);
         const chosen=compacted??bounded;

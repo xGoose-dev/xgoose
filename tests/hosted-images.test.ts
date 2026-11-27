@@ -78,6 +78,7 @@ test("Hosted retries one image-specific rejection without re-running the tool", 
   }});
   const { events, response } = await runChat({
     settings, tools: [tool],
+    compressHostedImage: async () => undefined,
     fetchImpl: async (_input, init) => {
       if (++requests === 1) {
         return completion({tool_calls:[{index:0,id:"read-post",type:"function",function:{name:"read",arguments:"{}"}}]}, "tool_calls");
@@ -103,4 +104,47 @@ test("Hosted retries one image-specific rejection without re-running the tool", 
   assert.equal(reads, 1);
   assert.equal(events.find(event => event.type === "error"), undefined);
   assert.equal(response.messages.find(message => message.role === "tool")?.content[0].images[0].data, small);
+});
+
+test("Hosted keeps per-occurrence image links after duplicate images and history trimming", async () => {
+  const links = [sourceUrl, "https://forum.example/uploads/same-image.jpg"];
+  const history: ChatMessage[] = [
+    {role:"user",content:"Research this post."},
+    {role:"assistant",content:[{type:"tool-call",toolName:"read",toolCallId:"old",input:{}}]},
+    {role:"tool",content:[{type:"tool-result",toolName:"read",toolCallId:"old",
+      output:{type:"json",value:{images:links.map((url, index) => ({attached:index+1,url}))}},
+      images:links.map(() => ({type:"image",data:tooLarge,mimeType})),
+    }]},
+  ];
+  for (const recentCount of [0, 7]) {
+    const seen: string[] = [];
+    const { events } = await runChat({
+      settings, tools: [], compressHostedImage:async () => undefined,
+      fetchImpl:async (_input, init) => {
+        seen.push(String(init?.body));
+        return completion({content:"Continued."});
+      },
+    }, [...history, {role:"user",content:[
+      {type:"text",text:"Continue."},
+      ...Array.from({length:recentCount}, () => ({type:"image",data:small,mimeType})),
+    ]}]);
+    assert.equal(seen.length, 1);
+    assert.equal(events.find(event => event.type === "error"), undefined);
+    assert.equal(seen[0].includes(`Source: ${links[0]}]`), recentCount === 0);
+    assert.ok(seen[0].includes(`Source: ${links[1]}]`));
+  }
+});
+
+test("BYOK can use the same URL without opting into Hosted image limits", async () => {
+  const seen: string[] = [];
+  const { events } = await runChat({
+    settings, tools: [],
+    fetchImpl:async (_input, init) => {
+      seen.push(String(init?.body));
+      return completion({content:"Image received."});
+    },
+  }, [{role:"user",content:[{type:"image",data:tooLarge,mimeType}]}]);
+  assert.equal(seen.length, 1);
+  assert.ok(seen[0].includes(dataUrl(tooLarge)));
+  assert.equal(events.find(event => event.type === "error"), undefined);
 });

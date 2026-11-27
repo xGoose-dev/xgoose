@@ -161,6 +161,11 @@ final class NativeServiceTests:XCTestCase {
         await app.settingsPatch(["model":"server-new-model"])
         await app.loadHostedModels()
         XCTAssertEqual(app.hostedChoice, "server-new-model")
+        let coldApp = AppModel()
+        await coldApp.reload()
+        XCTAssertNil(coldApp.hostedCatalogue)
+        await coldApp.enableHosted(requestedModel: coldApp.hostedChoice)
+        XCTAssertEqual(coldApp.settings["model"] as? String, "server-new-model")
         let snapshot = (await NativeQueue.shared.run("snapshot"))["value"] as? JSONObject
         let extensionSettings = (snapshot?["values"] as? JSONObject)?["xgoose.settings"] as? JSONObject
         XCTAssertEqual(extensionSettings?["model"] as? String, "server-new-model")
