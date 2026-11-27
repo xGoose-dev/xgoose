@@ -46,6 +46,7 @@ import {
   listConversations,
   loadAll,
   newConversationId,
+  refreshNativeSettings,
   saveConversation,
   saveLayout,
   setPanelOpenForOrigin,
@@ -656,6 +657,8 @@ async function bootstrap(): Promise<void> {
     prompt: string,
     opts: { hidden?: boolean; images?: ImageAttachment[]; peerMessage?: PeerMessage } = {},
   ): Promise<void> {
+    if (running) return;
+    if (isSafari) await refreshNativeSettings();
     if (running) return;
     const turnStarted=Date.now(),turnFlow=crypto.randomUUID();let firstResponse=false;
     const settings = {...getSettings(), ...peerModel} as ReturnType<typeof getSettings>;

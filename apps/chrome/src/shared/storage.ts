@@ -141,6 +141,14 @@ export function loadAll(): Promise<void> {
 export function getSettings(): Settings {
   return mirror.settings;
 }
+
+export async function refreshNativeSettings(): Promise<void> {
+  await send("sw:host_prepare", undefined);
+  const stored = await chrome.storage.local.get(SETTINGS_KEY);
+  const parsed = SettingsSchema.safeParse(stored[SETTINGS_KEY]);
+  mirror.settings = parsed.success ? parsed.data : { ...DEFAULT_SETTINGS };
+}
+
 export async function saveSettings(next: Settings): Promise<void> {
   mirror.settings = next;
   await chrome.storage.local.set({ [SETTINGS_KEY]: next });

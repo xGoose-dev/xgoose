@@ -39,6 +39,7 @@ export { renderMarkdown } from "./markdown";
 export { DEFAULT_LAYOUT, type Corner, type Layout } from "./layout";
 
 export type {ImageAttachment} from "./images";
+export {compressHostedImage} from "./images";
 
 export * from "./appearance";
 export * from "./appearanceController";

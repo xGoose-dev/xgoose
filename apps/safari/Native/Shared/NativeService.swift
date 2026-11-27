@@ -5,9 +5,38 @@ import Darwin
 let appGroup = "group.org.xgoose.xgoose-safari"
 let extensionIdentifier = "org.xgoose.xgoose-safari.Extension"
 let apiBase = "https://api.xgoose.org"
-/// Used until the Hosted catalogue names its own default.
-let hostedDefaultModel = "deepseek-flash"
+let hostedDefaultChoice = "default"
 typealias JSONObject = [String: Any]
+
+struct HostedModelCatalogue {
+    struct Model: Identifiable {
+        let id: String
+        let name: String
+    }
+
+    let models: [Model]
+    let defaultModel: String
+
+    init?(_ response: JSONObject) {
+        let entries = response["data"] as? [JSONObject] ?? []
+        var ids = Set<String>()
+        let models = entries.compactMap { entry -> Model? in
+            guard let id = entry["id"] as? String, !id.isEmpty, id != hostedDefaultChoice,
+                  ids.insert(id).inserted else { return nil }
+            return Model(id: id, name: (entry["display_name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id)
+        }
+        guard let first = models.first else { return nil }
+        let markedDefault = entries.first { $0["is_default"] as? Bool == true }?["id"] as? String
+        self.models = models
+        self.defaultModel = [response["default_model"] as? String, markedDefault]
+            .compactMap { $0 }.first { ids.contains($0) } ?? first.id
+    }
+
+    func availableChoice(_ choice: String?) -> String? {
+        guard let choice else { return nil }
+        return choice == hostedDefaultChoice || models.contains { $0.id == choice } ? choice : nil
+    }
+}
 
 struct ServiceError: LocalizedError {
     let message: String
@@ -94,7 +123,7 @@ enum NativeService {
         var vault = try Vault.read()
         let defaults = UserDefaults(suiteName: appGroup)!
         if state["settings"] == nil {
-            var settings: JSONObject = ["provider":"xgoose-hosted", "model":hostedDefaultModel, "thinking":false,"language":"auto","answerLanguage":"auto","theme":"system","launcherVisibility":"skill-sites","analyticsEnabled":true]
+            var settings: JSONObject = ["provider":"xgoose-hosted", "model":hostedDefaultChoice, "thinking":false,"language":"auto","answerLanguage":"auto","theme":"system","launcherVisibility":"skill-sites","analyticsEnabled":true]
             for key in ["xgoose.settings","xgoose.account","xgoose.skills.disabled","xgoose.skills.user","xgoose.layout"] {
                 var value: Any? = defaults.object(forKey: key)
                 if let raw = value as? String, let data = raw.data(using: .utf8) { value = try? JSONSerialization.jsonObject(with: data) }
@@ -190,20 +219,33 @@ enum NativeService {
         vault["account"] = account; try Vault.write(vault)
         return account
     }
+    static func fetchHostedModels(_ token: String) async throws -> (JSONObject, HostedModelCatalogue) {
+        let response = try await request("/ai/v1/models", bearer: token, timeout: 12)
+        guard let catalogue = HostedModelCatalogue(response) else {
+            throw ServiceError(message: "Hosted has no available models. Try again later or use BYOK.")
+        }
+        return (response, catalogue)
+    }
+
+    static func applyHostedChoice(_ catalogue: HostedModelCatalogue, state: inout JSONObject, requested: String? = nil) {
+        var settings = state["settings"] as? JSONObject ?? [:]
+        let wasHosted = settings["provider"] as? String == "xgoose-hosted"
+        let saved = settings["model"] as? String
+        let choice = catalogue.availableChoice(requested)
+            ?? (wasHosted ? catalogue.availableChoice(saved) : nil)
+            ?? hostedDefaultChoice
+        if !wasHosted || saved != choice { state.removeValue(forKey: "connectionTested") }
+        settings["provider"] = "xgoose-hosted"
+        settings["model"] = choice
+        state["settings"] = settings
+    }
+
     /// Signing in is the agreement to Hosted data use, which the sign-in screen states.
-    static func enableHosted(state: inout JSONObject, model requested: String = "") async throws {
+    static func enableHosted(state: inout JSONObject, model requested: String? = nil) async throws {
         guard let account = try await freshAccount(), let token = account["accessToken"] as? String else { throw ServiceError(message:"Open xgoose and sign in to use Hosted AI.") }
         _ = try await request("/me/transcript-consent",method:"PUT",body:["hosted":true,"byok":false],bearer:token)
-        let catalog=try await request("/ai/v1/models",bearer:token)
-        let ids=(catalog["data"] as? [JSONObject] ?? []).compactMap{$0["id"] as? String}
-        guard let first=ids.first else {throw ServiceError(message:"Hosted has no available models. Try again later or use BYOK.")}
-        var settings=state["settings"] as? JSONObject ?? [:]
-        if ids.contains(requested) {settings["model"]=requested;state.removeValue(forKey:"connectionTested")}
-        else if settings["provider"] as? String != "xgoose-hosted" || !ids.contains(settings["model"] as? String ?? "") {
-            let preferred=[catalog["default_model"] as? String ?? "",hostedDefaultModel].first{ids.contains($0)}
-            settings["model"]=preferred ?? first;state.removeValue(forKey:"connectionTested")
-        }
-        settings["provider"]="xgoose-hosted";state["settings"]=settings
+        let (_, catalogue) = try await fetchHostedModels(token)
+        applyHostedChoice(catalogue, state: &state, requested: requested)
         state["hostedAccepted"] = true
     }
     static func poll(state: inout JSONObject) async throws {
@@ -320,7 +362,8 @@ enum NativeService {
                 if provider == "xgoose-hosted" {
                     if state["hostedAccepted"] as? Bool != true {try await enableHosted(state:&state)}
                     guard let account=try await freshAccount(),let token=account["accessToken"] as? String else {throw ServiceError(message:"Open xgoose and sign in to use Hosted AI.")}
-                    _ = try await request("/ai/v1/chat/completions",method:"POST",body:["model":settings["model"] ?? hostedDefaultModel,"messages":[["role":"user","content":"Reply with OK."]],"max_tokens":16,"stream":false],bearer:token)
+                    let model = (state["settings"] as? JSONObject)?["model"] ?? hostedDefaultChoice
+                    _ = try await request("/ai/v1/chat/completions",method:"POST",body:["model":model,"messages":[["role":"user","content":"Reply with OK."]],"max_tokens":16,"stream":false],bearer:token)
                 } else {
                     let vault=try Vault.read()
                     guard state["providerAccepted"] as? Bool == true,let key=(vault["apiKeys"] as? [String:String])?[provider],!key.isEmpty else {throw ServiceError(message:"Save your API key and agree to provider data use first.")}
@@ -347,18 +390,20 @@ enum NativeService {
                 var headers:[String:String]=[:]
                 for field in ["content-type","retry-after","x-rate-limit-reset","x-rate-limit-remaining"] {if let value=http.value(forHTTPHeaderField:field){headers[field]=value}}
                 value=["body":String(decoding:data,as:UTF8.self),"status":http.statusCode,"headers":headers]
-            case "cloud":
+            case "hosted-models":
                 guard let account = try await freshAccount(), let token = account["accessToken"] as? String else { throw ServiceError(message:"Sign in with email first.") }
-                let models = try await request("/ai/v1/models",bearer:token)
-                let quota = try await request("/me/quota",bearer:token)
-                let ids=(models["data"] as? [JSONObject] ?? []).compactMap{$0["id"] as? String}
-                var settings=state["settings"] as? JSONObject ?? [:]
-                if settings["provider"] as? String == "xgoose-hosted",let first=ids.first,!ids.contains(settings["model"] as? String ?? "") {settings["model"]=first;state["settings"]=settings;state.removeValue(forKey:"connectionTested")}
-                value = ["models":models["data"] ?? [],"quota":quota]
+                let (response, catalogue) = try await fetchHostedModels(token)
+                if (state["settings"] as? JSONObject)?["provider"] as? String == "xgoose-hosted" {
+                    applyHostedChoice(catalogue, state: &state)
+                }
+                value = response
+            case "hosted-quota":
+                guard let account = try await freshAccount(), let token = account["accessToken"] as? String else { throw ServiceError(message:"Sign in with email first.") }
+                value = try await request("/me/quota", bearer: token)
             case "claim-trial":
                 guard let account=try await freshAccount(),let token=account["accessToken"] as? String else {throw ServiceError(message:"Sign in first.")}
                 value=try await request("/me/trial/claim",method:"POST",bearer:token)
-            case "consent": try await enableHosted(state:&state,model:payload["model"] as? String ?? "")
+            case "consent": try await enableHosted(state:&state,model:payload["model"] as? String)
             case "progress":
                 if payload["kind"] as? String == "diagnostic",let error=payload["error"] as? String {state["lastSkillError"]=String(error.prefix(300))}
                 if payload["kind"] as? String == "page" { state["pageSeenAt"] = Date().timeIntervalSince1970;state["websiteAvailable"]=true;state["pageHostname"]=payload["hostname"] ?? "";state["allWebsites"]=payload["allWebsites"] as? Bool ?? false;state.removeValue(forKey:"lastSkillError") }

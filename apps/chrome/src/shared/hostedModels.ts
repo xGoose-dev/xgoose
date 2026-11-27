@@ -20,9 +20,10 @@ export function parseHostedModelCatalogue(payload: unknown): HostedModelCatalogu
   return {models, ...(defaultModel ? {defaultModel} : {}), contextWindows};
 }
 
-/** Resolve once per turn. A specific saved model always wins over the server default. */
-export function resolveHostedModel(choice: string | undefined, catalogue?: HostedModelCatalogue | null): string {
-  if (choice && choice !== HOSTED_DEFAULT_CHOICE) return choice;
+/** Resolve once per turn. A confirmed removal can fall back to the server default. */
+export function resolveHostedModel(choice: string | undefined, catalogue?: HostedModelCatalogue | null, fallbackWhenMissing = false): string {
+  if (choice && choice !== HOSTED_DEFAULT_CHOICE
+      && (!fallbackWhenMissing || !catalogue?.models.length || catalogue.models.includes(choice))) return choice;
   if (catalogue?.defaultModel && catalogue.models.includes(catalogue.defaultModel)) return catalogue.defaultModel;
   if (catalogue?.models.includes(HOSTED_FALLBACK_MODEL)) return HOSTED_FALLBACK_MODEL;
   return catalogue?.models[0] ?? HOSTED_FALLBACK_MODEL;
