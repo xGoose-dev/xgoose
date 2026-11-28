@@ -34,17 +34,32 @@ test('chat control calls time out without replay and a later explicit call can r
   }
 });
 
-function database(){
+function database(installedVersion=1){
   const requests:any[]=[],transactions:any[]=[];let closed=0,aborts=0;
   const db={close:()=>{closed++;},transaction:()=>{
     const tx:any={abort:()=>{aborts++;queueMicrotask(()=>tx.onabort());},objectStore:()=>({get:()=>{
       const request:any={result:undefined};queueMicrotask(()=>{request.onsuccess();queueMicrotask(()=>tx.oncomplete());});return request;
     },put:()=>{}})};transactions.push(tx);return tx;
   }};
-  const context:any={setTimeout,clearTimeout,crypto,indexedDB:{open:()=>{const request:any={result:db};requests.push(request);return request;}}};
+  const context:any={setTimeout,clearTimeout,crypto,indexedDB:{open:(_name:string,version?:number)=>{
+    const request:any={result:db};requests.push(request);
+    if(version!==undefined&&version<installedVersion){
+      request.error=new DOMException('Requested version is lower than the installed version','VersionError');
+      queueMicrotask(()=>request.onerror());
+    }
+    return request;
+  }}};
   vm.runInNewContext(storage.outputFiles[0].text,context);
   return{requests,transactions,db,context,closed:()=>closed,aborts:()=>aborts,read:()=>context.module.peerTransaction(()=> 'ready')};
 }
+
+test('chat storage reuses a newer database from a preview build',async()=>{
+  const f=database(3);
+  const recovered=f.read();
+  if(!f.requests[0].error)f.requests[0].onsuccess();
+  assert.equal(await recovered,'ready');
+  assert.equal(f.requests.length,1);
+});
 
 test('blocked or stalled database opens reject, retry, and close abandoned late connections',async t=>{
   t.mock.timers.enable({apis:['setTimeout']});

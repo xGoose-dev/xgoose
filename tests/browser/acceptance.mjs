@@ -61,7 +61,7 @@ try{
  assert.equal(new Set(calls.filter(c=>c.type==='read').map(c=>c.id)).size,3);
  assert.deepEqual(requests[0].messages.filter(m=>m.role==='user').at(-1).content,[{type:'text',text:'延误险怎么报销'}]);
  for(const id of [1,2,3])assert.ok(await page.locator(`.msgs a[href="${base}/t/topic/${id}"]`).count());
- const journal=await sw.evaluate(()=>new Promise((resolve,reject)=>{const r=indexedDB.open('xgoose-sessions',1);r.onerror=()=>reject(r.error);r.onsuccess=()=>{const q=r.result.transaction('events').objectStore('events').getAll();q.onsuccess=()=>resolve(q.result);};}));
+ const journal=await sw.evaluate(()=>new Promise((resolve,reject)=>{const r=indexedDB.open('xgoose-sessions');r.onerror=()=>reject(r.error);r.onsuccess=()=>{const q=r.result.transaction('events').objectStore('events').getAll();q.onsuccess=()=>resolve(q.result);};}));
  const skillsEvent=journal.find(e=>e.event.type==='skills');
  assert.ok(skillsEvent?.event.clientVersion);
  assert.ok(skillsEvent.event.skills.some(s=>s.name==='fixture-forum'&&s.namespace==='fixture'&&/^\d+\.\d+\.\d+/.test(s.version)&&s.source==='user'),JSON.stringify(skillsEvent?.event));

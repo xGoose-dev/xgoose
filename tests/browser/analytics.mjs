@@ -67,7 +67,7 @@ try{
  await bridge.waitForFunction(async()=>!((await chrome.storage.local.get('xgoose.analytics.queue-v2'))['xgoose.analytics.queue-v2']??[]).length);
  let events=await sw.evaluate(()=>globalThis.analyticsFixture.requests.flatMap(r=>r.body.events));const sent=events.find(e=>e.name==='chat_message_sent');assert.ok(sent);for(const name of ['chat_first_response','chat_turn_finished'])assert.ok(events.some(e=>e.name===name&&e.params.flow_id===sent.params.flow_id));
  assert.ok(!JSON.stringify(events).includes('Synthetic private prompt'));assert.ok(!JSON.stringify(events).includes('/private-path'));
- const journal=await sw.evaluate(()=>new Promise((resolve,reject)=>{const r=indexedDB.open('xgoose-sessions',1);r.onerror=()=>reject(r.error);r.onsuccess=()=>{const q=r.result.transaction('events').objectStore('events').getAll();q.onsuccess=()=>resolve(q.result);};}));
+ const journal=await sw.evaluate(()=>new Promise((resolve,reject)=>{const r=indexedDB.open('xgoose-sessions');r.onerror=()=>reject(r.error);r.onsuccess=()=>{const q=r.result.transaction('events').objectStore('events').getAll();q.onsuccess=()=>resolve(q.result);};}));
  assert.ok(journal.length);assert.ok(journal.every(e=>e.event.site==='127.0.0.1'));assert.ok(!JSON.stringify(journal.map(e=>e.event.site)).includes('secret'));
  const contexts=await sw.evaluate(()=>globalThis.analyticsFixture.requests.filter(r=>r.body.device));assert.ok(contexts.length);assert.ok(contexts.every(r=>r.body.device.screen_resolution&&r.body.device.language));
  await expect.poll(()=>sw.evaluate(()=>globalThis.analyticsFixture.requests.flatMap(r=>r.body.events).some(e=>e.name==='extension_engagement'&&e.params.engagement_time_msec>1)),{timeout:20000}).toBe(true);
